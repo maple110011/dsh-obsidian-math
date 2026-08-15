@@ -94,6 +94,8 @@ vault/
     memory/profile.md            语义层：偏好与稳定事实
     memory/topics/index.md       导航层：主题路由索引
     memory/topics/<topic>.md     主题细节
+    memory/records/index.md      记录层：类型化原子记录索引
+    memory/records/<slug>.md     原子记忆卡（fact/event/instruction/preference，带来源链接）
     memory/episodes/index.md     事件时间线
     memory/episodes/YYYY-MM-DD-*.md  原始事件卡（append-only）
     inbox/index.md               备忘录状态索引

@@ -47,6 +47,7 @@ const MAX_LOG_FILES = 20;
 // layers only; raw evidence lives on disk and is reached via grep/read.
 const MAX_PROFILE_CHARS = 4000;
 const MAX_TOPIC_INDEX_CHARS = 4000;
+const MAX_RECORD_INDEX_CHARS = 2000;
 const MAX_EPISODE_INDEX_CHARS = 2500;
 const MAX_INBOX_CHARS = 2200;
 const MAX_DIALOGUE_PAIRS = 6;
@@ -426,8 +427,22 @@ function episodeIndexDigest(root, maxChars) {
   }
 }
 
-// ── the section composer ────────────────────────────────────────────────────
+/** Typed atomic-record digest: keep the index's list lines within budget. */
+function recordIndexDigest(root, maxChars) {
+  const path = join(root, MEMORY_DIR, "memory", "records", "index.md");
+  if (!existsSync(path)) return "";
+  try {
+    const text = readFileSync(path, "utf8").trim();
+    if (text === "") return "";
+    const items = text.split("\n").filter((line) => line.trim().startsWith("-"));
+    if (items.length === 0) return clip(text, maxChars);
+    return clip(items.map((line) => line.trim()).join("\n"), maxChars);
+  } catch {
+    return "";
+  }
+}
 
+// ── the section composer ────────────────────────────────────────────────────
 /**
  * Render the layered memory section for one agent.
  *
@@ -441,6 +456,7 @@ function episodeIndexDigest(root, maxChars) {
 export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs }, currentSessionId, dialogueIndex) {
   const profile = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "profile.md"), MAX_PROFILE_CHARS);
   const topics = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "topics", "index.md"), MAX_TOPIC_INDEX_CHARS);
+  const records = recordIndexDigest(vaultRoot, MAX_RECORD_INDEX_CHARS);
   const episodes = episodeIndexDigest(vaultRoot, MAX_EPISODE_INDEX_CHARS);
   const memos = memoDigest(vaultRoot, MAX_INBOX_CHARS);
 
@@ -451,6 +467,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     "episodes=原始证据层，inbox=想法层。以下内容用于“知道去哪找”，不要当作完整证据。" +
     "回答细节问题时必须按路由规则读文件：",
     "- 精确事实 / 用户原话 / 日期数字 → 先 grep `.deepseek/memory/episodes/` 再读命中文件；",
+    "- 类型化原子事实（fact/event/instruction/preference）→ 先看 `.deepseek/memory/records/index.md`，再 grep/读具体记录，记录里的 source 可回原始证据；",
     "- 主题来龙去脉 → 先读 `.deepseek/memory/topics/index.md` 定位，再读 `topics/<slug>.md` 或相关笔记；",
     "- “当前最新状态” → 比较 frontmatter `updated` 或最新 episode 时间戳；",
     "- 检索不到就明说没有，不要编造。"
@@ -466,6 +483,12 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     lines.push("", "### 研究主题索引（.deepseek/memory/topics/index.md）", "", topics);
   } else {
     lines.push("", "### 研究主题索引", "", "（尚未建立。按 AGENTS.md 在 .deepseek/memory/topics/index.md 维护主题条目。）");
+  }
+
+  if (records !== "") {
+    lines.push("", "### 记忆记录摘要（.deepseek/memory/records/index.md，类型化原子事实）", "", records);
+  } else {
+    lines.push("", "### 记忆记录摘要", "", "（尚无原子记录。每轮收尾时按 AGENTS.md 三写协议，从 episode 提炼 fact/event/instruction/preference 记录。）");
   }
 
   if (episodes !== "") {

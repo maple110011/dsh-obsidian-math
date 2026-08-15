@@ -14,7 +14,7 @@
 
 ## 1. 会话开始协议（每次新会话自动执行）
 
-1. 系统提示中已由插件自动注入：`profile.md`（画像）、`topics/index.md`（主题导航）、`inbox/` 清单、`episodes/index.md` 近期事件索引、最近 6 组跨会话问答线索。
+1. 系统提示中已由插件自动注入：`profile.md`（画像）、`topics/index.md`（主题导航）、`records/index.md`（原子记录摘要）、`inbox/` 清单、`episodes/index.md` 近期事件索引、最近 6 组跨会话问答线索。
 2. 按下面第 4 节的**检索路由规则**按需补读完整文件；不要只凭注入的摘要回答细节问题。
 3. 回答前先定位并读取相关笔记；找不到就用搜索，不要重复问用户“你以前说过什么”。
 
@@ -26,14 +26,15 @@
 |---|---|---|---|
 | 语义层 | `memory/profile.md` | 稳定偏好、记号、长期授权、**当前有效事实** | 短，只放“现在成立”的结论 |
 | 导航层 | `memory/topics/index.md` + `topics/<slug>.md` | 主题概览与主题细节 | 索引只做路由，细节进主题文件 |
+| 记录层 | `memory/records/<slug>.md` | **类型化原子记忆卡**：fact/event/instruction/preference | 每条带 id、类型、来源 episode 链接、变更历史；冲突用 superseded 而非删除 |
 | 证据层 | `memory/episodes/YYYY-MM-DD-<slug>.md` | 每轮对话的原始事件卡片 | **append-only，不删除、不重写历史** |
 | 想法层 | `inbox/` | 待打磨想法 | 经同意写入 |
 
-### 2.2 写时提取（论文 M2：晚过滤原则）
+### 2.2 写时提取（论文 M2：晚过滤原则 + NapMem 三写）
 
-每轮收尾前执行**双写**，顺序固定，不要拖到会话结束：
+每轮收尾前按**从细到粗**的顺序写三层，不要拖到会话结束：
 
-1. **先写证据层**：向 `episodes/YYYY-MM-DD-<slug>.md` 追加一个事件节（同一天追加到当天文件，新一天开新文件）：
+1. **证据层**：向 `episodes/YYYY-MM-DD-<slug>.md` 追加一个事件节（同一天追加到当天文件，新一天开新文件）：
    ```markdown
    ## HH:MM <一句话标题>
    - 用户原话/关键表述：<保留原句，宁多勿删>
@@ -41,12 +42,14 @@
    - 事实修正：<如有，写“旧事实 → 新事实”，保留旧值>
    - 涉及：[[笔记]] · 主题：<topic> · 想法：<inbox 条目，如有>
    ```
-2. **再局部更新语义/导航层**：
-   - 稳定偏好、记号、授权 → `profile.md` 对应小节（合并同类项，更新而非无限追加；每改一条事实，在文件末尾“修订历史”加一行）。
-   - 新主题/结论/重要文件 → `topics/index.md` 增改条目；细节超过 3 行则放 `topics/<slug>.md`，索引里留链接。
-   - **禁止**把整段对话总结进 profile/topics；原文只放 episodes。
-3. **版本化更正**：同一事实被推翻时，在新 episode 写更正；profile/topics 中旧值改为“~~旧值~~ → 新值（YYYY-MM-DD）”，不要抹掉旧值。
-4. 写完后更新 `episodes/index.md`：`- [[YYYY-MM-DD-slug|标题]] — 主题A、主题B`（只加一行）。
+2. **记录层**：把本轮的新事实/事件/指令/偏好提炼为 `memory/records/<slug>.md` 原子卡（见 `records/_README.md` 模板），并做**调和**：
+   - 与已有记录相同 → 更新原记录（`updated`），不新建；
+   - 冲突 → 旧记录 `status: superseded`，在“变更历史”写“旧值 → 新值（日期）”，新建记录并 `related` 指向旧记录；
+   - 每条记录的 `source` 必须指向证据层 episode；更新 `records/index.md`。
+3. **语义/导航层**：记录更新后，再局部更新：
+   - 稳定偏好、记号、授权 → `profile.md` 对应小节（合并同类项；每改一条事实在“修订历史”加一行）；
+   - 新主题/结论/重要文件 → `topics/index.md` 增改条目，细节放 `topics/<slug>.md`；
+   - **禁止**把整段对话总结进 profile/topics；原文只在 episodes，原子事实只在 records。
 
 ### 2.3 局部维护（论文 M5：维护范围决定成本）
 
@@ -72,10 +75,11 @@
 | 查询类型 | 路由 |
 |---|---|
 | 精确事实、用户原话、日期、数字 | `grep` 检索 `.deepseek/memory/episodes/`，命中后读对应 episode |
+| 类型化原子事实（fact/event/instruction/preference） | 先看 `memory/records/index.md` 分组，再 grep `records/` 或读具体记录；记录里有 `source` 可回原始证据 |
 | 稳定偏好 / 记号 / 授权 | 读 `memory/profile.md`（细查用 grep） |
 | 某个主题的来龙去脉 | 先读 `topics/index.md` 定位条目 → 再读 `topics/<slug>.md` 或相关笔记 |
 | “当前最新状态” | 看目标文件的 `updated`/最新 episode 时间戳，优先最新 |
-| 跨会话分散证据 | 关键词 grep episodes + 按 index 时间线索汇聚，不要只靠语义猜测 |
+| 跨会话分散证据 | 关键词 grep episodes/records + 按 index 时间线索汇聚，不要只靠语义猜测 |
 | 综合问题 | 先粗（index 定位）后细（读文件），把证据按时间排好再回答 |
 
 原则：一次检索能确定就不做第二次；检索不到就明说“记忆里没有”，不要编造。
@@ -188,6 +192,9 @@ vault/
       topics/
         index.md                    研究主题索引（导航层）
         <topic>.md                  主题细节（按需创建）
+      records/
+        index.md                    记忆记录索引（按类型分组）
+        <slug>.md                   类型化原子记忆卡（fact/event/instruction/preference，带来源链接）
       episodes/
         index.md                    事件时间索引（每行一条）
         YYYY-MM-DD-<slug>.md        原始事件卡片（证据层，append-only）

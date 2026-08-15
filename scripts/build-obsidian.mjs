@@ -26,6 +26,8 @@ const templates = {
   "AGENTS.md": readFileSync(join(root, "dsh", "templates", "AGENTS.md"), "utf8"),
   "profile.md": readFileSync(join(root, "dsh", "templates", "profile.md"), "utf8"),
   "topics-index.md": readFileSync(join(root, "dsh", "templates", "topics-index.md"), "utf8"),
+  "records-readme.md": readFileSync(join(root, "dsh", "templates", "records-readme.md"), "utf8"),
+  "records-index.md": readFileSync(join(root, "dsh", "templates", "records-index.md"), "utf8"),
   "episodes-readme.md": readFileSync(join(root, "dsh", "templates", "episodes-readme.md"), "utf8"),
   "episodes-index.md": readFileSync(join(root, "dsh", "templates", "episodes-index.md"), "utf8"),
   "inbox-readme.md": readFileSync(join(root, "dsh", "templates", "inbox-readme.md"), "utf8"),

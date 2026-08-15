@@ -102,6 +102,8 @@ vault/
     memory/profile.md             semantic layer: preferences & stable facts
     memory/topics/index.md        navigation layer: topic routing index
     memory/topics/<topic>.md      per-topic details
+    memory/records/index.md       typed atomic records (fact/event/instruction/preference)
+    memory/records/<slug>.md      record cards with provenance links
     memory/episodes/index.md      event timeline
     memory/episodes/YYYY-MM-DD-*.md  raw event cards (append-only)
     inbox/index.md                memo index grouped by status
