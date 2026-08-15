@@ -11,6 +11,7 @@ const { spawn, spawnSync } = require('child_process');
 const { existsSync, mkdirSync, writeFileSync, readFileSync } = require('fs');
 const { join, dirname } = require('path');
 const { homedir } = require('os');
+const http = require('http');
 
 const VIEW_TYPE = 'dsh-obsidian-math-view';
 const PRESET_NAME = 'obsidian';
@@ -40,16 +41,29 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function probeService(port, timeoutMs = 1500) {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(`http://127.0.0.1:${port}/`, { signal: controller.signal });
-    clearTimeout(timer);
-    return response.status >= 200 && response.status < 500;
-  } catch {
-    return false;
-  }
+/**
+ * Probe the local dsh web server with Node's http client. Do NOT use
+ * browser `fetch` here: Obsidian's CSP can block renderer-side requests to
+ * http://127.0.0.1, which previously made a healthy service look dead.
+ */
+function probeService(port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const request = http.get({ host: '127.0.0.1', port, path: '/', timeout: timeoutMs }, (response) => {
+      response.resume();
+      finish(response.statusCode >= 200 && response.statusCode < 500);
+    });
+    request.on('error', () => finish(false));
+    request.on('timeout', () => {
+      request.destroy();
+      finish(false);
+    });
+  });
 }
 
 /**
@@ -215,7 +229,7 @@ class DshService {
     const location = this.location();
     if (location === null) {
       this.setStatus('missing-dsh');
-      throw new Error('dsh not found. Open the plugin settings, click “Detect dsh”, or install DeepSeek Harness first.');
+      throw new Error('未找到 dsh。请打开插件设置，点击“自动检测”，或先安装 DeepSeek Harness。');
     }
     const vaultPath = this.plugin.app.vault.adapter.getBasePath();
     const env = {
@@ -232,7 +246,7 @@ class DshService {
     // shell to execute .cmd shims.
     const shell = !location.script && process.platform === 'win32';
     this.setStatus('starting');
-    this.appendLog(`starting: ${executable} ${args.join(' ')}`);
+    this.appendLog(`启动：${executable} ${args.join(' ')}`);
     const child = spawn(executable, args, { env, windowsHide: true, shell, stdio: ['ignore', 'pipe', 'pipe'] });
     this.child = child;
     let spawnError = null;
@@ -242,12 +256,12 @@ class DshService {
     // ChildProcess 'error' event and can take the whole plugin down.
     child.on('error', (error) => {
       spawnError = error;
-      this.appendLog(`spawn failed: ${String(error)}`);
+      this.appendLog(`启动失败：${String(error)}`);
       if (this.child === child) this.child = null;
       this.setStatus('error');
     });
     child.on('exit', (code) => {
-      this.appendLog(`dsh exited with code ${code}`);
+      this.appendLog(`dsh 已退出，退出码 ${code}`);
       if (this.child === child) this.child = null;
       if (this.status !== 'stopping' && spawnError === null) this.setStatus(code === 0 ? 'stopped' : 'error');
     });
@@ -260,7 +274,7 @@ class DshService {
       if (this.child === null || this.child.exitCode !== null) break;
     }
     this.setStatus('error');
-    throw new Error(`dsh service did not come up on port ${this.plugin.settings.port}. ${this.logLines.slice(-3).join(' | ')}`);
+    throw new Error(`dsh 服务未能在端口 ${this.plugin.settings.port} 上启动。${this.logLines.slice(-3).join(' | ')}`);
   }
 
   async stop() {
@@ -289,7 +303,7 @@ class DshService {
 
 function bootstrapDshConfig(plugin, force = false) {
   const location = plugin.service.location();
-  if (location === null) throw new Error('dsh not detected; configure its install path in settings first.');
+  if (location === null) throw new Error('未检测到 dsh。请先在设置中配置 dsh 安装目录。');
   const home = location.home;
   const presetRoot = join(home, '.agent-presets', PRESET_NAME);
   const profileRoot = join(home, 'profiles', PRESET_NAME);
@@ -339,7 +353,7 @@ class DshMathView extends ItemView {
   }
 
   getDisplayText() {
-    return 'DSH Math Assistant';
+    return 'DSH 数学助手';
   }
 
   getIcon() {
@@ -411,20 +425,20 @@ class DshObsidianMathPlugin extends Plugin {
     this.service = new DshService(this);
     this.registerView(VIEW_TYPE, (leaf) => new DshMathView(leaf, this));
     if (this.settings.showRibbon) {
-      this.addRibbonIcon('message-square', 'Open DSH Math Assistant', () => this.activateView());
+      this.addRibbonIcon('message-square', '打开 DSH 数学助手', () => this.activateView());
     }
     this.addCommand({
       id: 'open-dsh-math-assistant',
-      name: 'Open DSH Math Assistant',
+      name: '打开 DSH 数学助手',
       callback: () => this.activateView()
     });
     this.addCommand({
       id: 'start-dsh-service',
-      name: 'Start DSH service',
+      name: '启动 DSH 服务',
       callback: async () => {
         try {
           await this.service.start();
-          new Notice('DSH service running');
+          new Notice('DSH 服务已运行');
         } catch (error) {
           new Notice(String(error));
         }
@@ -432,10 +446,10 @@ class DshObsidianMathPlugin extends Plugin {
     });
     this.addCommand({
       id: 'stop-dsh-service',
-      name: 'Stop DSH service',
+      name: '停止 DSH 服务',
       callback: async () => {
         await this.service.stop();
-        new Notice('DSH service stopped');
+        new Notice('DSH 服务已停止');
       }
     });
     this.addSettingTab(new DshObsidianSettingTab(this.app, this));
@@ -516,13 +530,13 @@ class DshObsidianSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'DSH Obsidian Math Assistant' });
-    containerEl.createEl('p', { text: `Version ${this.plugin.manifest?.version ?? ''}` });
-    containerEl.createEl('p', { text: 'Embeds the DeepSeek Harness math-memory agent in the right sidebar. The plugin starts the dsh service automatically; no extra cmd window is needed.' });
+    containerEl.createEl('h2', { text: 'DSH Obsidian 数学助手' });
+    containerEl.createEl('p', { text: `版本 ${this.plugin.manifest?.version ?? ''}` });
+    containerEl.createEl('p', { text: '在 Obsidian 右侧栏嵌入 DeepSeek Harness 数学记忆助手。插件会自动启动 dsh 服务，无需额外打开命令行窗口。' });
 
     new Setting(containerEl)
-      .setName('Port')
-      .setDesc('Local port for the dsh web service.')
+      .setName('端口')
+      .setDesc('dsh 网页服务的本地端口。默认 3180，与默认 dsh web 的 3080 互不冲突。')
       .addText((text) => text
         .setPlaceholder('3180')
         .setValue(String(this.plugin.settings.port))
@@ -536,34 +550,34 @@ class DshObsidianSettingTab extends PluginSettingTab {
 
     const location = this.plugin.service.location();
     new Setting(containerEl)
-      .setName('dsh installation directory')
-      .setDesc(location ? `Detected: ${location.installDir}` : 'Not detected yet. Click Detect or enter the path manually.')
+      .setName('dsh 安装目录')
+      .setDesc(location ? `已检测到：${location.installDir}` : '尚未检测到。可点击“自动检测”，或手动填写目录后回车。')
       .addText((text) => text
-        .setPlaceholder('e.g. E:\\software\\deepseek-harness')
+        .setPlaceholder('留空则自动检测')
         .setValue(this.plugin.settings.dshInstallDir)
         .onChange(async (value) => {
           this.plugin.settings.dshInstallDir = value.trim();
           this.plugin.service.cachedLocation = undefined;
           await this.plugin.saveSettings();
         }))
-      .addButton((button) => button.setButtonText('Detect').onClick(async () => {
+      .addButton((button) => button.setButtonText('自动检测').onClick(async () => {
         const found = this.plugin.service.location(true);
         if (found === null) {
-          new Notice('dsh not found on PATH or in common locations. Install DeepSeek Harness, then enter its directory manually.');
+          new Notice('未找到 dsh。请先安装 DeepSeek Harness，或手动填写安装目录。');
         } else {
           this.plugin.settings.dshInstallDir = found.installDir;
           await this.plugin.saveSettings();
-          new Notice(`Detected dsh at ${found.installDir}`);
+          new Notice(`已检测到 dsh：${found.installDir}`);
           this.display();
         }
       }));
 
     new Setting(containerEl)
       .setName('DSH_HOME')
-      .setDesc('Harness home directory (presets, profiles, sessions).')
+      .setDesc(location ? `已自动探测：${location.home}（可直接修改）` : 'dsh 主目录（preset、profile、会话日志所在处）。留空则自动探测。')
       .addText((text) => text
-        .setPlaceholder(location?.home ?? '')
-        .setValue(this.plugin.settings.dshHome)
+        .setPlaceholder('留空则自动探测')
+        .setValue(location?.home ?? this.plugin.settings.dshHome)
         .onChange(async (value) => {
           this.plugin.settings.dshHome = value.trim();
           this.plugin.service.cachedLocation = undefined;
@@ -571,83 +585,92 @@ class DshObsidianSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Start service automatically')
-      .setDesc('Start the dsh service when Obsidian loads.')
+      .setName('启动 Obsidian 时自动启动服务')
+      .setDesc('打开 Obsidian 后自动拉起 dsh 服务，无需手动操作。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.autoStart).onChange(async (value) => {
         this.plugin.settings.autoStart = value;
         await this.plugin.saveSettings();
       }));
 
     new Setting(containerEl)
-      .setName('Initialize configuration automatically')
-      .setDesc('Create the dsh preset/profile and vault memory templates when missing (first run only).')
+      .setName('自动初始化 dsh 配置与记忆模板')
+      .setDesc('首次运行时自动补齐 preset、profile 与 vault 内的记忆模板（只补缺失文件，不覆盖已有修改）。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.autoInit).onChange(async (value) => {
         this.plugin.settings.autoInit = value;
         await this.plugin.saveSettings();
       }));
 
     new Setting(containerEl)
-      .setName('Show ribbon icon')
-      .setDesc('One-click button in the Obsidian ribbon.')
+      .setName('显示侧边栏按钮')
+      .setDesc('在 Obsidian 左侧 ribbon 显示一键打开按钮。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.showRibbon).onChange(async (value) => {
         this.plugin.settings.showRibbon = value;
         await this.plugin.saveSettings();
       }));
 
     new Setting(containerEl)
-      .setName('Keep service alive when Obsidian closes')
-      .setDesc('By default the plugin stops its own dsh child process on unload.')
+      .setName('关闭 Obsidian 时保留服务')
+      .setDesc('默认关闭：插件退出时会停止它自己启动的 dsh 服务。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.keepAliveOnUnload).onChange(async (value) => {
         this.plugin.settings.keepAliveOnUnload = value;
         await this.plugin.saveSettings();
       }));
 
-    containerEl.createEl('h3', { text: 'Configuration' });
+    containerEl.createEl('h3', { text: '配置' });
     const configRow = containerEl.createDiv({ cls: 'dsh-obsidian-math-config-actions' });
-    const initButton = configRow.createEl('button', { text: 'Initialize dsh + vault templates' });
+    const initButton = configRow.createEl('button', { text: '初始化 dsh 配置与 vault 模板' });
     initButton.addEventListener('click', async () => {
       try {
         const dsh = bootstrapDshConfig(this.plugin, false);
         const vault = bootstrapVaultTemplates(this.plugin, false);
-        new Notice(`dsh config ready (${dsh.written.length} files). Vault templates: ${vault.written.length} created/updated.`);
+        new Notice(`dsh 配置已就绪（${dsh.written.length} 个文件）。vault 模板：${vault.written.length} 个。`);
         this.display();
       } catch (error) {
         new Notice(String(error));
       }
     });
-    const forceButton = configRow.createEl('button', { text: 'Reinstall dsh config (force)' });
+    const forceButton = configRow.createEl('button', { text: '强制重装 dsh 配置' });
     forceButton.addEventListener('click', async () => {
       try {
         const result = bootstrapDshConfig(this.plugin, true);
-        new Notice(`dsh config reinstalled at ${result.home}`);
+        new Notice(`dsh 配置已重装到 ${result.home}`);
         this.display();
       } catch (error) {
         new Notice(String(error));
       }
     });
 
-    containerEl.createEl('h3', { text: 'Service' });
+    containerEl.createEl('h3', { text: '服务' });
     const serviceRow = containerEl.createDiv({ cls: 'dsh-obsidian-math-config-actions' });
-    const startButton = serviceRow.createEl('button', { text: 'Start service' });
+    const startButton = serviceRow.createEl('button', { text: '启动服务' });
     startButton.addEventListener('click', async () => {
       await this.plugin.service.start().catch((error) => new Notice(String(error)));
       this.display();
     });
-    const stopButton = serviceRow.createEl('button', { text: 'Stop service' });
+    const stopButton = serviceRow.createEl('button', { text: '停止服务' });
     stopButton.addEventListener('click', async () => {
       await this.plugin.service.stop();
       this.display();
     });
-    const restartButton = serviceRow.createEl('button', { text: 'Restart service' });
+    const restartButton = serviceRow.createEl('button', { text: '重启服务' });
     restartButton.addEventListener('click', async () => {
       await this.plugin.service.restart().catch((error) => new Notice(String(error)));
       this.display();
     });
-    const status = serviceRow.createEl('span', { text: ` status: ${this.plugin.service.status}` });
+    const statusLabels = {
+      running: '运行中',
+      starting: '启动中',
+      stopped: '已停止',
+      stopping: '停止中',
+      'missing-dsh': '未找到 dsh',
+      error: '错误',
+      unknown: '未知'
+    };
+    serviceRow.createEl('span', { text: ` 状态：${statusLabels[this.plugin.service.status] ?? this.plugin.service.status}` });
 
     const log = this.plugin.service.logLines.slice(-12).join('\n');
     if (log !== '') {
-      containerEl.createEl('h3', { text: 'Recent service log' });
+      containerEl.createEl('h3', { text: '最近服务日志' });
       containerEl.createEl('pre', { text: log, cls: 'dsh-obsidian-math-log' });
     }
   }
