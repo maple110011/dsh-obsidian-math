@@ -491,6 +491,17 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     "- 检索不到就明说没有，不要编造。"
   ];
 
+  // When the Obsidian plugin provides its loopback link server, tell the
+  // agent to render note references in replies as clickable links so the
+  // user can jump straight into Obsidian from the sidebar iframe.
+  const linkBaseUrl = process.env.DSH_OBSIDIAN_LINK_URL?.trim() ?? "";
+  if (linkBaseUrl !== "") {
+    lines.push(
+      `- 回复正文中引用笔记时，使用可点击链接：[标题](${linkBaseUrl}/open?path=<vault 相对路径，需 URL 编码>)；`,
+      "  点击即可在 Obsidian 中打开对应笔记。笔记文件内部仍写 [[wikilink]]，两者不要混用。"
+    );
+  }
+
   if (profile !== "") {
     lines.push("", "### 用户画像与稳定偏好（.deepseek/memory/profile.md）", "", profile);
   } else {

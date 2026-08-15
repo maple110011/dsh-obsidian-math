@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0] - 2026-08-15
+
+### Added
+
+- Loopback link server in the Obsidian plugin: note references in agent replies become clickable links (`/open?path=...`) that jump straight to the note in Obsidian; files still use `[[wikilink]]`.
+
 ## [0.1.2] - 2026-08-15
 
 ### Changed

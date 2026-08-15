@@ -12,6 +12,7 @@ const { existsSync, mkdirSync, writeFileSync, readFileSync, statSync, renameSync
 const { join, dirname } = require('path');
 const { homedir } = require('os');
 const http = require('http');
+const { createServer } = http;
 
 const VIEW_TYPE = 'dsh-obsidian-math-view';
 const PRESET_NAME = 'obsidian';
@@ -76,6 +77,72 @@ function nodeExecutable() {
   const override = process.env.DSH_NODE_BIN?.trim();
   if (override) return override;
   return process.platform === 'win32' ? 'node.exe' : 'node';
+}
+
+/**
+ * Minimal loopback HTTP server that turns agent replies' note links into
+ * Obsidian jumps. The dsh agent is told (via env) to render note references
+ * as `[title](http://127.0.0.1:<port>/open?path=<vault-relative path>)`;
+ * clicking such a link inside the iframe hits this server, which opens the
+ * note in Obsidian and navigates the iframe back to dsh.
+ */
+class LinkServer {
+  constructor(plugin) {
+    this.plugin = plugin;
+    this.server = null;
+    this.port = 0;
+  }
+
+  start() {
+    this.server = createServer((req, res) => {
+      const finish = (status, body, html = false) => {
+        res.writeHead(status, { 'content-type': html ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8' });
+        res.end(body);
+      };
+      let url;
+      try {
+        url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      } catch {
+        finish(400, 'bad request');
+        return;
+      }
+      if (url.pathname !== '/open') {
+        finish(404, 'not found');
+        return;
+      }
+      const rawPath = url.searchParams.get('path') ?? url.searchParams.get('note') ?? '';
+      const notePath = decodeURIComponent(rawPath).trim();
+      if (notePath === '' || notePath.length > 2000) {
+        finish(400, 'missing path');
+        return;
+      }
+      try {
+        this.plugin.app.workspace.openLinkText(notePath, '', false);
+      } catch (error) {
+        finish(500, String(error));
+        return;
+      }
+      const display = notePath.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      finish(200, `<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;padding:24px"><p>已在 Obsidian 中打开：<code>${display}</code></p><script>setTimeout(function(){history.back()},400)</script></body>`, true);
+    });
+    this.server.listen(0, '127.0.0.1', () => {
+      const address = this.server.address();
+      this.port = typeof address === 'object' && address !== null ? address.port : 0;
+      this.plugin.service?.appendLog(`链接跳转服务已启动：http://127.0.0.1:${this.port}`);
+    });
+  }
+
+  get baseUrl() {
+    return this.port > 0 ? `http://127.0.0.1:${this.port}` : '';
+  }
+
+  stop() {
+    if (this.server !== null) {
+      this.server.close();
+      this.server = null;
+      this.port = 0;
+    }
+  }
 }
 
 // ── dsh detection ───────────────────────────────────────────────────────────
@@ -233,11 +300,13 @@ class DshService {
       throw new Error('未找到 dsh。请打开插件设置，点击“自动检测”，或先安装 DeepSeek Harness。');
     }
     const vaultPath = this.plugin.app.vault.adapter.getBasePath();
+    const linkBaseUrl = this.plugin.linkServer?.baseUrl ?? '';
     const env = {
       ...process.env,
       DSH_HOME: location.home,
       DSH_OBSIDIAN_VAULT: vaultPath,
-      DSH_SESSIONS_ROOT: join(location.home, 'sessions')
+      DSH_SESSIONS_ROOT: join(location.home, 'sessions'),
+      ...(linkBaseUrl === '' ? {} : { DSH_OBSIDIAN_LINK_URL: linkBaseUrl })
     };
     const args = location.script
       ? [location.script, '--profile', PRESET_NAME, '--port', String(this.plugin.settings.port)]
@@ -494,6 +563,8 @@ class DshObsidianMathPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
     this.service = new DshService(this);
+    this.linkServer = new LinkServer(this);
+    this.linkServer.start();
     this.registerView(VIEW_TYPE, (leaf) => new DshMathView(leaf, this));
     if (this.settings.showRibbon) {
       this.addRibbonIcon('message-square', '打开 DSH数学笔记助手', () => this.activateView());
@@ -592,6 +663,7 @@ class DshObsidianMathPlugin extends Plugin {
   }
 
   onunload() {
+    this.linkServer?.stop();
     if (this.service?.child !== null && !this.settings.keepAliveOnUnload) {
       this.service?.stop();
     }
