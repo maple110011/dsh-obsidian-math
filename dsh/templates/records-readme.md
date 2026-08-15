@@ -3,7 +3,7 @@
 > 本目录是**类型化原子记忆层**（借鉴 NapMem 的 typed memory records）：把每轮对话的证据提炼成一条条独立记录，位于原始事件（episodes）与主题/画像之间。
 > 设计依据：arXiv:2607.05794（NapMem）——原始对话之上需要一层可检索、可验证、可溯源的原子记录。
 
-## 记录类型（四类）
+## 记录类型（五类）
 
 | type | 含义 | 例子 |
 |---|---|---|
@@ -11,13 +11,14 @@
 | `event` | 发生过的事件/决定 | “2026-08-15 决定改用 3180 端口” |
 | `instruction` | 用户的长期指令/约定 | “关键想法默认写入备忘录” |
 | `preference` | 偏好/习惯/倾向 | “偏好构造性证明，先看例子” |
+| `artifact` | 证明工作产物 | 玩具例子、反例、分解计划、证明障碍、提取到的证明模式（吸收 Rethlas 的工作记忆设计） |
 
 ## 单条记录模板（`records/<slug>.md`）
 
 ```markdown
 ---
 id: rec-<slug>
-type: fact            # fact / event / instruction / preference
+type: fact            # fact / event / instruction / preference / artifact
 status: active        # active / superseded
 created: YYYY-MM-DD
 updated: YYYY-MM-DD

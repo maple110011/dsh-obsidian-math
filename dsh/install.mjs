@@ -145,6 +145,8 @@ function installVaultTemplates(options) {
     ["topics-index.md", join(".deepseek", "memory", "topics", "index.md")],
     ["records-readme.md", join(".deepseek", "memory", "records", "_README.md")],
     ["records-index.md", join(".deepseek", "memory", "records", "index.md")],
+    ["theorems-readme.md", join(".deepseek", "memory", "theorems", "_README.md")],
+    ["theorems-index.md", join(".deepseek", "memory", "theorems", "index.md")],
     ["episodes-readme.md", join(".deepseek", "memory", "episodes", "_README.md")],
     ["episodes-index.md", join(".deepseek", "memory", "episodes", "index.md")],
     ["inbox-readme.md", join(".deepseek", "inbox", "_README.md")],
