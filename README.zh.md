@@ -1,9 +1,6 @@
 # DSH Obsidian 数学笔记助手（dsh-obsidian-math）
 
-<p align="center">
-  <a href="README.zh.md"><img alt="中文文档" src="https://img.shields.io/badge/中文-切换到中文-blue?style=for-the-badge"></a>
-  <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/English-English_README-2ea043?style=for-the-badge"></a>
-</p>
+> 📄 本页为中文文档 · [**English README（Switch to English）**](https://github.com/maple110011/dsh-obsidian-math/blob/main/README.md)
 
 把 DeepSeek Harness 变成一个住在 Obsidian 右侧栏里的长期数学笔记助手。本仓库包含**两个相互配合的组件**：
 

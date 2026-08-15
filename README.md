@@ -1,9 +1,6 @@
 # DSH Math Notes Assistant
 
-<p align="center">
-  <a href="README.zh.md"><img alt="中文文档" src="https://img.shields.io/badge/中文-切换到中文-blue?style=for-the-badge"></a>
-  <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/English-English_README-2ea043?style=for-the-badge"></a>
-</p>
+> 📄 [**中文文档（切换到中文）**](https://github.com/maple110011/dsh-obsidian-math/blob/main/README.zh.md) · This page is the English README.
 
 A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) that lives inside [Obsidian](https://obsidian.md) as a right-sidebar chat panel. This repository ships **two cooperating components**:
 
