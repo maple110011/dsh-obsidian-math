@@ -485,6 +485,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     "回答细节问题时必须按路由规则读文件：",
     "- 精确事实 / 用户原话 / 日期数字 → 先 grep `.deepseek/memory/episodes/` 再读命中文件；",
     "- 类型化原子事实（fact/event/instruction/preference）→ 先看 `.deepseek/memory/records/index.md`，再 grep/读具体记录，记录里的 source 可回原始证据；",
+    "- 相关定理 / 命题 / 引理 → 先看 `.deepseek/memory/theorems/index.md`，再 grep 笔记全文并核对适用性；",
     "- 主题来龙去脉 → 先读 `.deepseek/memory/topics/index.md` 定位，再读 `topics/<slug>.md` 或相关笔记；",
     "- “当前最新状态” → 比较 frontmatter `updated` 或最新 episode 时间戳；",
     "- 检索不到就明说没有，不要编造。"
