@@ -7,7 +7,7 @@
 
 A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) that lives inside [Obsidian](https://obsidian.md) as a right-sidebar chat panel. This repository ships **two installable forms** of the same system:
 
-1. **Obsidian community plugin** — `dsh-obsidian-math` (repo-root `manifest.json` + `main.js`). It opens the dsh web UI in the right sidebar, detects and starts the dsh service automatically, and bootstraps the vault memory templates. No extra cmd window.
+1. **Obsidian community plugin** — plugin id `dsh-math-assistant` (repo-root `manifest.json` + `main.js`). It opens the dsh web UI in the right sidebar, detects and starts the dsh service automatically, and bootstraps the vault memory templates. No extra cmd window.
 2. **dsh plugin** — npm package `dsh-obsidian-math` (`dsh/`). Installs the `obsidian` agent preset and the `obsidian` profile into `$DSH_HOME`, plus optional vault templates.
 
 The agent deliberately keeps the **smallest possible toolset** — file read/write/search and `ask_user_question` — and adds a layered, paper-informed memory system.
@@ -55,7 +55,7 @@ settings or via `dsh --profile obsidian --port <n>`.
 
 ## Install A — Obsidian community plugin
 
-1. In Obsidian: **Settings → Community plugins → Browse**, search **DSH Obsidian Math Assistant**, install and enable. (For a manual install, copy `main.js`, `manifest.json`, `styles.css` from a GitHub release into `<vault>/.obsidian/plugins/dsh-obsidian-math/` and enable it.)
+1. In Obsidian: **Settings → Community plugins → Browse**, search **DSH Obsidian Math Assistant**, install and enable. (For a manual install, copy `main.js`, `manifest.json`, `styles.css` from a GitHub release into `<vault>/.obsidian/plugins/dsh-math-assistant/` and enable it.)
 2. The plugin auto-detects the dsh installation (PATH, npm global, or `DSH_HOME`'s parent). If detection fails, open the plugin settings and press **Detect** or enter the path (e.g. `E:\software\deepseek-harness`).
 3. On first run the plugin writes the `obsidian` agent preset and profile into `$DSH_HOME` (missing files only) and creates the vault memory templates (`AGENTS.md`, `.deepseek/...`). A settings button re-runs this bootstrap or forces a reinstall.
 4. The service starts automatically. Click the ribbon icon (message-square) or run the command **DSH Math Assistant: Open DSH Math Assistant**; drag the tab to the right sidebar once — Obsidian remembers the position.

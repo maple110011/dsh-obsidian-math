@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.1] - 2026-08-15
+
+### Changed
+
+- Obsidian plugin id renamed from `dsh-obsidian-math` to `dsh-math-assistant` to comply with the community directory rule that plugin ids must not contain `obsidian`.
+
 ## [0.1.0] - 2026-08-15
 
 ### Added

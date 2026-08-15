@@ -54,7 +54,7 @@ dsh 的 **web** profile 默认绑定 `127.0.0.1:3080`。本插件启动的是独
 
 ## 安装方式 A：Obsidian 社区插件
 
-1. Obsidian → 设置 → 第三方插件 → 浏览，搜索 **DSH Obsidian Math Assistant**，安装并启用。（手动安装：把 release 里的 `main.js`、`manifest.json`、`styles.css` 复制到 `<vault>/.obsidian/plugins/dsh-obsidian-math/` 后启用。）
+1. Obsidian → 设置 → 第三方插件 → 浏览，搜索 **DSH Obsidian Math Assistant**，安装并启用。（手动安装：把 release 里的 `main.js`、`manifest.json`、`styles.css` 复制到 `<vault>/.obsidian/plugins/dsh-math-assistant/` 后启用。）
 2. 插件会自动检测 dsh（PATH、npm 全局目录、`DSH_HOME` 的上级目录）；检测不到就在插件设置里点 **Detect** 或手动填路径（例如 `E:\software\deepseek-harness`）。
 3. 首次运行自动写入 `$DSH_HOME` 下的 preset/profile（只补缺失文件）和 vault 记忆模板（`AGENTS.md`、`.deepseek/...`）。设置页有 **Initialize** 与 **Reinstall (force)** 按钮。
 4. 服务自动启动；点左侧 ribbon 的 message-square 图标（或命令面板运行 “DSH Math Assistant: Open DSH Math Assistant”），把标签页拖到右侧栏一次，之后位置会被记住。

@@ -577,7 +577,7 @@ class DshObsidianMathPlugin extends Plugin {
       // ignored; openTabById below is the important part
     }
     try {
-      setting.openTabById('dsh-obsidian-math');
+      setting.openTabById(this.manifest.id);
     } catch {
       // older Obsidian: the settings root is already open
     }
