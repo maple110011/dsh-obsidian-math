@@ -1,5 +1,10 @@
 # DSH Obsidian Math Assistant
 
+<p align="center">
+  <a href="README.zh.md"><img alt="中文文档" src="https://img.shields.io/badge/中文-切换到中文-blue?style=for-the-badge"></a>
+  <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/English-English_README-2ea043?style=for-the-badge"></a>
+</p>
+
 A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) that lives inside [Obsidian](https://obsidian.md) as a right-sidebar chat panel. This repository ships **two installable forms** of the same system:
 
 1. **Obsidian community plugin** — `dsh-obsidian-math` (repo-root `manifest.json` + `main.js`). It opens the dsh web UI in the right sidebar, detects and starts the dsh service automatically, and bootstraps the vault memory templates. No extra cmd window.
@@ -26,6 +31,15 @@ The agent deliberately keeps the **smallest possible toolset** — file read/wri
 - Node.js ≥ 22.5.
 - DeepSeek Harness installed (npm global `@deepseek-ai/dsh`, or any local install reachable via the `dsh` command / configured path).
 - A configured DeepSeek model (the dsh Models page / `$DSH_HOME/settings.yaml`).
+
+### Why port 3180 instead of dsh's default 3080?
+
+The dsh **web** profile binds `127.0.0.1:3080` by default. This plugin boots its own
+**obsidian** profile as a separate service, and two processes cannot share one port.
+Using `3180` by default means the Obsidian assistant and a normally running
+`dsh web` (your regular coding sessions) can coexist on the same machine without
+either one failing with `EADDRINUSE`. The port is configurable in the plugin
+settings or via `dsh --profile obsidian --port <n>`.
 
 ## Install A — Obsidian community plugin
 

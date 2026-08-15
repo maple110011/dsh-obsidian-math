@@ -1,5 +1,10 @@
 # DSH Obsidian 数学笔记助手（dsh-obsidian-math）
 
+<p align="center">
+  <a href="README.zh.md"><img alt="中文文档" src="https://img.shields.io/badge/中文-切换到中文-blue?style=for-the-badge"></a>
+  <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/English-English_README-2ea043?style=for-the-badge"></a>
+</p>
+
 > 完整中文使用指南见 [`docs/使用指南.md`](docs/使用指南.md)。
 
 把 DeepSeek Harness 变成一个住在 Obsidian 右侧栏里的长期数学笔记助手。同一套系统以两种形态发布：
@@ -28,6 +33,14 @@ Agent 刻意保持**最小工具集**：`read / write / edit / glob / grep / rea
 - Node.js ≥ 22.5；
 - 已安装 DeepSeek Harness（npm 全局 `@deepseek-ai/dsh` 或任意本地安装，能被 `dsh` 命令/设置路径找到）；
 - 已配置 DeepSeek 模型。
+
+### 为什么默认端口是 3180，而不是 dsh 默认的 3080？
+
+dsh 的 **web** profile 默认绑定 `127.0.0.1:3080`。本插件启动的是独立的
+**obsidian** profile（另一个服务进程），两个进程不能同时占用同一个端口。
+默认用 `3180` 是为了让 Obsidian 助手和你日常使用的 `dsh web`（coding 会话）
+在同一台机器上互不冲突、同时运行，不会出现 `EADDRINUSE`。
+端口可以在插件设置里修改，或命令行 `dsh --profile obsidian --port <端口>`。
 
 ## 安装方式 A：Obsidian 社区插件
 
