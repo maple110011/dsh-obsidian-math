@@ -233,13 +233,23 @@ class DshService {
     const shell = !location.script && process.platform === 'win32';
     this.setStatus('starting');
     this.appendLog(`starting: ${executable} ${args.join(' ')}`);
-    this.child = spawn(executable, args, { env, windowsHide: true, shell, stdio: ['ignore', 'pipe', 'pipe'] });
-    this.child.stdout.on('data', (chunk) => this.appendLog(chunk));
-    this.child.stderr.on('data', (chunk) => this.appendLog(chunk));
-    this.child.on('exit', (code) => {
+    const child = spawn(executable, args, { env, windowsHide: true, shell, stdio: ['ignore', 'pipe', 'pipe'] });
+    this.child = child;
+    let spawnError = null;
+    child.stdout.on('data', (chunk) => this.appendLog(chunk));
+    child.stderr.on('data', (chunk) => this.appendLog(chunk));
+    // Without this handler a missing `node` binary throws an uncaught
+    // ChildProcess 'error' event and can take the whole plugin down.
+    child.on('error', (error) => {
+      spawnError = error;
+      this.appendLog(`spawn failed: ${String(error)}`);
+      if (this.child === child) this.child = null;
+      this.setStatus('error');
+    });
+    child.on('exit', (code) => {
       this.appendLog(`dsh exited with code ${code}`);
-      this.child = null;
-      if (this.status !== 'stopping') this.setStatus(code === 0 ? 'stopped' : 'error');
+      if (this.child === child) this.child = null;
+      if (this.status !== 'stopping' && spawnError === null) this.setStatus(code === 0 ? 'stopped' : 'error');
     });
     for (let attempt = 0; attempt < 60; attempt += 1) {
       await sleep(750);
@@ -258,8 +268,12 @@ class DshService {
     const child = this.child;
     this.child = null;
     if (child !== null && child.exitCode === null) {
+      const exited = new Promise((resolve) => {
+        child.once('exit', resolve);
+        setTimeout(resolve, 1500);
+      });
       child.kill();
-      await sleep(600);
+      await exited;
     }
     this.setStatus('stopped');
   }
@@ -347,11 +361,14 @@ class DshMathView extends ItemView {
     if (status === 'running') {
       this.statusRow.empty();
       this.statusRow.style.display = 'none';
+      const expectedSrc = `http://127.0.0.1:${this.plugin.settings.port}/`;
       if (this.iframe === null) {
         this.iframe = this.body.createEl('iframe', {
           cls: 'dsh-obsidian-math-iframe',
-          attr: { src: `http://127.0.0.1:${this.plugin.settings.port}/` }
+          attr: { src: expectedSrc }
         });
+      } else if (this.iframe.getAttribute('src') !== expectedSrc) {
+        this.iframe.setAttribute('src', expectedSrc);
       }
       return;
     }

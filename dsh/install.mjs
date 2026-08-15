@@ -28,13 +28,15 @@ const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PRESET_DIR = join(PACKAGE_ROOT, "dsh", "preset");
 const PROFILE_DIR = join(PACKAGE_ROOT, "dsh", "profile");
 const TEMPLATES_DIR = join(PACKAGE_ROOT, "dsh", "templates");
+// The Obsidian companion plugin and the shipped preset hard-code this name;
+// keeping it fixed in the CLI avoids the two drifting apart.
+const PROFILE_NAME = "obsidian";
 
 function parseArgs(argv) {
   const options = {
     command: "install",
     vault: "",
     dshHome: "",
-    profile: "obsidian",
     force: false,
     quiet: false,
     dryRun: false
@@ -45,7 +47,6 @@ function parseArgs(argv) {
       options.command = arg;
     } else if (arg === "--vault" || arg === "-v") options.vault = argv[++index] ?? "";
     else if (arg === "--dsh-home") options.dshHome = argv[++index] ?? "";
-    else if (arg === "--profile") options.profile = argv[++index] ?? "obsidian";
     else if (arg === "--force" || arg === "-f") options.force = true;
     else if (arg === "--quiet" || arg === "-q") options.quiet = true;
     else if (arg === "--dry-run") options.dryRun = true;
@@ -102,7 +103,7 @@ function resolveDshHome(options) {
 }
 
 function installPreset(options, dshHome) {
-  const presetRoot = join(dshHome, ".agent-presets", options.profile);
+  const presetRoot = join(dshHome, ".agent-presets", PROFILE_NAME);
   // Code always updates (bug fixes); user-editable metadata is preserved.
   copyFile(options, join(PRESET_DIR, "obsidian-memory.mjs"), join(presetRoot, "obsidian-memory.mjs"), true);
   copyFile(options, join(PRESET_DIR, "preset.yml"), join(presetRoot, "preset.yml"), options.force);
@@ -110,11 +111,29 @@ function installPreset(options, dshHome) {
 }
 
 function installProfile(options, dshHome) {
-  const profileRoot = join(dshHome, "profiles", options.profile);
+  const profileRoot = join(dshHome, "profiles", PROFILE_NAME);
   copyFile(options, join(PROFILE_DIR, "package.json"), join(profileRoot, "package.json"), !existsSync(join(profileRoot, "package.json")) || options.force);
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
   copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), join(profileRoot, "cordis.patch.yml"), !existsSync(join(profileRoot, "cordis.patch.yml")) || options.force);
   copyFile(options, join(PROFILE_DIR, "pnpm-workspace.yaml"), join(profileRoot, "pnpm-workspace.yaml"), !existsSync(join(profileRoot, "pnpm-workspace.yaml")));
+}
+
+/** Warn when the global home patch references skin bundles the minimal profile does not mount. */
+function warnAboutHomePatch(options, dshHome) {
+  const patchPath = join(dshHome, "cordis.patch.yml");
+  let content;
+  try {
+    content = readFileSync(patchPath, "utf8");
+  } catch {
+    return;
+  }
+  if (/linxin666|dsh-skins|ui-skin/i.test(content)) {
+    log(options, "");
+    log(options, "NOTE: $DSH_HOME/cordis.patch.yml references dsh skin bundles (@linxin666/...).");
+    log(options, "The generated obsidian profile only mounts dsh-base + dsh-web-app, so those");
+    log(options, "skin patch entries will fail to apply. Either remove the skin entries from the");
+    log(options, "global patch or add the skin bundles to $DSH_HOME/profiles/obsidian/package.json.");
+  }
 }
 
 function installVaultTemplates(options) {
@@ -137,9 +156,9 @@ function installVaultTemplates(options) {
 function statusCommand(options, dshHome) {
   console.log(`DSH_HOME: ${dshHome}`);
   for (const relative of [
-    join(".agent-presets", options.profile, "agent.cordis.yml"),
-    join("profiles", options.profile, "package.json"),
-    join("profiles", options.profile, "cordis.patch.yml")
+    join(".agent-presets", PROFILE_NAME, "agent.cordis.yml"),
+    join("profiles", PROFILE_NAME, "package.json"),
+    join("profiles", PROFILE_NAME, "cordis.patch.yml")
   ]) {
     const path = join(dshHome, relative);
     console.log(`${existsSync(path) ? "[ok]" : "[missing]"} ${path}`);
@@ -158,9 +177,10 @@ function main() {
   installPreset(options, dshHome);
   installProfile(options, dshHome);
   installVaultTemplates(options);
+  warnAboutHomePatch(options, dshHome);
   log(options, "");
   log(options, "Done. Start the Obsidian mode with:");
-  log(options, `  dsh --profile ${options.profile} --port 3180`);
+  log(options, `  dsh --profile ${PROFILE_NAME} --port 3180`);
   log(options, "Or install the companion Obsidian community plugin: it starts this service automatically.");
 }
 

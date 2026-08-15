@@ -25,6 +25,14 @@
     "agent",
     "notes"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maple110011/dsh-obsidian-math.git"
+  },
+  "bugs": {
+    "url": "https://github.com/maple110011/dsh-obsidian-math/issues"
+  },
+  "homepage": "https://github.com/maple110011/dsh-obsidian-math#readme",
   "license": "MIT",
   "engines": {
     "node": ">=22.5"
