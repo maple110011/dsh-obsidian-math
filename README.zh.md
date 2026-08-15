@@ -101,7 +101,9 @@ vault/
     memory/topics/index.md       导航层：主题路由索引
     memory/topics/<topic>.md     主题细节
     memory/records/index.md      记录层：类型化原子记录索引
-    memory/records/<slug>.md     原子记忆卡（fact/event/instruction/preference，带来源链接）
+    memory/records/<slug>.md     原子记忆卡（fact/event/instruction/preference/artifact，带来源链接）
+    memory/theorems/index.md     定理索引（个人 Matlas）
+    memory/templates/            问题模板库（题型/解法模板 ↔ 定理关联图）
     memory/episodes/index.md     事件时间线
     memory/episodes/YYYY-MM-DD-*.md  原始事件卡（append-only）
     inbox/index.md               备忘录状态索引

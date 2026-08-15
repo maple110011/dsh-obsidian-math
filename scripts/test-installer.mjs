@@ -23,6 +23,9 @@ const checks = [
   join(vault, 'AGENTS.md'),
   join(vault, '.deepseek', 'memory', 'profile.md'),
   join(vault, '.deepseek', 'memory', 'topics', 'index.md'),
+  join(vault, '.deepseek', 'memory', 'records', 'index.md'),
+  join(vault, '.deepseek', 'memory', 'theorems', 'index.md'),
+  join(vault, '.deepseek', 'memory', 'templates', 'index.md'),
   join(vault, '.deepseek', 'memory', 'episodes', 'index.md'),
   join(vault, '.deepseek', 'inbox', 'index.md')
 ];

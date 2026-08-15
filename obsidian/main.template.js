@@ -382,7 +382,9 @@ function archiveOldEpisodes(plugin, maxDays = 90) {
         target = join(archiveDir, entry.name.replace(/\.md$/, `-${suffix}.md`));
       }
       renameSync(source, target);
-      moved.push({ name: entry.name, target: join('archive', entry.name.replace(/\.md$/, suffix === 1 ? '.md' : `-${suffix}.md`)) });
+      // Obsidian wikilinks always use forward slashes, even on Windows.
+      const archivedName = suffix === 1 ? entry.name : entry.name.replace(/\.md$/, `-${suffix}.md`);
+      moved.push({ name: entry.name, linkName: `archive/${archivedName}` });
     } catch {
       // Leave the file in place on any maintenance failure.
     }
@@ -393,8 +395,10 @@ function archiveOldEpisodes(plugin, maxDays = 90) {
       try {
         let indexText = readFileSync(indexPath, 'utf8');
         for (const item of moved) {
-          indexText = indexText.replaceAll(`[[${item.name.replace(/\.md$/, '')}|`, `[[${item.target.replace(/\.md$/, '')}|`);
-          indexText = indexText.replaceAll(`[[${item.name.replace(/\.md$/, '')}]]`, `[[${item.target.replace(/\.md$/, '')}]]`);
+          const oldStem = item.name.replace(/\.md$/, '');
+          const newStem = item.linkName.replace(/\.md$/, '');
+          indexText = indexText.replaceAll(`[[${oldStem}|`, `[[${newStem}|`);
+          indexText = indexText.replaceAll(`[[${oldStem}]]`, `[[${newStem}]]`);
         }
         writeFileSync(indexPath, indexText, 'utf8');
       } catch {

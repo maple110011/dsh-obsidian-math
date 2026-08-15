@@ -522,10 +522,10 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   if (memos !== "") {
     lines.push("", "### 备忘录状态与提醒候选（.deepseek/inbox/，AI 维护）", "", memos,
       "", "当本轮讨论与上述某条 memo 明显相关（新证据、新反例、可推进其“待打磨”清单）时，",
-      "按 AGENTS.md 第 5 节在回复末尾给出“🔔 备忘录提醒”并用 ask_user_question 询问是否现在打磨；",
+      "按 AGENTS.md 第 6 节在回复末尾给出“🔔 备忘录提醒”并用 ask_user_question 询问是否现在打磨；",
       "每条 memo 每天最多提醒一次，提醒后把它的 last_reminded 更新为当天日期。");
   } else {
-    lines.push("", "### 备忘录状态与提醒候选", "", "（.deepseek/inbox/ 尚无 memo。捕捉到新想法并经用户同意后，按 AGENTS.md 第 5 节创建。）");
+    lines.push("", "### 备忘录状态与提醒候选", "", "（.deepseek/inbox/ 尚无 memo。捕捉到新想法并经用户同意后，按 AGENTS.md 第 6 节创建。）");
   }
 
   // Past-dialogue cues: newest first, at most MAX_DIALOGUE_PAIRS Q/A pairs.
