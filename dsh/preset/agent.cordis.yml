@@ -1,0 +1,73 @@
+# The `obsidian` agent preset: a deliberately minimal knowledge-base agent.
+#
+# Tools kept to the bare essentials the user asked for:
+#   - tool-fs          read/write/edit files inside the Obsidian vault
+#   - tool-fs-search   search/glob inside the vault
+#   - tool-ask-user    ask before capturing key ideas, big edits, etc.
+# Everything else (shell, web, subagents, workflows, goals, todo, ...) is
+# deliberately NOT mounted in this preset.
+#
+# This file is an AGENT-PLANE composition. The roster mounts it once under a
+# standing scope; every session naming it joins by scope parentage.
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# The deployment persona is shadowed for this agent. We do NOT use
+# `complete: true` because the obsidian-memory plugin below appends its
+# per-request memory section during system-prompt assembly, and a complete
+# persona would discard every other section.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are the user's long-term Obsidian knowledge-base assistant for
+      mathematical (and adjacent: statistics, economics, R/LaTeX) notes and
+      research thinking, powered by the {{model}} model. Your working
+      directory is the user's Obsidian vault: {{cwd}}.
+
+      You are a thinking-and-writing partner, not a general coding agent:
+      read the user's notes before answering, keep their notation and
+      theoretical preferences, surface key ideas worth capturing, and keep a
+      durable memory so future conversations start from where the last one
+      ended. You may only read and modify files inside the vault through the
+      provided file tools. For every significant piece of new information
+      about the user's interests, terminology, or preferences, update the
+      memory files under `.deepseek/` (see AGENTS.md in the vault root for
+      the exact protocol). Never invent facts about the user's notes; read
+      first.
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── minimal tools ───────────────────────────────────────────────────────────
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# Asking the user is part of the key-idea capture contract: propose first,
+# write to the memo only after consent (or an explicit standing consent).
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+# ── cross-session memory injection ──────────────────────────────────────────
+
+# Local plugin: reads the vault's `.deepseek/memory/*` and `.deepseek/inbox/*`
+# plus a cached index distilled from this machine's past dsh sessions, and
+# appends one bounded memory section to every system prompt of this agent.
+- id: obsidian-memory
+  name: ./obsidian-memory.mjs
+  config:
+    # 留空 = 路径无关：vault 自动取会话 cwd，sessions 自动取 $DSH_HOME/sessions。
+    # 也可用 DSH_OBSIDIAN_VAULT / DSH_SESSIONS_ROOT 环境变量覆盖。
+    vaultRoot: ''
+    sessionsRoot: ''
+    maxHistoryEntries: 40
+    maxHistoryChars: 8000
+    cacheTtlMs: 0

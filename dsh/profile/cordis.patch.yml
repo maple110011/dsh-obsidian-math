@@ -1,0 +1,24 @@
+# Obsidian mode patch layer, applied after dsh-base + dsh-web-app.
+#
+# A patch replaces the targeted row's whole config, so each row below
+# restates the keys it owns.
+
+# The agent this profile defaults to: only file read/write/search + ask_user,
+# plus the cross-session memory plugin.
+- id: agent-presets
+  config:
+    default: obsidian
+    includeUserRoot: true
+
+# Confine every model write to the Obsidian vault (reads stay unrestricted,
+# matching the harness read model). Set DSH_OBSIDIAN_VAULT to override the
+# machine-local default without editing this file.
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()
+
+# Default relative-path root for the filesystem backend.
+- id: fs-sandbox
+  config:
+    cwd: !!js process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()

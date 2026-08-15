@@ -1,0 +1,32 @@
+{
+  "name": "dsh-obsidian-math",
+  "version": "1.0.0",
+  "description": "Obsidian side-panel math memory agent for DeepSeek Harness: minimal file tools, layered long-term memory, idea memo with proactive review reminders. Ships as both a dsh plugin and an Obsidian community plugin.",
+  "type": "module",
+  "bin": {
+    "dsh-obsidian-math": "./dsh/install.mjs"
+  },
+  "files": [
+    "dsh/",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node dsh/install.mjs install --quiet",
+    "test": "node --check dsh/install.mjs && node --check main.js && node -e \"import('./dsh/preset/obsidian-memory.mjs').then(m=>console.log('preset ok:', m.name))\""
+  },
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "obsidian",
+    "memory",
+    "math",
+    "agent",
+    "notes"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5"
+  }
+}
