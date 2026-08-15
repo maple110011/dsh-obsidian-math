@@ -12,34 +12,34 @@ A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek
 
 **How they relate:** both components write identical, idempotent dsh configuration. Most users only need component 1 — installing the Obsidian plugin is enough. Use component 2 when you want the dsh mode without the Obsidian plugin, or when you prefer to install/update the dsh side from the command line.
 
+## Problems solved
+
+1. **“I asked this before and forgot.”** Valuable context gets scattered across past AI conversations; after a while you re-ask from zero and the model re-guesses your focus, notation, and theoretical preferences. This plugin gives the agent a **durable layered memory** (profile + topic index + raw episode evidence) and injects a bounded digest of past dsh conversations into every new session, so it starts from where the last conversation ended instead of from scratch.
+2. **“Writing notes means repeatedly sending md files to the AI.”** The assistant lives inside Obsidian's right sidebar and only has file tools (read/write/search plus dedicated note tools). Untangling structure, completing details, reviewing a draft, and finding problems all happen in place on the vault — no more copy-pasting notes back and forth.
+3. **“Key mathematical ideas slip away.”** General math heuristics, techniques, and viewpoints that surface during conversations are easy to lose. The agent proactively proposes `💡 可捕捉的想法`, writes them (with your consent) into a memo library with lifecycle `inbox → polishing → done`, and the plugin re-surfaces related or stale memos with `🔔 备忘录提醒` — prompting you to polish exactly when new related ideas appear.
+
 ### What this repository contains and where it lands
 
 | In this repo | What it is | Installed to |
 |---|---|---|
 | repo-root `main.js` / `manifest.json` / `styles.css` | Obsidian community plugin (id `dsh-math-assistant`) | `<vault>/.obsidian/plugins/dsh-math-assistant/` |
-| `dsh/preset/` (`preset.yml`, `agent.cordis.yml`, `obsidian-memory.mjs`) | dsh **agent preset** `obsidian` (minimal tools + memory plugin) | `$DSH_HOME/.agent-presets/obsidian/` |
+| `dsh/preset/` (`preset.yml`, `agent.cordis.yml`, `obsidian-memory.mjs`, `obsidian-notes.mjs`) | dsh **agent preset** `obsidian` (minimal tools + memory plugin + dedicated note tools) | `$DSH_HOME/.agent-presets/obsidian/` |
 | `dsh/profile/` (`package.json`, `cordis.patch.yml`, …) | dsh **profile** `obsidian` (web app + fail-closed sandbox) | `$DSH_HOME/profiles/obsidian/` |
 | `dsh/templates/` | Vault memory templates (`AGENTS.md`, `.deepseek/**`) | `<vault>/AGENTS.md`, `<vault>/.deepseek/**` |
 | `dsh/install.mjs` | npm CLI `dsh-obsidian-math` that writes the above | npm global bin |
 
-Note: the dsh side is **not** a Cordis bundle — it is an **agent preset + profile + installer** (the Obsidian plugin embeds and bootstraps the same files automatically). Planned for 0.2.0: dedicated `note_search` / `note_create` / `note_links` tools with tag filtering, overwrite protection, and backlink queries.
+Note: the dsh side is **not** a Cordis bundle — it is an **agent preset + profile + installer** (the Obsidian plugin embeds and bootstraps the same files automatically). Since 0.3.0 it mounts three dedicated note tools: `note_search` (text search with optional tag filtering), `note_create` (new notes only — refuses to overwrite), and `note_links` (wikilink backlink queries).
 
-The agent deliberately keeps the **smallest possible toolset** — file read/write/search and `ask_user_question` — and adds a layered, paper-informed memory system.
-
-## Problems solved
-
-1. **“I asked this before and forgot.”** Valuable context gets scattered across past AI conversations; after a while you re-ask from zero and the model re-guesses your focus, notation, and theoretical preferences. This plugin gives the agent a **durable layered memory** (profile + topic index + raw episode evidence) and injects a bounded digest of past dsh conversations into every new session, so it starts from where the last conversation ended instead of from scratch.
-2. **“Writing notes means repeatedly sending md files to the AI.”** The assistant lives inside Obsidian's right sidebar and only has file read/write/search tools. Untangling structure, completing details, reviewing a draft, and finding problems all happen in place on the vault — no more copy-pasting notes back and forth.
-3. **“Key mathematical ideas slip away.”** General math heuristics, techniques, and viewpoints that surface during conversations are easy to lose. The agent proactively proposes `💡 可捕捉的想法`, writes them (with your consent) into a memo library with lifecycle `inbox → polishing → done`, and the plugin re-surfaces related or stale memos with `🔔 备忘录提醒` — prompting you to polish exactly when new related ideas appear.
+The agent deliberately keeps the **smallest possible toolset** — file read/write/search, `ask_user_question`, and the three dedicated note tools — and adds a layered, paper-informed memory system.
 
 ## Scope & limitations
 
 - **Math-focused by design.** The memory layers, typed records, review workflow, and idea-memo reminders are tuned for math-adjacent knowledge (mathematics and statistics: concepts, propositions, proofs, methods). Different knowledge domains — codebases, law, medicine, engineering workflows — typically need different memory granularity and retrieval protocols; do not assume this design transfers unchanged.
-- **Prototype status (0.1.x).** The memory architecture has **not** been through long-term usage testing or systematic benchmark evaluation. Layer boundaries, record types, and reminder policies are expected to evolve. The design draws on [arXiv:2606.24775](https://arxiv.org/abs/2606.24775), [arXiv:2607.05794](https://arxiv.org/abs/2607.05794), the proof-workflow ideas of Rethlas in [arXiv:2604.03789](https://arxiv.org/abs/2604.03789), and the template-theorems graph idea from [AAAI-26: Template-Theorems Graph Construction](https://ojs.aaai.org/index.php/AAAI/article/view/40411); a more complete agent-native memory architecture remains future work.
+- **Prototype status (0.3.x).** The memory architecture has **not** been through long-term usage testing or systematic benchmark evaluation. Layer boundaries, record types, and reminder policies are expected to evolve. The design draws on [arXiv:2606.24775](https://arxiv.org/abs/2606.24775), [arXiv:2607.05794](https://arxiv.org/abs/2607.05794), the proof-workflow ideas of Rethlas in [arXiv:2604.03789](https://arxiv.org/abs/2604.03789), and the template-theorems graph idea from [AAAI-26: Template-Theorems Graph Construction](https://ojs.aaai.org/index.php/AAAI/article/view/40411); a more complete agent-native memory architecture remains future work.
 
 ## Highlights
 
-- **Minimal agent surface**: `read`, `write`, `edit`, `glob`, `grep`, `read_image`, `ask_user_question`. No shell, no web tools, no subagents.
+- **Minimal agent surface**: `read`, `write`, `edit`, `glob`, `grep`, `read_image`, `ask_user_question`, plus dedicated note tools `note_search` (tag filtering), `note_create` (overwrite protection), `note_links` (backlink queries). No shell, no web tools, no subagents.
 - **Layered long-term memory** (informed by [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) and [arXiv:2607.05794](https://arxiv.org/abs/2607.05794)):
   - `profile.md` — semantic layer: stable preferences, notation, standing authorizations;
   - `topics/` — navigation layer: topic index and per-topic details;

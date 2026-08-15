@@ -1,6 +1,7 @@
 /**
  * obsidian-memory — cross-session memory injection for the `obsidian` dsh
- * agent preset.
+ * agent preset. It also applies the sibling obsidian-notes.mjs plugin on the
+ * same context, which registers note_search / note_create / note_links.
  *
  * What it does, on every system-prompt assembly for this agent:
  *   1. Reads the vault's durable memory files (`.deepseek/memory/*` and a
@@ -35,7 +36,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 export const name = "obsidian-memory";
-export const inject = ["systemPrompt"];
+export const inject = ["tools", "fs", "systemPrompt"];
 
 const ZSTD_MAGIC = 4247762216; // little-endian 28 B5 2F FD
 const MEMORY_DIR = ".deepseek";
@@ -701,8 +702,8 @@ class MemoryEngine {
 
 // ── Cordis plugin entry ─────────────────────────────────────────────────────
 
-export function apply(ctx, config) {
-  const engine = new MemoryEngine(config);
+export async function apply(ctx, config) {
+  const engine = new MemoryEngine(config ?? {});
   ctx.on("system-prompt/assemble", async (assembly, context, next) => {
     const assembled = await next();
     if (context?.agent === undefined) return assembled;
@@ -713,4 +714,12 @@ export function apply(ctx, config) {
       sections: [...assembled.sections, { name: "obsidian:memory", text }]
     };
   });
+
+  // Apply the dedicated note tools (note_search / note_create / note_links)
+  // on the same context. This file is always refreshed on upgrade, so existing
+  // installations pick the tools up even though agent.cordis.yml preserves
+  // user edits. The sibling module resolves `defineTool` through the harness
+  // loader, so it works from any $DSH_HOME location.
+  const notes = await import("./obsidian-notes.mjs");
+  await notes.apply(ctx, config?.notes ?? {});
 }

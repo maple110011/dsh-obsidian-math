@@ -9,7 +9,7 @@
  *
  * What it writes (idempotent; existing user edits are preserved unless
  * --force is given):
- *   $DSH_HOME/.agent-presets/obsidian/   agent preset (files-only tools + memory plugin)
+ *   $DSH_HOME/.agent-presets/obsidian/   agent preset (file tools + dedicated note tools + memory plugin)
  *   $DSH_HOME/profiles/obsidian/         the `dsh --profile obsidian` profile
  *   <vault>/.deepseek/...                optional vault memory templates (when --vault is given)
  */
@@ -106,6 +106,7 @@ function installPreset(options, dshHome) {
   const presetRoot = join(dshHome, ".agent-presets", PROFILE_NAME);
   // Code always updates (bug fixes); user-editable metadata is preserved.
   copyFile(options, join(PRESET_DIR, "obsidian-memory.mjs"), join(presetRoot, "obsidian-memory.mjs"), true);
+  copyFile(options, join(PRESET_DIR, "obsidian-notes.mjs"), join(presetRoot, "obsidian-notes.mjs"), true);
   copyFile(options, join(PRESET_DIR, "preset.yml"), join(presetRoot, "preset.yml"), options.force);
   copyFile(options, join(PRESET_DIR, "agent.cordis.yml"), join(presetRoot, "agent.cordis.yml"), options.force);
 }

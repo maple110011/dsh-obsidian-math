@@ -4,6 +4,9 @@
 #   - tool-fs          read/write/edit files inside the Obsidian vault
 #   - tool-fs-search   search/glob inside the vault
 #   - tool-ask-user    ask before capturing key ideas, big edits, etc.
+#   - obsidian-notes   dedicated note tools: note_search (tag filtering),
+#                      note_create (refuses overwrite), note_links (backlinks)
+#                      (applied by obsidian-memory below, which always updates)
 # Everything else (shell, web, subagents, workflows, goals, todo, ...) is
 # deliberately NOT mounted in this preset.
 #
@@ -56,11 +59,16 @@
 - id: tool-ask-user
   name: '@deepseek-ai/dsh-tool-ask-user'
 
-# ── cross-session memory injection ──────────────────────────────────────────
+# ── cross-session memory injection + dedicated note tools ────────────────────
 
 # Local plugin: reads the vault's `.deepseek/memory/*` and `.deepseek/inbox/*`
 # plus a cached index distilled from this machine's past dsh sessions, and
 # appends one bounded memory section to every system prompt of this agent.
+#
+# It also applies ./obsidian-notes.mjs on the same context. Because this
+# plugin's code is always refreshed on upgrade (while this YAML preserves user
+# edits), composing the note tools from here is what lets existing 0.2.0
+# installations pick up note_search / note_create / note_links automatically.
 - id: obsidian-memory
   name: ./obsidian-memory.mjs
   config:
@@ -71,3 +79,9 @@
     maxHistoryEntries: 40
     maxHistoryChars: 8000
     cacheTtlMs: 0
+    notes:
+      # 留空 = 路径无关：vault 自动取会话 cwd 或 DSH_OBSIDIAN_VAULT。
+      vaultRoot: ''
+      maxSearchResults: 50
+      maxNoteBytes: 1048576
+      excludePatterns: ['.obsidian', '.trash', '.git', 'node_modules']

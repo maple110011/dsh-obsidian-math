@@ -12,34 +12,34 @@
 
 **两者关系**：写入的 dsh 配置完全相同、幂等、可互换。大多数用户**只装组件 1（Obsidian 插件）就足够**；组件 2 用于“不用 Obsidian 插件、只想要 `dsh --profile obsidian`”的场景，或想用命令行显式安装/更新 dsh 侧配置的场景。
 
+## 解决的痛点
+
+1. **“这个问题我问过，但忘了。”** 有价值的信息散落在以往与 AI 的对话里，时间一久只能重新问，AI 每次都要从零猜测你的关注点、记号习惯和理论偏好。本插件给 agent 一套**持久分层记忆**（画像 + 主题索引 + 原始事件证据），并把本机历史 dsh 会话的摘要注入每个新会话——它从上一次对话结束的地方开始，而不是从零开始。
+2. **“写笔记总要反复把 md 发给 AI。”** 助手直接住在 Obsidian 右侧栏，只有文件工具（读写/搜索 + 专用笔记工具）。理思路、补细节、审阅、找问题都在 vault 原地完成，不再复制粘贴往返。
+3. **“关键数学想法容易溜走。”** 对话中浮现的一般性数学思路、方法、技巧、观点稍纵即逝。agent 会主动给出 `💡 可捕捉的想法`，经你同意写入备忘录库（`inbox → polishing → done`），插件还会在出现新关联想法或条目久未更新时用 `🔔 备忘录提醒` 催你打磨。
+
 ### 仓库包含什么、各自安装到哪里
 
 | 仓库文件 | 是什么 | 安装位置 |
 |---|---|---|
 | 仓库根 `main.js` / `manifest.json` / `styles.css` | Obsidian 社区插件（id `dsh-math-assistant`） | `<vault>/.obsidian/plugins/dsh-math-assistant/` |
-| `dsh/preset/`（`preset.yml`、`agent.cordis.yml`、`obsidian-memory.mjs`） | dsh **agent preset** `obsidian`（最小工具集 + 记忆插件） | `$DSH_HOME/.agent-presets/obsidian/` |
+| `dsh/preset/`（`preset.yml`、`agent.cordis.yml`、`obsidian-memory.mjs`、`obsidian-notes.mjs`） | dsh **agent preset** `obsidian`（最小工具集 + 记忆插件 + 专用笔记工具） | `$DSH_HOME/.agent-presets/obsidian/` |
 | `dsh/profile/`（`package.json`、`cordis.patch.yml` 等） | dsh **profile** `obsidian`（web 界面 + fail-closed 沙箱） | `$DSH_HOME/profiles/obsidian/` |
 | `dsh/templates/` | vault 记忆模板（`AGENTS.md`、`.deepseek/**`） | `<vault>/AGENTS.md`、`<vault>/.deepseek/**` |
 | `dsh/install.mjs` | npm CLI `dsh-obsidian-math`，负责把上面这些写到位 | npm 全局 bin |
 
-注意：dsh 侧**不是** Cordis bundle，而是 **agent preset + profile + 安装器** 的组合（Obsidian 插件内嵌并自动初始化同一套文件）。计划在 0.2.0 增加专用工具：`note_search`（tag 过滤）、`note_create`（拒绝覆盖）、`note_links`（反链查询）。
+注意：dsh 侧**不是** Cordis bundle，而是 **agent preset + profile + 安装器** 的组合（Obsidian 插件内嵌并自动初始化同一套文件）。自 0.3.0 起挂载三个专用笔记工具：`note_search`（全文搜索 + 可选 tag 过滤）、`note_create`（只新建，**拒绝覆盖**已有笔记）、`note_links`（wikilink 反链查询）。
 
-Agent 刻意保持**最小工具集**：`read / write / edit / glob / grep / read_image / ask_user_question`，并附带分层长期记忆系统。
-
-## 解决的痛点
-
-1. **“这个问题我问过，但忘了。”** 有价值的信息散落在以往与 AI 的对话里，时间一久只能重新问，AI 每次都要从零猜测你的关注点、记号习惯和理论偏好。本插件给 agent 一套**持久分层记忆**（画像 + 主题索引 + 原始事件证据），并把本机历史 dsh 会话的摘要注入每个新会话——它从上一次对话结束的地方开始，而不是从零开始。
-2. **“写笔记总要反复把 md 发给 AI。”** 助手直接住在 Obsidian 右侧栏，只有文件读写/搜索工具。理思路、补细节、审阅、找问题都在 vault 原地完成，不再复制粘贴往返。
-3. **“关键数学想法容易溜走。”** 对话中浮现的一般性数学思路、方法、技巧、观点稍纵即逝。agent 会主动给出 `💡 可捕捉的想法`，经你同意写入备忘录库（`inbox → polishing → done`），插件还会在出现新关联想法或条目久未更新时用 `🔔 备忘录提醒` 催你打磨。
+Agent 刻意保持**最小工具集**：`read / write / edit / glob / grep / read_image / ask_user_question`，外加上述三个专用笔记工具，并附带分层长期记忆系统。
 
 ## 适用范围与局限
 
 - **面向数学类知识设计**：记忆分层、类型化记录、审阅工作流与想法备忘录提醒都是围绕数学相关领域（数学、统计学：概念-命题-证明-方法）调校的。不同领域的知识（代码库、法律、医学、工程流程等）通常需要不同的记忆粒度与检索协议，不要默认这套设计可以原样迁移。
-- **试做型（0.1.x）**：当前记忆架构**尚未**经过长期使用测试，也没有系统的基准评测；分层边界、记录类型、提醒策略都可能继续演进。设计借鉴了 [arXiv:2606.24775](https://arxiv.org/abs/2606.24775)、[arXiv:2607.05794](https://arxiv.org/abs/2607.05794)、[arXiv:2604.03789](https://arxiv.org/abs/2604.03789)（Rethlas 的证明工作流），以及 [AAAI-26《Template-Theorems Graph Construction》](https://ojs.aaai.org/index.php/AAAI/article/view/40411)（问题模板-定理关联图）；更完善的 agent-native 记忆架构仍是后续研究课题。
+- **试做型（0.3.x）**：当前记忆架构**尚未**经过长期使用测试，也没有系统的基准评测；分层边界、记录类型、提醒策略都可能继续演进。设计借鉴了 [arXiv:2606.24775](https://arxiv.org/abs/2606.24775)、[arXiv:2607.05794](https://arxiv.org/abs/2607.05794)、[arXiv:2604.03789](https://arxiv.org/abs/2604.03789)（Rethlas 的证明工作流），以及 [AAAI-26《Template-Theorems Graph Construction》](https://ojs.aaai.org/index.php/AAAI/article/view/40411)（问题模板-定理关联图）；更完善的 agent-native 记忆架构仍是后续研究课题。
 
 ## 特性
 
-- **最小工具面**：没有 shell、没有网页工具、没有子代理。
+- **最小工具面**：`read / write / edit / glob / grep / read_image / ask_user_question`，外加专用笔记工具 `note_search`（tag 过滤）、`note_create`（拒绝覆盖）、`note_links`（反链查询）。没有 shell、没有网页工具、没有子代理。
 - **五层长期记忆**（依据 [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) 与 [arXiv:2607.05794](https://arxiv.org/abs/2607.05794)）：
   - `profile.md` 语义层：稳定偏好、记号、长期授权；
   - `topics/` 导航层：主题索引与细节；

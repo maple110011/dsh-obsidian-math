@@ -3,8 +3,9 @@
 # A patch replaces the targeted row's whole config, so each row below
 # restates the keys it owns.
 
-# The agent this profile defaults to: only file read/write/search + ask_user,
-# plus the cross-session memory plugin.
+# The agent this profile defaults to: file read/write/search, dedicated note
+# tools (note_search / note_create / note_links), ask_user, plus the
+# cross-session memory plugin.
 - id: agent-presets
   config:
     default: obsidian

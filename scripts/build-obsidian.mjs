@@ -16,6 +16,7 @@ const preset = {
   "preset.yml": readFileSync(join(root, "dsh", "preset", "preset.yml"), "utf8"),
   "agent.cordis.yml": readFileSync(join(root, "dsh", "preset", "agent.cordis.yml"), "utf8"),
   "obsidian-memory.mjs": readFileSync(join(root, "dsh", "preset", "obsidian-memory.mjs"), "utf8"),
+  "obsidian-notes.mjs": readFileSync(join(root, "dsh", "preset", "obsidian-notes.mjs"), "utf8"),
   "profile-package.json": readFileSync(join(root, "dsh", "profile", "package.json"), "utf8"),
   "profile-cordis.yml": readFileSync(join(root, "dsh", "profile", "cordis.yml"), "utf8"),
   "profile-cordis.patch.yml": readFileSync(join(root, "dsh", "profile", "cordis.patch.yml"), "utf8"),
@@ -39,8 +40,11 @@ const templates = {
 };
 
 const main = template
-  .replace('"__PRESET_JSON__"', JSON.stringify(JSON.stringify(preset)))
-  .replace('"__TEMPLATE_JSON__"', JSON.stringify(JSON.stringify(templates)));
+  // Use replacement functions, not replacement strings: the embedded files
+  // contain sequences like `$&` / `` $` `` that String.replace would otherwise
+  // interpret as match-substitution patterns and corrupt the bundle.
+  .replace('"__PRESET_JSON__"', () => JSON.stringify(JSON.stringify(preset)))
+  .replace('"__TEMPLATE_JSON__"', () => JSON.stringify(JSON.stringify(templates)));
 
 const target = join(root, "main.js");
 writeFileSync(target, main, "utf8");

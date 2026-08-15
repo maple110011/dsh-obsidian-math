@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0] - 2026-08-15
+
+### Added
+
+- Three dedicated note tools in the `obsidian` agent preset, registered via `defineTool` (`dsh/preset/obsidian-notes.mjs`):
+  - `note_search` — full-text vault search with optional tag filtering;
+  - `note_create` — create a new note only, refusing to overwrite existing notes;
+  - `note_links` — wikilink backlink queries (one note or the whole vault).
+- The note tools are applied through `obsidian-memory.mjs` (always refreshed on update), so existing 0.2.0 installations activate them without a forced preset reinstall.
+
+### Changed
+
+- READMEs reordered so the "Problems solved" section appears right after the introduction.
+- Version references updated across README, vault `AGENTS.md`, preset description, and plugin settings tab.
+
 ## [0.2.0] - 2026-08-15
 
 ### Added
