@@ -5,10 +5,12 @@
   <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/English-English_README-2ea043?style=for-the-badge"></a>
 </p>
 
-把 DeepSeek Harness 变成一个住在 Obsidian 右侧栏里的长期数学笔记助手。同一套系统以两种形态发布：
+把 DeepSeek Harness 变成一个住在 Obsidian 右侧栏里的长期数学笔记助手。本仓库包含**两个相互配合的组件**：
 
-1. **Obsidian 社区插件**（仓库根 `manifest.json` + `main.js`）：右侧栏嵌入 dsh Web UI、自动检测并启动 dsh 服务、自动初始化 vault 记忆模板——不需要任何 cmd 窗口。
-2. **dsh 插件**（npm 包，`dsh/` 目录）：把 `obsidian` agent preset 与 `obsidian` profile 安装进 `$DSH_HOME`，可选初始化 vault 模板。
+1. **Obsidian 社区插件**（插件 id `dsh-math-assistant`，仓库根 `manifest.json` + `main.js`）：这是用户入口——右侧栏嵌入 dsh Web UI、自动检测并启动 dsh 服务，并且**首次运行会自动初始化 dsh 侧配置**（`obsidian` agent preset/profile 与 vault 记忆模板）。
+2. **dsh 插件**（npm 包 `dsh-obsidian-math`，`dsh/` 目录）：把**同一套** `obsidian` preset/profile 和可选 vault 模板安装进 `$DSH_HOME`。
+
+**两者关系**：写入的 dsh 配置完全相同、幂等、可互换。大多数用户**只装组件 1（Obsidian 插件）就足够**；组件 2 用于“不用 Obsidian 插件、只想要 `dsh --profile obsidian`”的场景，或想用命令行显式安装/更新 dsh 侧配置的场景。
 
 Agent 刻意保持**最小工具集**：`read / write / edit / glob / grep / read_image / ask_user_question`，并附带分层长期记忆系统。
 
@@ -52,12 +54,14 @@ dsh 的 **web** profile 默认绑定 `127.0.0.1:3080`。本插件启动的是独
 在同一台机器上互不冲突、同时运行，不会出现 `EADDRINUSE`。
 端口可以在插件设置里修改，或命令行 `dsh --profile obsidian --port <端口>`。
 
-## 安装方式 A：Obsidian 社区插件
+## 安装方式 A：Obsidian 社区插件（推荐，通常只装这个就够了）
+
+这一步同时安装 UI 和 dsh 侧配置（插件会自动初始化）。
 
 1. Obsidian → 设置 → 第三方插件 → 浏览，搜索 **DSH Math Notes Assistant**，安装并启用。（手动安装：把 release 里的 `main.js`、`manifest.json`、`styles.css` 复制到 `<vault>/.obsidian/plugins/dsh-math-assistant/` 后启用。）
-2. 插件会自动检测 dsh（PATH、npm 全局目录、`DSH_HOME` 的上级目录）；检测不到就在插件设置里点 **Detect** 或手动填路径（例如 `E:\software\deepseek-harness`）。
-3. 首次运行自动写入 `$DSH_HOME` 下的 preset/profile（只补缺失文件）和 vault 记忆模板（`AGENTS.md`、`.deepseek/...`）。设置页有 **Initialize** 与 **Reinstall (force)** 按钮。
-4. 服务自动启动；点左侧 ribbon 的 message-square 图标（或命令面板运行 “DSH Math Assistant: Open DSH Math Assistant”），把标签页拖到右侧栏一次，之后位置会被记住。
+2. 插件会自动检测 dsh（PATH、npm 全局目录、`DSH_HOME` 的上级目录）；检测不到就在插件设置里点 **自动检测** 或手动填路径（例如 `E:\software\deepseek-harness`）。
+3. 首次运行自动写入 `$DSH_HOME` 下的 preset/profile（只补缺失文件）和 vault 记忆模板（`AGENTS.md`、`.deepseek/...`）。设置页有 **初始化** 与 **强制重装** 按钮。
+4. 服务自动启动；点左侧 ribbon 的 message-square 图标（或命令面板运行 **打开 DSH数学笔记助手**），把标签页拖到右侧栏一次，之后位置会被记住。
 
 不需要 cmd、不需要手改 profile。
 
@@ -73,7 +77,9 @@ dsh 的 **web** profile 默认绑定 `127.0.0.1:3080`。本插件启动的是独
 | Show ribbon icon | 一键按钮 |
 | Keep service alive when Obsidian closes | 默认关闭 |
 
-## 安装方式 B：dsh 插件（npm）
+## 安装方式 B：dsh 插件 via npm（可选；只有跳过 Obsidian 插件时才需要）
+
+它安装的是 Obsidian 插件会自动初始化的**同一套** `obsidian` preset/profile。适用于纯 dsh CLI 工作流，或想用命令行显式安装/更新 dsh 侧配置。
 
 ```bash
 npm install -g dsh-obsidian-math
