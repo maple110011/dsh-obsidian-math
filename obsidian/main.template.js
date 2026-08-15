@@ -8,7 +8,7 @@
  */
 const { Plugin, ItemView, Notice, PluginSettingTab, Setting } = require('obsidian');
 const { spawn, spawnSync } = require('child_process');
-const { existsSync, mkdirSync, writeFileSync, readFileSync } = require('fs');
+const { existsSync, mkdirSync, writeFileSync, readFileSync, statSync, renameSync } = require('fs');
 const { join, dirname } = require('path');
 const { homedir } = require('os');
 const http = require('http');
@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = {
   dshHome: '',
   autoStart: true,
   autoInit: true,
+  autoArchiveEpisodes: true,
   showRibbon: true,
   keepAliveOnUnload: false
 };
@@ -340,6 +341,66 @@ function bootstrapVaultTemplates(plugin, force = false) {
   return { vault, written };
 }
 
+/**
+ * Host-side memory maintenance: move episode files older than `maxDays` into
+ * `episodes/archive/` and update the episode index links. The agent has no
+ * delete/move tools, so the Obsidian plugin owns this one lifecycle operation.
+ */
+function archiveOldEpisodes(plugin, maxDays = 90) {
+  const vault = plugin.app.vault.adapter.getBasePath();
+  const episodesDir = join(vault, '.deepseek', 'memory', 'episodes');
+  if (!existsSync(episodesDir)) return { moved: 0 };
+  const archiveDir = join(episodesDir, 'archive');
+  const cutoff = Date.now() - maxDays * 86400000;
+  const moved = [];
+  let entries;
+  try {
+    entries = readdirSync(episodesDir, { withFileTypes: true });
+  } catch {
+    return { moved: 0 };
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'index.md' || entry.name.startsWith('_')) continue;
+    const source = join(episodesDir, entry.name);
+    let stats;
+    try {
+      stats = statSync(source);
+    } catch {
+      continue;
+    }
+    if (stats.mtimeMs >= cutoff) continue;
+    try {
+      mkdirSync(archiveDir, { recursive: true });
+      let target = join(archiveDir, entry.name);
+      let suffix = 1;
+      while (existsSync(target)) {
+        suffix += 1;
+        target = join(archiveDir, entry.name.replace(/\.md$/, `-${suffix}.md`));
+      }
+      renameSync(source, target);
+      moved.push({ name: entry.name, target: join('archive', entry.name.replace(/\.md$/, suffix === 1 ? '.md' : `-${suffix}.md`)) });
+    } catch {
+      // Leave the file in place on any maintenance failure.
+    }
+  }
+  if (moved.length > 0) {
+    const indexPath = join(episodesDir, 'index.md');
+    if (existsSync(indexPath)) {
+      try {
+        let indexText = readFileSync(indexPath, 'utf8');
+        for (const item of moved) {
+          indexText = indexText.replaceAll(`[[${item.name.replace(/\.md$/, '')}|`, `[[${item.target.replace(/\.md$/, '')}|`);
+          indexText = indexText.replaceAll(`[[${item.name.replace(/\.md$/, '')}]]`, `[[${item.target.replace(/\.md$/, '')}]]`);
+        }
+        writeFileSync(indexPath, indexText, 'utf8');
+      } catch {
+        // Index update is best-effort; moved files are already safe.
+      }
+    }
+  }
+  return { moved: moved.length };
+}
+
 // ── sidebar view ────────────────────────────────────────────────────────────
 
 class DshMathView extends ItemView {
@@ -462,6 +523,16 @@ class DshObsidianMathPlugin extends Plugin {
           bootstrapVaultTemplates(this, false);
         } catch (error) {
           new Notice(`dsh-obsidian-math: ${String(error)}`);
+        }
+      });
+    }
+    if (this.settings.autoArchiveEpisodes) {
+      this.app.workspace.onLayoutReady(() => {
+        try {
+          const result = archiveOldEpisodes(this, 90);
+          if (result.moved > 0) new Notice(`记忆维护：已归档 ${result.moved} 个旧事件文件`);
+        } catch (error) {
+          new Notice(`记忆维护失败：${String(error)}`);
         }
       });
     }
@@ -605,6 +676,14 @@ class DshObsidianSettingTab extends PluginSettingTab {
       }));
 
     new Setting(containerEl)
+      .setName('启动时自动归档旧事件（超过 90 天）')
+      .setDesc('把过旧的事件卡移入 episodes/archive/ 并更新索引——由插件执行，agent 本身没有删除/移动工具。')
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.autoArchiveEpisodes).onChange(async (value) => {
+        this.plugin.settings.autoArchiveEpisodes = value;
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
       .setName('显示侧边栏按钮')
       .setDesc('在 Obsidian 左侧 ribbon 显示一键打开按钮。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.showRibbon).onChange(async (value) => {
@@ -638,6 +717,16 @@ class DshObsidianSettingTab extends PluginSettingTab {
       try {
         const result = bootstrapDshConfig(this.plugin, true);
         new Notice(`dsh 配置已重装到 ${result.home}`);
+        this.display();
+      } catch (error) {
+        new Notice(String(error));
+      }
+    });
+    const archiveButton = configRow.createEl('button', { text: '立即归档旧事件（>90 天）' });
+    archiveButton.addEventListener('click', () => {
+      try {
+        const result = archiveOldEpisodes(this.plugin, 90);
+        new Notice(result.moved > 0 ? `已归档 ${result.moved} 个旧事件文件` : '没有需要归档的旧事件');
         this.display();
       } catch (error) {
         new Notice(String(error));

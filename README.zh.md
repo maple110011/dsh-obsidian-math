@@ -125,9 +125,7 @@ node scripts/test-installer.mjs # 临时目录端到端测试安装器
 
 `obsidian` profile 默认 **fail-closed**：写入被限制在 vault 内（`workspace-write`），交互式提权审批**默认关闭**（`approval: never`，不会弹出“是否升权”窗口，杜绝误点扩大权限边界），工具集中没有删除类工具。如确需一次性全权限，必须显式设置 `DSH_PERMISSION_MODE=danger-full-access` 并重启服务。
 
-## 发布
-
-发布已自动化：同步修改 `package.json` 与 `manifest.json` 的 `version`（两者一致），运行 `node scripts/build-obsidian.mjs` 并提交，然后推送与版本号相同的 tag——workflow 会自动创建 Release 并附上 `main.js`、`manifest.json`、`styles.css` 三个资产。手动兜底：用相同 tag 创建 GitHub Release 并上传这三个文件。
+由于 agent 没有删除/移动工具，生命周期维护由 Obsidian 插件承担：超过 90 天的旧事件卡会在启动时自动移入 `episodes/archive/`（可在设置中关闭或手动触发）。记录冲突用 `superseded` 标记而非删除，不会静默丢失历史。
 
 ## License
 

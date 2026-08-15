@@ -133,9 +133,7 @@ Everything runs locally: the dsh web service binds to `127.0.0.1`, all memory li
 
 The `obsidian` profile is fail-closed by design: writes are confined to the vault (`workspace-write`), interactive permission-escalation prompts are **disabled** (`approval: never`, so an accidental click cannot widen the boundary), and the toolset contains no delete/rm tools. To opt into one-off full access you must set `DSH_PERMISSION_MODE=danger-full-access` explicitly and restart the service.
 
-## Release
-
-Releases are automated: bump `version` in `package.json` and `manifest.json` (keep them equal), run `node scripts/build-obsidian.mjs`, commit, then push a tag matching the version — the workflow publishes the release with `main.js`, `manifest.json`, and `styles.css` attached. Manual fallback: create a GitHub release with the same tag and upload those three files.
+Because the agent cannot delete or move files, lifecycle maintenance is owned by the Obsidian plugin: old episode cards (> 90 days) are moved into `episodes/archive/` automatically at startup (configurable in settings). Record conflicts are marked `superseded` instead of deleted, so no memory is silently lost.
 
 ## License
 
