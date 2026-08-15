@@ -353,7 +353,7 @@ class DshMathView extends ItemView {
   }
 
   getDisplayText() {
-    return 'DSH 数学助手';
+    return 'DSH数学笔记助手';
   }
 
   getIcon() {
@@ -425,11 +425,11 @@ class DshObsidianMathPlugin extends Plugin {
     this.service = new DshService(this);
     this.registerView(VIEW_TYPE, (leaf) => new DshMathView(leaf, this));
     if (this.settings.showRibbon) {
-      this.addRibbonIcon('message-square', '打开 DSH 数学助手', () => this.activateView());
+      this.addRibbonIcon('message-square', '打开 DSH数学笔记助手', () => this.activateView());
     }
     this.addCommand({
       id: 'open-dsh-math-assistant',
-      name: '打开 DSH 数学助手',
+      name: '打开 DSH数学笔记助手',
       callback: () => this.activateView()
     });
     this.addCommand({
@@ -530,7 +530,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'DSH Obsidian 数学助手' });
+    containerEl.createEl('h2', { text: 'DSH数学笔记助手' });
     containerEl.createEl('p', { text: `版本 ${this.plugin.manifest?.version ?? ''}` });
     containerEl.createEl('p', { text: '在 Obsidian 右侧栏嵌入 DeepSeek Harness 数学记忆助手。插件会自动启动 dsh 服务，无需额外打开命令行窗口。' });
 
