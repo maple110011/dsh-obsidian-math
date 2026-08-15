@@ -27,6 +27,30 @@
 # danger-full-access?" prompt, so an accidental click cannot widen the write
 # boundary. If a user really needs one-off full access, they can set
 # DSH_PERMISSION_MODE=danger-full-access explicitly and restart the service.
+# NOTE: keep the folded-block `!!js >-` form — inline `? :` ternaries are
+# mis-parsed by js-yaml into a mapping ({...: 'never'}).
 - id: approval
   config:
-    policy: !!js process.env.DSH_PERMISSION_MODE === 'danger-full-access' ? 'ask' : 'never'
+    policy: !!js >-
+      (process.env.DSH_PERMISSION_MODE ?? 'workspace-write') ===
+      'danger-full-access' ? 'ask' : 'never'
+
+# The permission preset table must describe the composed default
+# (workspace-write sandbox + never approval), otherwise boot fails with
+# "composed sandbox and approval defaults match no preset".
+- id: permission
+  config:
+    defaultPreset: obsidian-locked
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      obsidian-locked:
+        sandbox: workspace-write
+        approval: never
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never

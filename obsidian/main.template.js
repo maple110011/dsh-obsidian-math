@@ -197,7 +197,7 @@ class DshService {
     for (const line of String(text).split(/\r?\n/)) {
       if (line.trim() === '') continue;
       this.logLines.push(line);
-      if (this.logLines.length > 200) this.logLines.shift();
+      if (this.logLines.length > 600) this.logLines.shift();
     }
   }
 
@@ -669,9 +669,18 @@ class DshObsidianSettingTab extends PluginSettingTab {
     };
     serviceRow.createEl('span', { text: ` 状态：${statusLabels[this.plugin.service.status] ?? this.plugin.service.status}` });
 
-    const log = this.plugin.service.logLines.slice(-12).join('\n');
+    const log = this.plugin.service.logLines.join('\n');
     if (log !== '') {
-      containerEl.createEl('h3', { text: '最近服务日志' });
+      containerEl.createEl('h3', { text: `最近服务日志（共 ${this.plugin.service.logLines.length} 行，可滚动）` });
+      const copyLog = containerEl.createEl('button', { text: '复制全部日志' });
+      copyLog.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(log);
+          new Notice('日志已复制到剪贴板');
+        } catch {
+          new Notice('复制失败，请手动选择日志文本');
+        }
+      });
       containerEl.createEl('pre', { text: log, cls: 'dsh-obsidian-math-log' });
     }
   }

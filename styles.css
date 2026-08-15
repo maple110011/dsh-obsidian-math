@@ -57,7 +57,7 @@
 }
 
 .dsh-obsidian-math-log {
-  max-height: 180px;
+  max-height: 300px;
   overflow: auto;
   white-space: pre-wrap;
   font-size: var(--font-ui-smaller);
