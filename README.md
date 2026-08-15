@@ -9,11 +9,23 @@ A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek
 
 **How they relate:** both components write identical, idempotent dsh configuration. Most users only need component 1 — installing the Obsidian plugin is enough. Use component 2 when you want the dsh mode without the Obsidian plugin, or when you prefer to install/update the dsh side from the command line.
 
-## Problems solved
+## Why this plugin exists
 
-1. **“I asked this before and forgot.”** Valuable context gets scattered across past AI conversations; after a while you re-ask from zero and the model re-guesses your focus, notation, and theoretical preferences. This plugin gives the agent a **durable layered memory** (profile + topic index + raw episode evidence) and injects a bounded digest of past dsh conversations into every new session, so it starts from where the last conversation ended instead of from scratch.
-2. **“Writing notes means repeatedly sending md files to the AI.”** The assistant lives inside Obsidian's right sidebar and only has file tools (read/write/search plus dedicated note tools). Untangling structure, completing details, reviewing a draft, and finding problems all happen in place on the vault — no more copy-pasting notes back and forth.
-3. **“Key mathematical ideas slip away.”** General math heuristics, techniques, and viewpoints that surface during conversations are easy to lose. The agent proactively proposes `💡 可捕捉的想法`, writes them (with your consent) into a memo library with lifecycle `inbox → polishing → done`, and the plugin re-surfaces related or stale memos with `🔔 备忘录提醒` — prompting you to polish exactly when new related ideas appear.
+Mathematics learning is a long-horizon accumulation: notation habits, theoretical preferences, half-finished proofs, techniques, counterexamples, and reusable ideas all need to be gathered continuously and polished into a connected system that compounds into knowledge returns. Have you run into these problems along the way?
+
+1. As your collection grows, manual note-keeping costs ever more time and energy; maintaining and retrieving a knowledge base depends heavily on fallible memory and demanding self-discipline.
+2. Talking with an AI while studying is a very effective way to refine ideas, but a generic conversational AI treats every chat as isolated Q&A. Everything valuable — about you and about the subject — scatters across past conversations, and each new session starts by guessing your existing knowledge, current focus, and lines of thought from zero.
+3. Key ideas that emerge during AI conversations are fleeting and drown in long chat histories.
+
+To solve the problems that have long bothered me (and perhaps you), I developed this Obsidian plugin (plus a DeepSeek Harness preset) with the help of DeepSeek.
+
+What it does:
+
+1. Embeds DeepSeek Harness (dsh) in Obsidian's right sidebar as an Obsidian note-assistant mode. In this mode dsh has only basic file read/write access inside the vault, with everything else strictly restricted; the exact safety boundary is described under [Privacy & safety](#privacy--safety). Restructuring, detail completion, proof review, problem finding, and idea exploration all happen inside the vault, where the agent can directly draw on the vault's existing knowledge.
+2. Adds a memory system to the agent. Currently, following related literature and the characteristics of mathematical knowledge, it ships an experimental math-oriented memory design: the five-layer durable memory (profile / topics / typed records / raw episodes / ideas) references [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) and [arXiv:2607.05794](https://arxiv.org/abs/2607.05794), while the problem-template ↔ theorem graph references [AAAI-26: Template-Theorems Graph Construction](https://ojs.aaai.org/index.php/AAAI/article/view/40411).
+3. Proactively captures `💡 可捕捉的想法` and, **only with user consent**, writes them to a memo library with lifecycle `inbox → polishing → done`; related ideas are merged instead of duplicated, and stale memos surface as `🔔 备忘录提醒` prompts. The reminder thresholds are documented under [Highlights](#highlights).
+
+> For the current design's limitations, see [Scope & limitations](#scope--limitations).
 
 ### What this repository contains and where it lands
 
@@ -25,19 +37,17 @@ A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek
 | `dsh/templates/` | Vault memory templates (`AGENTS.md`, `.deepseek/**`) | `<vault>/AGENTS.md`, `<vault>/.deepseek/**` |
 | `dsh/install.mjs` | npm CLI `dsh-obsidian-math` that writes the above | npm global bin |
 
-Note: the dsh side is **not** a Cordis bundle — it is an **agent preset + profile + installer** (the Obsidian plugin embeds and bootstraps the same files automatically). Since 0.3.0 it mounts three dedicated note tools: `note_search` (text search with optional tag filtering), `note_create` (new notes only — refuses to overwrite), and `note_links` (wikilink backlink queries).
-
-The agent deliberately keeps the **smallest possible toolset** — file read/write/search, `ask_user_question`, and the three dedicated note tools — and adds a layered, paper-informed memory system.
+Note: the dsh side is **not** a Cordis bundle — it is an **agent preset + profile + installer** (the Obsidian plugin embeds and bootstraps the same files automatically). The exact toolset, memory layers, and reminder policies are listed under [Highlights](#highlights); limitations are listed under [Scope & limitations](#scope--limitations).
 
 ## Scope & limitations
 
 - **Math-focused by design.** The memory layers, typed records, review workflow, and idea-memo reminders are tuned for math-adjacent knowledge (mathematics and statistics: concepts, propositions, proofs, methods). Different knowledge domains — codebases, law, medicine, engineering workflows — typically need different memory granularity and retrieval protocols; do not assume this design transfers unchanged.
-- **Prototype status (0.3.x).** The memory architecture has **not** been through long-term usage testing or systematic benchmark evaluation. Layer boundaries, record types, and reminder policies are expected to evolve. The design draws on [arXiv:2606.24775](https://arxiv.org/abs/2606.24775), [arXiv:2607.05794](https://arxiv.org/abs/2607.05794), the proof-workflow ideas of Rethlas in [arXiv:2604.03789](https://arxiv.org/abs/2604.03789), and the template-theorems graph idea from [AAAI-26: Template-Theorems Graph Construction](https://ojs.aaai.org/index.php/AAAI/article/view/40411); a more complete agent-native memory architecture remains future work.
+- **Prototype status (0.3.x).** The memory architecture is based on a small set of papers the author personally found relevant, has **not** been through long-term usage testing or systematic benchmark evaluation, and lacks long-term field experience. Layer boundaries, record types, and reminder policies are expected to evolve; a more complete agent-native memory architecture remains future work.
 
 ## Highlights
 
 - **Minimal agent surface**: `read`, `write`, `edit`, `glob`, `grep`, `read_image`, `ask_user_question`, plus dedicated note tools `note_search` (tag filtering), `note_create` (overwrite protection), `note_links` (backlink queries). No shell, no web tools, no subagents.
-- **Layered long-term memory** (informed by [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) and [arXiv:2607.05794](https://arxiv.org/abs/2607.05794)):
+- **Layered long-term memory** (references [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) and [arXiv:2607.05794](https://arxiv.org/abs/2607.05794)):
   - `profile.md` — semantic layer: stable preferences, notation, standing authorizations;
   - `topics/` — navigation layer: topic index and per-topic details;
   - `records/` — typed atomic-record layer: fact/event/instruction/preference cards with provenance links;
