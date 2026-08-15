@@ -331,6 +331,8 @@ function bootstrapVaultTemplates(plugin, force = false) {
     ['records-index.md', join(vault, '.deepseek', 'memory', 'records', 'index.md')],
     ['theorems-readme.md', join(vault, '.deepseek', 'memory', 'theorems', '_README.md')],
     ['theorems-index.md', join(vault, '.deepseek', 'memory', 'theorems', 'index.md')],
+    ['templates-readme.md', join(vault, '.deepseek', 'memory', 'templates', '_README.md')],
+    ['templates-index.md', join(vault, '.deepseek', 'memory', 'templates', 'index.md')],
     ['episodes-readme.md', join(vault, '.deepseek', 'memory', 'episodes', '_README.md')],
     ['episodes-index.md', join(vault, '.deepseek', 'memory', 'episodes', 'index.md')],
     ['inbox-readme.md', join(vault, '.deepseek', 'inbox', '_README.md')],

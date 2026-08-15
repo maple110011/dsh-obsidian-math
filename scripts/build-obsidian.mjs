@@ -30,6 +30,8 @@ const templates = {
   "records-index.md": readFileSync(join(root, "dsh", "templates", "records-index.md"), "utf8"),
   "theorems-readme.md": readFileSync(join(root, "dsh", "templates", "theorems-readme.md"), "utf8"),
   "theorems-index.md": readFileSync(join(root, "dsh", "templates", "theorems-index.md"), "utf8"),
+  "templates-readme.md": readFileSync(join(root, "dsh", "templates", "templates-readme.md"), "utf8"),
+  "templates-index.md": readFileSync(join(root, "dsh", "templates", "templates-index.md"), "utf8"),
   "episodes-readme.md": readFileSync(join(root, "dsh", "templates", "episodes-readme.md"), "utf8"),
   "episodes-index.md": readFileSync(join(root, "dsh", "templates", "episodes-index.md"), "utf8"),
   "inbox-readme.md": readFileSync(join(root, "dsh", "templates", "inbox-readme.md"), "utf8"),

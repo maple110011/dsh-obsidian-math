@@ -21,7 +21,7 @@ The agent deliberately keeps the **smallest possible toolset** — file read/wri
 ## Scope & limitations
 
 - **Math-focused by design.** The memory layers, typed records, review workflow, and idea-memo reminders are tuned for math-adjacent knowledge (mathematics and statistics: concepts, propositions, proofs, methods). Different knowledge domains — codebases, law, medicine, engineering workflows — typically need different memory granularity and retrieval protocols; do not assume this design transfers unchanged.
-- **Prototype status (0.1.x).** The memory architecture has **not** been through long-term usage testing or systematic benchmark evaluation. Layer boundaries, record types, and reminder policies are expected to evolve. The design draws on [arXiv:2606.24775](https://arxiv.org/abs/2606.24775), [arXiv:2607.05794](https://arxiv.org/abs/2607.05794), and the proof-workflow ideas of Rethlas in [arXiv:2604.03789](https://arxiv.org/abs/2604.03789); a more complete agent-native memory architecture remains future work.
+- **Prototype status (0.1.x).** The memory architecture has **not** been through long-term usage testing or systematic benchmark evaluation. Layer boundaries, record types, and reminder policies are expected to evolve. The design draws on [arXiv:2606.24775](https://arxiv.org/abs/2606.24775), [arXiv:2607.05794](https://arxiv.org/abs/2607.05794), the proof-workflow ideas of Rethlas in [arXiv:2604.03789](https://arxiv.org/abs/2604.03789), and the template-theorems graph idea from [AAAI-26: Template-Theorems Graph Construction](https://ojs.aaai.org/index.php/AAAI/article/view/40411); a more complete agent-native memory architecture remains future work.
 
 ## Highlights
 

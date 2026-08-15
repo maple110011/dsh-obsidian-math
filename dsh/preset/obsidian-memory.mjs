@@ -48,6 +48,7 @@ const MAX_LOG_FILES = 20;
 const MAX_PROFILE_CHARS = 4000;
 const MAX_TOPIC_INDEX_CHARS = 4000;
 const MAX_RECORD_INDEX_CHARS = 2000;
+const MAX_TEMPLATE_INDEX_CHARS = 1500;
 const MAX_EPISODE_INDEX_CHARS = 2500;
 const MAX_INBOX_CHARS = 2200;
 const MAX_DIALOGUE_PAIRS = 6;
@@ -442,6 +443,21 @@ function recordIndexDigest(root, maxChars) {
   }
 }
 
+/** Problem-template index digest (personal template-theorems graph). */
+function templateIndexDigest(root, maxChars) {
+  const path = join(root, MEMORY_DIR, "memory", "templates", "index.md");
+  if (!existsSync(path)) return "";
+  try {
+    const text = readFileSync(path, "utf8").trim();
+    if (text === "") return "";
+    const items = text.split("\n").filter((line) => line.trim().startsWith("-"));
+    if (items.length === 0) return clip(text, maxChars);
+    return clip(items.map((line) => line.trim()).join("\n"), maxChars);
+  } catch {
+    return "";
+  }
+}
+
 // ── the section composer ────────────────────────────────────────────────────
 /**
  * Render the layered memory section for one agent.
@@ -457,6 +473,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   const profile = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "profile.md"), MAX_PROFILE_CHARS);
   const topics = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "topics", "index.md"), MAX_TOPIC_INDEX_CHARS);
   const records = recordIndexDigest(vaultRoot, MAX_RECORD_INDEX_CHARS);
+  const templates = templateIndexDigest(vaultRoot, MAX_TEMPLATE_INDEX_CHARS);
   const episodes = episodeIndexDigest(vaultRoot, MAX_EPISODE_INDEX_CHARS);
   const memos = memoDigest(vaultRoot, MAX_INBOX_CHARS);
 
@@ -489,6 +506,11 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     lines.push("", "### 记忆记录摘要（.deepseek/memory/records/index.md，类型化原子事实）", "", records);
   } else {
     lines.push("", "### 记忆记录摘要", "", "（尚无原子记录。每轮收尾时按 AGENTS.md 三写协议，从 episode 提炼 fact/event/instruction/preference 记录。）");
+  }
+
+  if (templates !== "") {
+    lines.push("", "### 问题模板索引（.deepseek/memory/templates/index.md，题型/解法 ↔ 定理关联）", "", templates,
+      "", "遇到新问题先做“问题蒸馏”（抽象成模板表达）再查这里；命中则读模板卡与关联定理并去重聚合。");
   }
 
   if (episodes !== "") {

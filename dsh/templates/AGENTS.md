@@ -26,13 +26,13 @@
 | 语义层 | `memory/profile.md` | 只放“现在仍成立”的稳定偏好/记号/授权，带修订历史 |
 | 想法层 | `inbox/` | 待打磨想法，状态 inbox→polishing→done |
 
-另有一张**定理索引** `memory/theorems/index.md`：本 vault 内已记录/已证明/未证明的定理、命题、引理、定义目录（个人版 Matlas，见 `theorems/_README.md`）。
+另有一张**定理索引** `memory/theorems/index.md`（个人 Matlas）和一个**问题模板库** `memory/templates/`（题型/解法模板与定理的关联图，个人版 template-theorems graph；模板见各自 `_README.md`）。
 
 每轮收尾**按需三写**（细→粗；**本轮没有值得记忆的新信息就全部跳过**）：
 
 1. **episode**：只有出现新事实/决定/想法/修正时才向当天事件文件追加一节；闲聊、纯查询、无新信息不写。
 2. **records**：把新事实/事件/指令/偏好/工作产物提炼为原子卡并调和：相同则更新原卡；冲突则旧卡 `superseded` + “变更历史”写“旧值 → 新值（日期）”；`source` 必须指向 episode；更新 `records/index.md`。
-3. **topics/profile/theorems**：只在确有变化时局部更新；禁止把整段对话总结进去——原文只在 episodes，原子事实只在 records。
+3. **topics/profile/theorems/templates**：只在确有变化时局部更新；禁止把整段对话总结进去——原文只在 episodes，原子事实只在 records。
 
 **执行纪律**：把同一轮的记忆写入合并成最少的工具调用，不要反复改；完成后只在回复末尾用一行说明（如“已记录：2 条”），不展示写入内容与过程。
 
@@ -52,7 +52,7 @@
 
 1. **构造玩具例子**：卡住时构造满足假设与结论的简单实例，观察假设如何生效，找模式、不变量或证明策略。
 2. **构造反例**：断言可疑时，测试“假设成立但结论失败”的情况；借助已知病态构造与障碍。
-3. **检索相关结果**：先查 `memory/theorems/index.md` 与 grep 本 vault 笔记；对找到的定理要：展开其定义、核对在当前假设下是否适用、显式说明术语在不同语境中的差异；**不只读定理陈述，还要读其证明，提取可迁移的技巧、归约与证明模式**。
+3. **检索相关结果（问题蒸馏优先）**：先把当前问题抽象成模板表达（去掉具体数字与语境），查 `memory/templates/index.md` 找同类题型/解法；命中则读模板卡与 `related_theorems`，对定理**去重聚合**后使用。再查 `memory/theorems/index.md` 与 grep 本 vault 笔记。对找到的定理：展开其定义、核对在当前假设下是否适用、显式说明术语在不同语境中的差异；**不只读定理陈述，还要读其证明，提取可迁移的技巧、归约与证明模式**。
 4. **提出子目标分解计划**：在例子/反例/检索之后给出 2-3 个分解计划，每个计划列出关键障碍。
 5. **直接证明**：逐个计划尝试证明子目标，记录失败的确切障碍。
 6. **迭代分治**：所有计划失败时，按计划逐个深入局部修订（没有子代理，就自己分轮处理），保持连续性而非推倒重来。
@@ -65,7 +65,7 @@
 - 核对每个引用：引用是否真实存在、版本与适用性、术语含义是否与当前证明一致；
 - 结论：给证明标注置信度与未闭合点（`待补：…`），不要声称已证而没有核查。
 
-**工作产物沉淀**：构造的例子、反例、分解计划、障碍、提取到的证明模式，写为 records（type: artifact，见 `records/_README.md`）；重要定理/命题/引理/定义同步登记 `memory/theorems/index.md`（模板见 `theorems/_README.md`）。
+**工作产物沉淀**：构造的例子、反例、分解计划、障碍、提取到的证明模式，写为 records（type: artifact，见 `records/_README.md`）；重要定理/命题/引理/定义同步登记 `memory/theorems/index.md`；**遇到新的题型或解法时，从真实解题过程抽象一张模板卡**到 `memory/templates/`（见 `templates/_README.md`），并把用到的定理写入 `related_theorems`——这样模板库会从你实际做过的问题逐步生长。
 
 ## 5. 检索路由
 
@@ -74,6 +74,7 @@
 | 精确事实 / 用户原话 / 日期数字 | grep `memory/episodes/` → 读命中文件 |
 | 类型化原子事实 | 先看 `memory/records/index.md` → grep/读记录 → `source` 回原始证据 |
 | 相关定理 / 命题 / 引理 | 先看 `memory/theorems/index.md` → grep 笔记全文 → 展开定义、核对适用性 |
+| 同类题型 / 解法模式 | 先问题蒸馏 → 查 `memory/templates/index.md` → 读模板卡与关联定理（去重聚合） |
 | 稳定偏好 / 记号 / 授权 | 读 `memory/profile.md` |
 | 主题来龙去脉 | `topics/index.md` 定位 → 读 `topics/<slug>.md` 或相关笔记 |
 | “当前最新状态” | 比较 frontmatter `updated` / 最新 episode 时间戳 |
@@ -100,6 +101,7 @@ vault/
     memory/topics/                   导航层（index + <topic>.md）
     memory/records/                  记录层（index + <slug>.md 原子卡）
     memory/theorems/                 定理索引（个人 Matlas：index + 登记模板）
+    memory/templates/                问题模板库（题型/解法模板 ↔ 定理关联图）
     memory/episodes/                 证据层（index + 日期文件 + archive/）
     inbox/                           想法层（index + <slug>.md）
     cache/                           机器生成的对话索引（勿动）

@@ -21,7 +21,7 @@ Agent 刻意保持**最小工具集**：`read / write / edit / glob / grep / rea
 ## 适用范围与局限
 
 - **面向数学类知识设计**：记忆分层、类型化记录、审阅工作流与想法备忘录提醒都是围绕数学相关领域（数学、统计学：概念-命题-证明-方法）调校的。不同领域的知识（代码库、法律、医学、工程流程等）通常需要不同的记忆粒度与检索协议，不要默认这套设计可以原样迁移。
-- **试做型（0.1.x）**：当前记忆架构**尚未**经过长期使用测试，也没有系统的基准评测；分层边界、记录类型、提醒策略都可能继续演进。设计借鉴了 [arXiv:2606.24775](https://arxiv.org/abs/2606.24775)、[arXiv:2607.05794](https://arxiv.org/abs/2607.05794)，以及 [arXiv:2604.03789](https://arxiv.org/abs/2604.03789)（Rethlas）的证明工作流思想；更完善的 agent-native 记忆架构仍是后续研究课题。
+- **试做型（0.1.x）**：当前记忆架构**尚未**经过长期使用测试，也没有系统的基准评测；分层边界、记录类型、提醒策略都可能继续演进。设计借鉴了 [arXiv:2606.24775](https://arxiv.org/abs/2606.24775)、[arXiv:2607.05794](https://arxiv.org/abs/2607.05794)、[arXiv:2604.03789](https://arxiv.org/abs/2604.03789)（Rethlas 的证明工作流），以及 [AAAI-26《Template-Theorems Graph Construction》](https://ojs.aaai.org/index.php/AAAI/article/view/40411)（问题模板-定理关联图）；更完善的 agent-native 记忆架构仍是后续研究课题。
 
 ## 特性
 
