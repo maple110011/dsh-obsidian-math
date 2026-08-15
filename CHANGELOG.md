@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.2] - 2026-08-15
+
+### Changed
+
+- Plugin display name renamed from "DSH Obsidian Math Assistant" to "DSH Math Notes Assistant" (directory rule: names must not contain "Obsidian").
+
 ## [0.1.1] - 2026-08-15
 
 ### Changed

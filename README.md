@@ -1,4 +1,4 @@
-# DSH Obsidian Math Assistant
+# DSH Math Notes Assistant
 
 <p align="center">
   <a href="README.zh.md"><img alt="中文文档" src="https://img.shields.io/badge/中文-切换到中文-blue?style=for-the-badge"></a>
@@ -55,7 +55,7 @@ settings or via `dsh --profile obsidian --port <n>`.
 
 ## Install A — Obsidian community plugin
 
-1. In Obsidian: **Settings → Community plugins → Browse**, search **DSH Obsidian Math Assistant**, install and enable. (For a manual install, copy `main.js`, `manifest.json`, `styles.css` from a GitHub release into `<vault>/.obsidian/plugins/dsh-math-assistant/` and enable it.)
+1. In Obsidian: **Settings → Community plugins → Browse**, search **DSH Math Notes Assistant**, install and enable. (For a manual install, copy `main.js`, `manifest.json`, `styles.css` from a GitHub release into `<vault>/.obsidian/plugins/dsh-math-assistant/` and enable it.)
 2. The plugin auto-detects the dsh installation (PATH, npm global, or `DSH_HOME`'s parent). If detection fails, open the plugin settings and press **Detect** or enter the path (e.g. `E:\software\deepseek-harness`).
 3. On first run the plugin writes the `obsidian` agent preset and profile into `$DSH_HOME` (missing files only) and creates the vault memory templates (`AGENTS.md`, `.deepseek/...`). A settings button re-runs this bootstrap or forces a reinstall.
 4. The service starts automatically. Click the ribbon icon (message-square) or run the command **DSH Math Assistant: Open DSH Math Assistant**; drag the tab to the right sidebar once — Obsidian remembers the position.

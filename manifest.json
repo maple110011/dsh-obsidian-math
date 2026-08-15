@@ -1,7 +1,7 @@
 {
   "id": "dsh-math-assistant",
-  "name": "DSH Obsidian Math Assistant",
-  "version": "0.1.1",
+  "name": "DSH Math Notes Assistant",
+  "version": "0.1.2",
   "minAppVersion": "1.4.0",
   "description": "Math-focused, experimental DeepSeek Harness memory agent in the right sidebar: automatic dsh service management, layered long-term memory, note workflow, and proactive idea-memo reminders.",
   "author": "maple110011",

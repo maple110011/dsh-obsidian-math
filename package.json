@@ -1,6 +1,6 @@
 {
   "name": "dsh-obsidian-math",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Obsidian side-panel math memory agent for DeepSeek Harness: minimal file tools, layered long-term memory, idea memo with proactive review reminders. Ships as both a dsh plugin and an Obsidian community plugin.",
   "type": "module",
   "bin": {
