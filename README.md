@@ -21,7 +21,7 @@ A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek
 |---|---|---|
 | repo-root `main.js` / `manifest.json` / `styles.css` | Obsidian community plugin (id `dsh-math-assistant`) | `<vault>/.obsidian/plugins/dsh-math-assistant/` |
 | `dsh/preset/` (`preset.yml`, `agent.cordis.yml`, `obsidian-memory.mjs`, `obsidian-notes.mjs`) | dsh **agent preset** `obsidian` (minimal tools + memory plugin + dedicated note tools) | `$DSH_HOME/.agent-presets/obsidian/` |
-| `dsh/profile/` (`package.json`, `cordis.patch.yml`, …) | dsh **profile** `obsidian` (web app + fail-closed sandbox) | `$DSH_HOME/profiles/obsidian/` |
+| `dsh/profile/` (`package.json`, `cordis.patch.yml`, `obsidian-workspace.mjs`, `obsidian.patch.yml`, …) | dsh **profile** `obsidian` (web app + fail-closed sandbox + vault workspace auto-registration) | `$DSH_HOME/profiles/obsidian/` |
 | `dsh/templates/` | Vault memory templates (`AGENTS.md`, `.deepseek/**`) | `<vault>/AGENTS.md`, `<vault>/.deepseek/**` |
 | `dsh/install.mjs` | npm CLI `dsh-obsidian-math` that writes the above | npm global bin |
 
@@ -102,14 +102,17 @@ dsh plugin --profile obsidian add dsh-obsidian-math
 
 The installer is idempotent and preserves user edits (use `--force` to overwrite). It creates:
 
-- `$DSH_HOME/.agent-presets/obsidian/` — preset.yml, agent.cordis.yml, obsidian-memory.mjs;
-- `$DSH_HOME/profiles/obsidian/` — package.json, cordis.yml, cordis.patch.yml, pnpm-workspace.yaml;
+- `$DSH_HOME/.agent-presets/obsidian/` — preset.yml, agent.cordis.yml, obsidian-memory.mjs, obsidian-notes.mjs;
+- `$DSH_HOME/profiles/obsidian/` — package.json, cordis.yml, cordis.patch.yml, pnpm-workspace.yaml, obsidian-workspace.mjs, obsidian.patch.yml;
 - `<vault>/AGENTS.md` and `<vault>/.deepseek/**` templates (when `--vault` is given).
 
 Then run:
 
 ```bash
-dsh --profile obsidian --port 3180
+# The Obsidian plugin adds this --patch overlay automatically; for pure CLI
+# use pass it explicitly so the vault auto-registers as a workspace.
+dsh --profile obsidian --port 3180 \
+  --patch "$DSH_HOME/profiles/obsidian/obsidian.patch.yml"
 ```
 
 The memory plugin is path-independent: the vault is taken from the session cwd (or `DSH_OBSIDIAN_VAULT`), and session history comes from `$DSH_HOME/sessions` (or `DSH_SESSIONS_ROOT`).

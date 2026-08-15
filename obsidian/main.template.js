@@ -299,6 +299,10 @@ class DshService {
       this.setStatus('missing-dsh');
       throw new Error('未找到 dsh。请打开插件设置，点击“自动检测”，或先安装 DeepSeek Harness。');
     }
+    const patchPath = this.plugin.settings.autoInit
+      ? ensureObsidianPatch(location)
+      : join(location.home, 'profiles', PRESET_NAME, 'obsidian.patch.yml');
+    const patchArgs = existsSync(patchPath) ? ['--patch', patchPath] : [];
     const vaultPath = this.plugin.app.vault.adapter.getBasePath();
     const linkBaseUrl = this.plugin.linkServer?.baseUrl ?? '';
     const env = {
@@ -309,8 +313,8 @@ class DshService {
       ...(linkBaseUrl === '' ? {} : { DSH_OBSIDIAN_LINK_URL: linkBaseUrl })
     };
     const args = location.script
-      ? [location.script, '--profile', PRESET_NAME, '--port', String(this.plugin.settings.port)]
-      : ['--profile', PRESET_NAME, '--port', String(this.plugin.settings.port)];
+      ? [location.script, '--profile', PRESET_NAME, ...patchArgs, '--port', String(this.plugin.settings.port)]
+      : ['--profile', PRESET_NAME, ...patchArgs, '--port', String(this.plugin.settings.port)];
     const executable = location.script ? nodeExecutable() : 'dsh';
     // Without a resolved script we rely on the dsh launcher; Windows needs a
     // shell to execute .cmd shims.
@@ -371,6 +375,18 @@ class DshService {
 
 // ── embedded configuration bootstrap ────────────────────────────────────────
 
+/**
+ * Plugin-owned profile overlay: always refresh the auto-workspace host plugin
+ * and return the `--patch` path handed to the dsh launcher.
+ */
+function ensureObsidianPatch(location) {
+  const profileRoot = join(location.home, 'profiles', PRESET_NAME);
+  ensureFile(join(profileRoot, 'obsidian-workspace.mjs'), EMBEDDED_PRESET['profile-obsidian-workspace.mjs'], true);
+  const patchPath = join(profileRoot, 'obsidian.patch.yml');
+  ensureFile(patchPath, EMBEDDED_PRESET['profile-obsidian.patch.yml'], true);
+  return patchPath;
+}
+
 function bootstrapDshConfig(plugin, force = false) {
   const location = plugin.service.location();
   if (location === null) throw new Error('未检测到 dsh。请先在设置中配置 dsh 安装目录。');
@@ -388,6 +404,8 @@ function bootstrapDshConfig(plugin, force = false) {
   if (ensureFile(join(profileRoot, 'cordis.yml'), EMBEDDED_PRESET['profile-cordis.yml'], true)) written.push('profile/cordis.yml');
   if (ensureFile(join(profileRoot, 'cordis.patch.yml'), EMBEDDED_PRESET['profile-cordis.patch.yml'], force)) written.push('profile/cordis.patch.yml');
   if (ensureFile(join(profileRoot, 'pnpm-workspace.yaml'), EMBEDDED_PRESET['profile-pnpm-workspace.yaml'], force)) written.push('profile/pnpm-workspace.yaml');
+  if (ensureFile(join(profileRoot, 'obsidian-workspace.mjs'), EMBEDDED_PRESET['profile-obsidian-workspace.mjs'], true)) written.push('profile/obsidian-workspace.mjs');
+  if (ensureFile(join(profileRoot, 'obsidian.patch.yml'), EMBEDDED_PRESET['profile-obsidian.patch.yml'], true)) written.push('profile/obsidian.patch.yml');
   return { home, written };
 }
 

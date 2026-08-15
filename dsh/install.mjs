@@ -117,6 +117,10 @@ function installProfile(options, dshHome) {
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
   copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), join(profileRoot, "cordis.patch.yml"), !existsSync(join(profileRoot, "cordis.patch.yml")) || options.force);
   copyFile(options, join(PROFILE_DIR, "pnpm-workspace.yaml"), join(profileRoot, "pnpm-workspace.yaml"), !existsSync(join(profileRoot, "pnpm-workspace.yaml")));
+  // Plugin-owned patch overlay + host plugin: always refreshed so the vault
+  // workspace auto-registration reaches existing installs on update.
+  copyFile(options, join(PROFILE_DIR, "obsidian-workspace.mjs"), join(profileRoot, "obsidian-workspace.mjs"), true);
+  copyFile(options, join(PROFILE_DIR, "obsidian.patch.yml"), join(profileRoot, "obsidian.patch.yml"), true);
 }
 
 /** Warn when the global home patch references skin bundles the minimal profile does not mount. */
@@ -187,7 +191,7 @@ function main() {
   warnAboutHomePatch(options, dshHome);
   log(options, "");
   log(options, "Done. Start the Obsidian mode with:");
-  log(options, `  dsh --profile ${PROFILE_NAME} --port 3180`);
+  log(options, `  dsh --profile ${PROFILE_NAME} --port 3180 --patch "${join(dshHome, "profiles", PROFILE_NAME, "obsidian.patch.yml")}"`);
   log(options, "Or install the companion Obsidian community plugin: it starts this service automatically.");
 }
 

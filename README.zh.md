@@ -21,7 +21,7 @@
 |---|---|---|
 | 仓库根 `main.js` / `manifest.json` / `styles.css` | Obsidian 社区插件（id `dsh-math-assistant`） | `<vault>/.obsidian/plugins/dsh-math-assistant/` |
 | `dsh/preset/`（`preset.yml`、`agent.cordis.yml`、`obsidian-memory.mjs`、`obsidian-notes.mjs`） | dsh **agent preset** `obsidian`（最小工具集 + 记忆插件 + 专用笔记工具） | `$DSH_HOME/.agent-presets/obsidian/` |
-| `dsh/profile/`（`package.json`、`cordis.patch.yml` 等） | dsh **profile** `obsidian`（web 界面 + fail-closed 沙箱） | `$DSH_HOME/profiles/obsidian/` |
+| `dsh/profile/`（`package.json`、`cordis.patch.yml`、`obsidian-workspace.mjs`、`obsidian.patch.yml` 等） | dsh **profile** `obsidian`（web 界面 + fail-closed 沙箱 + vault 工作区自动注册） | `$DSH_HOME/profiles/obsidian/` |
 | `dsh/templates/` | vault 记忆模板（`AGENTS.md`、`.deepseek/**`） | `<vault>/AGENTS.md`、`<vault>/.deepseek/**` |
 | `dsh/install.mjs` | npm CLI `dsh-obsidian-math`，负责把上面这些写到位 | npm 全局 bin |
 
@@ -101,7 +101,10 @@ dsh plugin --profile obsidian add dsh-obsidian-math
 安装器幂等、保留用户修改（`--force` 覆盖）。随后启动：
 
 ```bash
-dsh --profile obsidian --port 3180
+# Obsidian 插件会自动附加这个 --patch 覆盖层；纯 CLI 使用时也请显式带上，
+# 这样 vault 会自动注册为工作区，不需要手动选择。
+dsh --profile obsidian --port 3180 \
+  --patch "$DSH_HOME/profiles/obsidian/obsidian.patch.yml"
 ```
 
 记忆插件与路径无关：vault 自动取会话 cwd（或用 `DSH_OBSIDIAN_VAULT` 覆盖），历史会话自动取 `$DSH_HOME/sessions`（或用 `DSH_SESSIONS_ROOT` 覆盖）。

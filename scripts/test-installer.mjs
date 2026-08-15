@@ -22,6 +22,8 @@ const checks = [
   join(home, 'profiles', 'obsidian', 'cordis.yml'),
   join(home, 'profiles', 'obsidian', 'cordis.patch.yml'),
   join(home, 'profiles', 'obsidian', 'pnpm-workspace.yaml'),
+  join(home, 'profiles', 'obsidian', 'obsidian-workspace.mjs'),
+  join(home, 'profiles', 'obsidian', 'obsidian.patch.yml'),
   join(vault, 'AGENTS.md'),
   join(vault, '.deepseek', 'memory', 'profile.md'),
   join(vault, '.deepseek', 'memory', 'topics', 'index.md'),

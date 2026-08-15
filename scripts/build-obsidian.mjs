@@ -20,7 +20,9 @@ const preset = {
   "profile-package.json": readFileSync(join(root, "dsh", "profile", "package.json"), "utf8"),
   "profile-cordis.yml": readFileSync(join(root, "dsh", "profile", "cordis.yml"), "utf8"),
   "profile-cordis.patch.yml": readFileSync(join(root, "dsh", "profile", "cordis.patch.yml"), "utf8"),
-  "profile-pnpm-workspace.yaml": readFileSync(join(root, "dsh", "profile", "pnpm-workspace.yaml"), "utf8")
+  "profile-pnpm-workspace.yaml": readFileSync(join(root, "dsh", "profile", "pnpm-workspace.yaml"), "utf8"),
+  "profile-obsidian-workspace.mjs": readFileSync(join(root, "dsh", "profile", "obsidian-workspace.mjs"), "utf8"),
+  "profile-obsidian.patch.yml": readFileSync(join(root, "dsh", "profile", "obsidian.patch.yml"), "utf8")
 };
 
 const templates = {

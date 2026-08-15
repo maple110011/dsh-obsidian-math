@@ -1,0 +1,13 @@
+# Obsidian-mode patch overlay applied by the Obsidian plugin as an extra
+# `dsh --patch` layer (or manually for pure CLI use). This file is
+# plugin-owned and always refreshed on update; user edits belong in
+# `cordis.patch.yml`.
+#
+# Auto-register the vault as a workspace so the web UI shows it in the
+# workspace picker immediately and never forces a directory-selection flow
+# inside the Obsidian iframe.
+- insert:
+    - id: obsidian-workspace
+      name: ./obsidian-workspace.mjs
+      config:
+        vaultPath: !!js process.env.DSH_OBSIDIAN_VAULT

@@ -36,7 +36,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 export const name = "obsidian-memory";
-export const inject = ["tools", "fs", "systemPrompt"];
+export const inject = ["tools", "fs", "systemPrompt", "loader"];
 
 const ZSTD_MAGIC = 4247762216; // little-endian 28 B5 2F FD
 const MEMORY_DIR = ".deepseek";

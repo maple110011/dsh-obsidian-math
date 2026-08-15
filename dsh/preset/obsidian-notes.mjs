@@ -14,7 +14,7 @@
 import { isAbsolute, join, resolve } from "node:path";
 
 export const name = "obsidian-notes";
-export const inject = ["tools", "fs", "systemPrompt"];
+export const inject = ["tools", "fs", "systemPrompt", "loader"];
 
 /**
  * Load `defineTool` without a static bare import. A local agent-preset plugin
@@ -28,9 +28,13 @@ export const inject = ["tools", "fs", "systemPrompt"];
 async function loadDefineTool(ctx) {
   const internal = ctx.loader?.internal;
   if (typeof internal?.import === "function") {
-    const base = ctx.loader?.ctx?.baseUrl ?? ctx.root?.baseUrl ?? ctx.baseUrl;
+    // The profile directory is the correct resolution anchor: app-boot heals
+    // `$DSH_HOME/profiles/node_modules` with links to every dsh package, while
+    // `ctx.loader.ctx.baseUrl` points at the preset directory and cannot see
+    // `@deepseek-ai/dsh-tools`.
+    const base = ctx.root?.baseUrl ?? ctx.loader?.ctx?.baseUrl ?? ctx.baseUrl;
     if (base === undefined) {
-      throw new Error("obsidian-notes: cannot resolve the harness module base (ctx.loader.ctx.baseUrl is unset)");
+      throw new Error("obsidian-notes: cannot resolve the harness module base (ctx.root.baseUrl is unset)");
     }
     const module = await internal.import("@deepseek-ai/dsh-tools", base, {});
     if (typeof module.defineTool !== "function") {
