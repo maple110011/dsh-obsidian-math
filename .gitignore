@@ -4,3 +4,4 @@ node_modules/
 .obsidian/
 release/
 *.zip
+*.tgz

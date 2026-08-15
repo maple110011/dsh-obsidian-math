@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "postinstall": "node dsh/install.mjs install --quiet",
-    "test": "node --check dsh/install.mjs && node --check main.js && node -e \"import('./dsh/preset/obsidian-memory.mjs').then(m=>console.log('preset ok:', m.name))\""
+    "test": "node --check dsh/install.mjs && node --check main.js && node -e \"import('./dsh/preset/obsidian-memory.mjs').then(m=>console.log('preset ok:', m.name))\" && node scripts/test-installer.mjs"
   },
   "keywords": [
     "deepseek",

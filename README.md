@@ -125,7 +125,7 @@ Everything runs locally: the dsh web service binds to `127.0.0.1`, all memory li
 
 ## Release
 
-Releases are published on GitHub: bump `version` in `package.json` and `manifest.json`, run `node scripts/build-obsidian.mjs`, tag the release with the same version, and upload `main.js`, `manifest.json`, `styles.css` as release assets.
+Releases are automated: bump `version` in `package.json` and `manifest.json` (keep them equal), run `node scripts/build-obsidian.mjs`, commit, then push a tag matching the version — the workflow publishes the release with `main.js`, `manifest.json`, and `styles.css` attached. Manual fallback: create a GitHub release with the same tag and upload those three files.
 
 ## License
 

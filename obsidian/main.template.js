@@ -52,6 +52,17 @@ async function probeService(port, timeoutMs = 1500) {
   }
 }
 
+/**
+ * The dsh server is a Node program. `process.execPath` inside Obsidian points
+ * at the Electron binary (obsidian.exe), never at node, so we spawn `node`
+ * from PATH. DSH_NODE_BIN allows an explicit override.
+ */
+function nodeExecutable() {
+  const override = process.env.DSH_NODE_BIN?.trim();
+  if (override) return override;
+  return process.platform === 'win32' ? 'node.exe' : 'node';
+}
+
 // ── dsh detection ───────────────────────────────────────────────────────────
 
 function validInstallDir(dir) {
@@ -216,10 +227,13 @@ class DshService {
     const args = location.script
       ? [location.script, '--profile', PRESET_NAME, '--port', String(this.plugin.settings.port)]
       : ['--profile', PRESET_NAME, '--port', String(this.plugin.settings.port)];
-    const executable = location.script ? process.execPath : 'dsh';
+    const executable = location.script ? nodeExecutable() : 'dsh';
+    // Without a resolved script we rely on the dsh launcher; Windows needs a
+    // shell to execute .cmd shims.
+    const shell = !location.script && process.platform === 'win32';
     this.setStatus('starting');
     this.appendLog(`starting: ${executable} ${args.join(' ')}`);
-    this.child = spawn(executable, args, { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    this.child = spawn(executable, args, { env, windowsHide: true, shell, stdio: ['ignore', 'pipe', 'pipe'] });
     this.child.stdout.on('data', (chunk) => this.appendLog(chunk));
     this.child.stderr.on('data', (chunk) => this.appendLog(chunk));
     this.child.on('exit', (code) => {
@@ -443,13 +457,17 @@ class DshObsidianMathPlugin extends Plugin {
   }
 
   openSettings() {
+    const setting = this.app.setting;
+    if (!setting) return;
     try {
-      this.app.setting.open();
-      this.app.setting.openTabById('dsh-obsidian-math');
+      setting.open();
     } catch {
-      // Older Obsidian fallback: just open the settings root.
-      // @ts-ignore
-      if (typeof this.app.setting.open === 'function') this.app.setting.open();
+      // ignored; openTabById below is the important part
+    }
+    try {
+      setting.openTabById('dsh-obsidian-math');
+    } catch {
+      // older Obsidian: the settings root is already open
     }
   }
 
@@ -482,6 +500,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'DSH Obsidian Math Assistant' });
+    containerEl.createEl('p', { text: `Version ${this.plugin.manifest?.version ?? ''}` });
     containerEl.createEl('p', { text: 'Embeds the DeepSeek Harness math-memory agent in the right sidebar. The plugin starts the dsh service automatically; no extra cmd window is needed.' });
 
     new Setting(containerEl)
@@ -530,6 +549,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.dshHome)
         .onChange(async (value) => {
           this.plugin.settings.dshHome = value.trim();
+          this.plugin.service.cachedLocation = undefined;
           await this.plugin.saveSettings();
         }));
 

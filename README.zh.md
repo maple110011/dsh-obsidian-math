@@ -117,7 +117,7 @@ node scripts/test-installer.mjs # 临时目录端到端测试安装器
 
 ## 发布
 
-发布在 GitHub 上进行：同步修改 `package.json` 与 `manifest.json` 的 `version`，运行 `node scripts/build-obsidian.mjs`，用相同版本号打 tag 创建 Release，并把 `main.js`、`manifest.json`、`styles.css` 作为 Release 资产上传。
+发布已自动化：同步修改 `package.json` 与 `manifest.json` 的 `version`（两者一致），运行 `node scripts/build-obsidian.mjs` 并提交，然后推送与版本号相同的 tag——workflow 会自动创建 Release 并附上 `main.js`、`manifest.json`、`styles.css` 三个资产。手动兜底：用相同 tag 创建 GitHub Release 并上传这三个文件。
 
 ## License
 

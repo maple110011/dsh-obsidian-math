@@ -31,7 +31,7 @@ import {
   statSync,
   writeFileSync
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 export const name = "obsidian-memory";
