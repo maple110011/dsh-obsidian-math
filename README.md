@@ -20,15 +20,16 @@ The agent deliberately keeps the **smallest possible toolset** — file read/wri
 
 ## Scope & limitations
 
-- **Math-focused by design.** The memory layers, typed records, review workflow, and idea-memo reminders are tuned for math-adjacent knowledge (mathematics, statistics, economics: concepts, propositions, proofs, methods). Different knowledge domains — codebases, law, medicine, engineering workflows — typically need different memory granularity and retrieval protocols; do not assume this design transfers unchanged.
+- **Math-focused by design.** The memory layers, typed records, review workflow, and idea-memo reminders are tuned for math-adjacent knowledge (mathematics and statistics: concepts, propositions, proofs, methods). Different knowledge domains — codebases, law, medicine, engineering workflows — typically need different memory granularity and retrieval protocols; do not assume this design transfers unchanged.
 - **Prototype status (0.1.x).** The memory architecture has **not** been through long-term usage testing or systematic benchmark evaluation. Layer boundaries, record types, and reminder policies are expected to evolve. The design draws on [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) and [arXiv:2607.05794](https://arxiv.org/abs/2607.05794); a more complete agent-native memory architecture remains future work.
 
 ## Highlights
 
 - **Minimal agent surface**: `read`, `write`, `edit`, `glob`, `grep`, `read_image`, `ask_user_question`. No shell, no web tools, no subagents.
-- **Layered long-term memory** (informed by [arXiv:2606.24775](https://arxiv.org/abs/2606.24775), *Are We Ready For An Agent-Native Memory System?*):
+- **Layered long-term memory** (informed by [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) and [arXiv:2607.05794](https://arxiv.org/abs/2607.05794)):
   - `profile.md` — semantic layer: stable preferences, notation, standing authorizations;
   - `topics/` — navigation layer: topic index and per-topic details;
+  - `records/` — typed atomic-record layer: fact/event/instruction/preference cards with provenance links;
   - `episodes/` — raw evidence layer: append-only per-conversation event cards (original wording preserved);
   - `inbox/` — idea memo library with lifecycle `inbox → polishing → done`.
 - **Cross-session context**: a memory plugin distills this machine's past dsh sessions (zstd JSONL logs) into bounded Q&A cues injected into every system prompt, filtered to exclude the live session.

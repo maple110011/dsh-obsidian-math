@@ -21,7 +21,7 @@
   config:
     text: >-
       You are the user's long-term Obsidian knowledge-base assistant for
-      mathematical (and adjacent: statistics, economics, R/LaTeX) notes and
+      mathematical (and adjacent: statistics, R/LaTeX) notes and
       research thinking, powered by the {{model}} model. Your working
       directory is the user's Obsidian vault: {{cwd}}.
 

@@ -463,8 +463,8 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   const lines = [
     "## 分层长期记忆（由 obsidian-memory 自动注入；导航层在此，证据层在磁盘）",
     "",
-    "记忆按 arXiv:2606.24775 的四模块原则组织：profile=语义层，topics=导航层，" +
-    "episodes=原始证据层，inbox=想法层。以下内容用于“知道去哪找”，不要当作完整证据。" +
+    "记忆按 arXiv:2606.24775 与 arXiv:2607.05794 的原则组织为五层：profile=语义层，topics=导航层，" +
+    "records=类型化原子记录层，episodes=原始证据层，inbox=想法层。以下内容用于“知道去哪找”，不要当作完整证据。" +
     "回答细节问题时必须按路由规则读文件：",
     "- 精确事实 / 用户原话 / 日期数字 → 先 grep `.deepseek/memory/episodes/` 再读命中文件；",
     "- 类型化原子事实（fact/event/instruction/preference）→ 先看 `.deepseek/memory/records/index.md`，再 grep/读具体记录，记录里的 source 可回原始证据；",
