@@ -12,6 +12,18 @@ A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek
 
 **How they relate:** both components write identical, idempotent dsh configuration. Most users only need component 1 — installing the Obsidian plugin is enough. Use component 2 when you want the dsh mode without the Obsidian plugin, or when you prefer to install/update the dsh side from the command line.
 
+### What this repository contains and where it lands
+
+| In this repo | What it is | Installed to |
+|---|---|---|
+| repo-root `main.js` / `manifest.json` / `styles.css` | Obsidian community plugin (id `dsh-math-assistant`) | `<vault>/.obsidian/plugins/dsh-math-assistant/` |
+| `dsh/preset/` (`preset.yml`, `agent.cordis.yml`, `obsidian-memory.mjs`) | dsh **agent preset** `obsidian` (minimal tools + memory plugin) | `$DSH_HOME/.agent-presets/obsidian/` |
+| `dsh/profile/` (`package.json`, `cordis.patch.yml`, …) | dsh **profile** `obsidian` (web app + fail-closed sandbox) | `$DSH_HOME/profiles/obsidian/` |
+| `dsh/templates/` | Vault memory templates (`AGENTS.md`, `.deepseek/**`) | `<vault>/AGENTS.md`, `<vault>/.deepseek/**` |
+| `dsh/install.mjs` | npm CLI `dsh-obsidian-math` that writes the above | npm global bin |
+
+Note: the dsh side is **not** a Cordis bundle — it is an **agent preset + profile + installer** (the Obsidian plugin embeds and bootstraps the same files automatically). Planned for 0.2.0: dedicated `note_search` / `note_create` / `note_links` tools with tag filtering, overwrite protection, and backlink queries.
+
 The agent deliberately keeps the **smallest possible toolset** — file read/write/search and `ask_user_question` — and adds a layered, paper-informed memory system.
 
 ## Problems solved

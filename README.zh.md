@@ -12,6 +12,18 @@
 
 **两者关系**：写入的 dsh 配置完全相同、幂等、可互换。大多数用户**只装组件 1（Obsidian 插件）就足够**；组件 2 用于“不用 Obsidian 插件、只想要 `dsh --profile obsidian`”的场景，或想用命令行显式安装/更新 dsh 侧配置的场景。
 
+### 仓库包含什么、各自安装到哪里
+
+| 仓库文件 | 是什么 | 安装位置 |
+|---|---|---|
+| 仓库根 `main.js` / `manifest.json` / `styles.css` | Obsidian 社区插件（id `dsh-math-assistant`） | `<vault>/.obsidian/plugins/dsh-math-assistant/` |
+| `dsh/preset/`（`preset.yml`、`agent.cordis.yml`、`obsidian-memory.mjs`） | dsh **agent preset** `obsidian`（最小工具集 + 记忆插件） | `$DSH_HOME/.agent-presets/obsidian/` |
+| `dsh/profile/`（`package.json`、`cordis.patch.yml` 等） | dsh **profile** `obsidian`（web 界面 + fail-closed 沙箱） | `$DSH_HOME/profiles/obsidian/` |
+| `dsh/templates/` | vault 记忆模板（`AGENTS.md`、`.deepseek/**`） | `<vault>/AGENTS.md`、`<vault>/.deepseek/**` |
+| `dsh/install.mjs` | npm CLI `dsh-obsidian-math`，负责把上面这些写到位 | npm 全局 bin |
+
+注意：dsh 侧**不是** Cordis bundle，而是 **agent preset + profile + 安装器** 的组合（Obsidian 插件内嵌并自动初始化同一套文件）。计划在 0.2.0 增加专用工具：`note_search`（tag 过滤）、`note_create`（拒绝覆盖）、`note_links`（反链查询）。
+
 Agent 刻意保持**最小工具集**：`read / write / edit / glob / grep / read_image / ask_user_question`，并附带分层长期记忆系统。
 
 ## 解决的痛点
