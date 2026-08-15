@@ -1,5 +1,7 @@
 # DSH Obsidian 数学笔记助手（dsh-obsidian-math）
 
+> 完整中文使用指南见 [`docs/使用指南.md`](docs/使用指南.md)。
+
 把 DeepSeek Harness 变成一个住在 Obsidian 右侧栏里的长期数学笔记助手。同一套系统以两种形态发布：
 
 1. **Obsidian 社区插件**（仓库根 `manifest.json` + `main.js`）：右侧栏嵌入 dsh Web UI、自动检测并启动 dsh 服务、自动初始化 vault 记忆模板——不需要任何 cmd 窗口。
