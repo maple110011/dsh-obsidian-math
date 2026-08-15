@@ -18,6 +18,11 @@ The agent deliberately keeps the **smallest possible toolset** — file read/wri
 2. **“Writing notes means repeatedly sending md files to the AI.”** The assistant lives inside Obsidian's right sidebar and only has file read/write/search tools. Untangling structure, completing details, reviewing a draft, and finding problems all happen in place on the vault — no more copy-pasting notes back and forth.
 3. **“Key mathematical ideas slip away.”** General math heuristics, techniques, and viewpoints that surface during conversations are easy to lose. The agent proactively proposes `💡 可捕捉的想法`, writes them (with your consent) into a memo library with lifecycle `inbox → polishing → done`, and the plugin re-surfaces related or stale memos with `🔔 备忘录提醒` — prompting you to polish exactly when new related ideas appear.
 
+## Scope & limitations
+
+- **Math-focused by design.** The memory layers, typed records, review workflow, and idea-memo reminders are tuned for math-adjacent knowledge (mathematics, statistics, economics: concepts, propositions, proofs, methods). Different knowledge domains — codebases, law, medicine, engineering workflows — typically need different memory granularity and retrieval protocols; do not assume this design transfers unchanged.
+- **Prototype status (0.1.x).** The memory architecture has **not** been through long-term usage testing or systematic benchmark evaluation. Layer boundaries, record types, and reminder policies are expected to evolve. The design draws on [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) and [arXiv:2607.05794](https://arxiv.org/abs/2607.05794); a more complete agent-native memory architecture remains future work.
+
 ## Highlights
 
 - **Minimal agent surface**: `read`, `write`, `edit`, `glob`, `grep`, `read_image`, `ask_user_question`. No shell, no web tools, no subagents.

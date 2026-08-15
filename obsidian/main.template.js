@@ -536,6 +536,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
     containerEl.createEl('p', { text: `版本 ${this.plugin.manifest?.version ?? ''}` });
     containerEl.createEl('p', { text: '在 Obsidian 右侧栏嵌入 DeepSeek Harness 数学记忆助手。插件会自动启动 dsh 服务，无需额外打开命令行窗口。' });
     containerEl.createEl('p', { cls: 'dsh-obsidian-math-security-note', text: '🔒 安全模式：助手只能写当前 vault 内的文件；权限升级审批默认关闭，不会弹出“是否提权”的窗口；工具集中没有删除类工具。' });
+    containerEl.createEl('p', { cls: 'dsh-obsidian-math-security-note', text: '🧭 适用范围：面向数学类知识（数学/统计/经济学笔记与数学思维方式）设计，其他领域的知识可能需要不同的记忆架构。当前为试做型（0.1.x），记忆架构尚未经过长期使用测试，后续会继续演进。' });
 
     new Setting(containerEl)
       .setName('端口')
