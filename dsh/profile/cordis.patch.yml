@@ -22,3 +22,11 @@
 - id: fs-sandbox
   config:
     cwd: !!js process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()
+
+# Fail-closed approval: the Obsidian mode never pops an "escalate to
+# danger-full-access?" prompt, so an accidental click cannot widen the write
+# boundary. If a user really needs one-off full access, they can set
+# DSH_PERMISSION_MODE=danger-full-access explicitly and restart the service.
+- id: approval
+  config:
+    policy: !!js process.env.DSH_PERMISSION_MODE === 'danger-full-access' ? 'ask' : 'never'

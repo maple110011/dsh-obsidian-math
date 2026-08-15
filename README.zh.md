@@ -111,9 +111,11 @@ node scripts/test-installer.mjs # 临时目录端到端测试安装器
 
 `main.js` 是构建产物：改 `obsidian/main.template.js` 或共享 `dsh/` 文件后要重新构建。
 
-## 隐私
+## 隐私与安全
 
 全部本地运行：dsh 只绑定 `127.0.0.1`，记忆全部是 vault 内 markdown，历史会话索引不出本机。
+
+`obsidian` profile 默认 **fail-closed**：写入被限制在 vault 内（`workspace-write`），交互式提权审批**默认关闭**（`approval: never`，不会弹出“是否升权”窗口，杜绝误点扩大权限边界），工具集中没有删除类工具。如确需一次性全权限，必须显式设置 `DSH_PERMISSION_MODE=danger-full-access` 并重启服务。
 
 ## 发布
 

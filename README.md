@@ -119,9 +119,11 @@ node scripts/test-installer.mjs  # end-to-end installer test against temp dirs
 
 `main.js` is generated — edit `obsidian/main.template.js` and the shared `dsh/` files, then rebuild.
 
-## Privacy
+## Privacy & safety
 
 Everything runs locally: the dsh web service binds to `127.0.0.1`, all memory lives as markdown inside the vault, and the past-session index never leaves the machine.
+
+The `obsidian` profile is fail-closed by design: writes are confined to the vault (`workspace-write`), interactive permission-escalation prompts are **disabled** (`approval: never`, so an accidental click cannot widen the boundary), and the toolset contains no delete/rm tools. To opt into one-off full access you must set `DSH_PERMISSION_MODE=danger-full-access` explicitly and restart the service.
 
 ## Release
 
