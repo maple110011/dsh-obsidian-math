@@ -5,14 +5,18 @@
   <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/English-English_README-2ea043?style=for-the-badge"></a>
 </p>
 
-> 完整中文使用指南见 [`docs/使用指南.md`](docs/使用指南.md)。
-
 把 DeepSeek Harness 变成一个住在 Obsidian 右侧栏里的长期数学笔记助手。同一套系统以两种形态发布：
 
 1. **Obsidian 社区插件**（仓库根 `manifest.json` + `main.js`）：右侧栏嵌入 dsh Web UI、自动检测并启动 dsh 服务、自动初始化 vault 记忆模板——不需要任何 cmd 窗口。
 2. **dsh 插件**（npm 包，`dsh/` 目录）：把 `obsidian` agent preset 与 `obsidian` profile 安装进 `$DSH_HOME`，可选初始化 vault 模板。
 
 Agent 刻意保持**最小工具集**：`read / write / edit / glob / grep / read_image / ask_user_question`，并附带分层长期记忆系统。
+
+## 解决的痛点
+
+1. **“这个问题我问过，但忘了。”** 有价值的信息散落在以往与 AI 的对话里，时间一久只能重新问，AI 每次都要从零猜测你的关注点、记号习惯和理论偏好。本插件给 agent 一套**持久分层记忆**（画像 + 主题索引 + 原始事件证据），并把本机历史 dsh 会话的摘要注入每个新会话——它从上一次对话结束的地方开始，而不是从零开始。
+2. **“写笔记总要反复把 md 发给 AI。”** 助手直接住在 Obsidian 右侧栏，只有文件读写/搜索工具。理思路、补细节、审阅、找问题都在 vault 原地完成，不再复制粘贴往返。
+3. **“关键数学想法容易溜走。”** 对话中浮现的一般性数学思路、方法、技巧、观点稍纵即逝。agent 会主动给出 `💡 可捕捉的想法`，经你同意写入备忘录库（`inbox → polishing → done`），插件还会在出现新关联想法或条目久未更新时用 `🔔 备忘录提醒` 催你打磨。
 
 ## 特性
 
@@ -113,7 +117,7 @@ node scripts/test-installer.mjs # 临时目录端到端测试安装器
 
 ## 发布
 
-社区提交与 npm 发布步骤见 [docs/RELEASING.md](docs/RELEASING.md)。
+发布在 GitHub 上进行：同步修改 `package.json` 与 `manifest.json` 的 `version`，运行 `node scripts/build-obsidian.mjs`，用相同版本号打 tag 创建 Release，并把 `main.js`、`manifest.json`、`styles.css` 作为 Release 资产上传。
 
 ## License
 

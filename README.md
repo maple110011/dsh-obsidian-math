@@ -12,6 +12,12 @@ A long-term math-memory agent for [DeepSeek Harness](https://github.com/deepseek
 
 The agent deliberately keeps the **smallest possible toolset** — file read/write/search and `ask_user_question` — and adds a layered, paper-informed memory system.
 
+## Problems solved
+
+1. **“I asked this before and forgot.”** Valuable context gets scattered across past AI conversations; after a while you re-ask from zero and the model re-guesses your focus, notation, and theoretical preferences. This plugin gives the agent a **durable layered memory** (profile + topic index + raw episode evidence) and injects a bounded digest of past dsh conversations into every new session, so it starts from where the last conversation ended instead of from scratch.
+2. **“Writing notes means repeatedly sending md files to the AI.”** The assistant lives inside Obsidian's right sidebar and only has file read/write/search tools. Untangling structure, completing details, reviewing a draft, and finding problems all happen in place on the vault — no more copy-pasting notes back and forth.
+3. **“Key mathematical ideas slip away.”** General math heuristics, techniques, and viewpoints that surface during conversations are easy to lose. The agent proactively proposes `💡 可捕捉的想法`, writes them (with your consent) into a memo library with lifecycle `inbox → polishing → done`, and the plugin re-surfaces related or stale memos with `🔔 备忘录提醒` — prompting you to polish exactly when new related ideas appear.
+
 ## Highlights
 
 - **Minimal agent surface**: `read`, `write`, `edit`, `glob`, `grep`, `read_image`, `ask_user_question`. No shell, no web tools, no subagents.
@@ -119,7 +125,7 @@ Everything runs locally: the dsh web service binds to `127.0.0.1`, all memory li
 
 ## Release
 
-See [docs/RELEASING.md](docs/RELEASING.md) for Obsidian community submission and npm publish steps.
+Releases are published on GitHub: bump `version` in `package.json` and `manifest.json`, run `node scripts/build-obsidian.mjs`, tag the release with the same version, and upload `main.js`, `manifest.json`, `styles.css` as release assets.
 
 ## License
 
