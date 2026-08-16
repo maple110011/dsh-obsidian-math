@@ -1,7 +1,7 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、已修坑、未做事项与工作约定。
-> 最后更新：2026-08-16（推送前修复轮完成后；feedback token 接线 / 缓存 schemaVersion / 皮肤 fallback 时序）。
+> 最后更新：2026-08-16（0.5.0 发布：检索 v3 全量 + 控制面 1c-4 + 记号体系 + 回复质量协议 + QA 工具链 + README/ARCHITECTURE 重写）。
 
 ## 1. 项目是什么
 
@@ -10,7 +10,7 @@
 - Obsidian 社区插件（根目录 `main.js`/`manifest.json`/`styles.css`，由 `obsidian/main.template.js` + `dsh/` 共享文件构建）；
 - dsh 侧 agent preset + profile + 安装器（`dsh/`，npm 包 `dsh-obsidian-math`）。
 
-仓库地址：github.com/maple110011/dsh-obsidian-math。版本 **0.4.0**。
+仓库地址：github.com/maple110011/dsh-obsidian-math。版本 **0.5.0**。
 
 ## 2. 文件地图（改哪里先看哪）
 
@@ -29,7 +29,12 @@
 | `scripts/deploy-local.mjs` | **本机一键部署**（gitignored，含本机路径；用安全拷贝，勿用 cpSync） |
 | `docs/memory/*.md` | 知识库：README（导航）/design/assessment/v2-proposal/references/changelog/control-panel/handoff |
 
-## 3. 当前状态（0.4.0）
+## 3. 当前状态（0.5.0）
+
+**检索 v3 全量**：note_recall 统一入口（BM25 + kind-aware passage + CJK 字符包含 + coverage 弱信号）、精读挑选协议（AGENTS.md §4/§5 重写）、导航式注入（S5）、审计结构校验（S6）；两层验收通过（引擎探针 12/12、真实会话 E2E 4/4，成本基准题 17 万→约 2.5 万计费 tokens）。
+**控制面 1c-4**：捕获策略分级（设置页下拉框 + 面板编辑 + 文件直改三入口）、面板内编辑（mtime 冲突防护）、📈 趋势（hook-history 快照）、低危清单四项。
+**记号体系 + 回复质量**：notation.md（收集→统一→维护）、学习对话原则七条（AGENTS.md §8）、捕捉提案质量与 auto 档透明度。
+**QA 工具链**：`scripts/qa/`（npm run qa / qa:e2e，含 API 级 token 计量）；ARCHITECTURE.md + README 中英重写；版本 0.5.0。
 
 **读**：hook 两级检索（note_retrieve）+ **检索式注入**（静态预算瘦身 + 每轮按当前消息召回 top-k）。
 **写**：每日确定性体检（strong/weak/unused/疑似重复/unverified）+ hook 统计回写（stats 合并后清零，无双计）+ 模型执行协议（AGENTS.md）。
@@ -58,7 +63,7 @@
 
 ## 5. 用户决策记录（不要推翻）
 
-- **版本策略**：0.4.0 已发布（含 A-F 轮）；推送前修复轮对外发布为 **0.4.1**（bugfix release，不重写已发布的 0.4.0 标签）。
+- **版本策略**：0.4.0/0.4.1 已发布；检索 v3 + 控制面 1c-4 + 记号体系 + 回复原则等发布为 **0.5.0**。
 - **不做 benchmark**（烧 token + 无对口公开基准）：零 token 回归 + 被动信号 + 可选一次性手动探针。
 - **记忆面板入口**：设置页按钮 + 命令面板，不设独立 ribbon；brain 图标仅作视图标签。
 - **皮肤**：让 obsidian profile **直接应用**主 web 所选皮肤（不维护禁用清单）。

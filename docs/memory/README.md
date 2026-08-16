@@ -35,12 +35,13 @@
 
 | 项目 | 状态 |
 |---|---|
-| v2 之 hook 解析 + `note_retrieve` 两级检索 | ✅ 已实现（`dsh/preset/obsidian-notes.mjs`） |
-| v2 之确定性记忆体检（audit pass） | ✅ 已实现（`dsh/preset/obsidian-memory.mjs`，`cache/memory-audit.json`） |
-| v2 之模型执行的 merge/reinforce/demote 协议 | ✅ 协议已写入 `AGENTS.md`（第 2/6 节），待长期使用检验 |
-| v2 之验证徽标 + 反馈链接（阶段 1a） | ✅ 已实现（`/feedback` 端点 + 徽标渲染规则，见 control-panel.md） |
-| v2 之记忆视图（Obsidian 面板，阶段 1b） | ✅ 已实现（MemoryView ItemView；设置页按钮 + 命令面板入口，brain 标签图标） |
-| v2 之检索式注入（静态瘦身 + 每轮召回 top-k） | ✅ 已实现（见 design.md §3/§4） |
-| v2 之 dialogue index 修复 + 相关性提醒 + note 增量缓存 + 安全加固 | ✅ 已实现（见 handoff.md §3/§4） |
-| v2 之 embedding 后端 | ⬜ 规划中（当前为 token 加权召回/检索，无外部依赖） |
-| 质量保障 | ✅ 零 token 回归检查（`scripts/test-memory.mjs`）+ 被动信号；**不做 token 型 benchmark**（决策见 v2-proposal §6） |
+| 检索 v3：note_recall 统一入口（笔记+记忆一次 BM25 排序，kind-aware passage，coverage 弱信号） | ✅ 已实现并两层验收（引擎探针 12/12 + 真实会话 E2E 4/4，见 testing.md） |
+| 检索 v3：精读挑选协议（蒸馏查询/空结果重试/精读纪律）与导航式注入 | ✅ 已实现（AGENTS.md §4/§5；注入层=导航层） |
+| v2 之确定性记忆体检 + hook 统计回写 + 结构校验（S6） | ✅ 已实现（`cache/memory-audit.json`；缺 source/断链/未入索引） |
+| v2 之验证徽标 + 反馈链接 + 记忆面板（浏览/编辑/趋势） | ✅ 已实现（control-panel.md 阶段 1a/1b + 面板内编辑 + 📈 趋势） |
+| 捕获策略分级（1c）+ 设置页 UI | ✅ 已实现（capture-policy.md + 设置页下拉框） |
+| 记号体系（收集→统一→维护） | ✅ 已实现（memory/notation.md + AGENTS.md §2 + 每轮注入） |
+| 回复质量协议（学习对话原则） | ✅ 已实现（AGENTS.md §8） |
+| 检索 v3 之 embedding 后端（Tier B） | ⬜ 可选（用户暂缓；95MB 本地模型 + hybrid 打分） |
+| 检索 v3 之独立 LLM 重排（A6） | ⬜ 可选（默认关闭；探针不满意时启用） |
+| 质量保障 | ✅ 63 项零 token 回归 + `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |
