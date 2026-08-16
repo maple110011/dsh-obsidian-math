@@ -1,0 +1,56 @@
+[
+  {
+    "question": "从依测度收敛出发，怎么加强到几乎处处收敛？请先检索笔记和记忆再回答；末尾一行列出你读过的文件。",
+    "expect": {
+      "mustUse": [
+        "note_recall"
+      ],
+      "mustRead": [
+        ".deepseek/inbox/subsequence-selection.md"
+      ],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "question": "请先用 note_recall 检索「矩阵谱半径 Gelfand 估计」；若检索弱或无相关内容，直接明说库里没有，不要编造。末尾列出读过的文件。",
+    "expect": {
+      "mustUse": [
+        "note_recall"
+      ],
+      "mustContain": [
+        "库里没有"
+      ],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "question": "请用 note_recall 检索后回答：Borel-Cantelli 第一引理怎样用于从依测度收敛得到子列几乎处处收敛？",
+    "expect": {
+      "mustUse": [
+        "note_recall",
+        "read"
+      ],
+      "mustRead": [
+        ".deepseek/memory/theorems/index.md",
+        ".deepseek/inbox/subsequence-selection.md"
+      ],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "question": "请检索后回答：Fubini-Tonelli 定理允许交换积分次序的条件是什么？",
+    "expect": {
+      "mustUse": [
+        "note_recall"
+      ],
+      "mustRead": [
+        "数学/Fubini-Tonelli定理.md"
+      ],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  }
+]

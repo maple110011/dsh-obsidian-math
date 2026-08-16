@@ -141,3 +141,4 @@
   - Q3 定理题：note_recall → theorems/index + 备忘录 + 关联笔记，答对；
   - Q4 笔记题：note_recall + 顺链读 + 诚实披露「仅两行 stub、无完整陈述」后给出标准定理并对照用户反例。
 - 教训：headless runner（dsh-headless）不装配 agent preset，不能用于本插件验收；真实路径 = web 服务 + preset 会话。
+- **工具化**：整套流程已固化进 `scripts/qa/`（`npm run qa` 引擎探针 / `npm run qa:e2e` 真实会话，用例在 `qa/cases.json`，方法论见 `docs/memory/testing.md`）——含服务自举、工具轨迹断言、回答断言与 token 估算，可扩展行为断言与成本基线。

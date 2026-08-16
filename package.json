@@ -14,7 +14,9 @@
   ],
   "scripts": {
     "postinstall": "node dsh/install.mjs install --quiet",
-    "test": "node --check dsh/install.mjs && node --check dsh/preset/obsidian-notes.mjs && node --check dsh/preset/obsidian-memory.mjs && node --check dsh/profile/obsidian-workspace.mjs && node --check main.js && node -e \"import('./dsh/preset/obsidian-memory.mjs').then(m=>console.log('preset ok:', m.name))\" && node scripts/test-memory.mjs && node scripts/test-installer.mjs"
+    "test": "node --check dsh/install.mjs && node --check dsh/preset/obsidian-notes.mjs && node --check dsh/preset/obsidian-memory.mjs && node --check dsh/profile/obsidian-workspace.mjs && node --check main.js && node -e \"import('./dsh/preset/obsidian-memory.mjs').then(m=>console.log('preset ok:', m.name))\" && node scripts/test-memory.mjs && node scripts/test-installer.mjs",
+    "qa": "node scripts/qa/run.mjs",
+    "qa:e2e": "node scripts/qa/run.mjs --e2e"
   },
   "keywords": [
     "deepseek",

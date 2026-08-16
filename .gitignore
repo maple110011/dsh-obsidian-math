@@ -9,4 +9,3 @@ release/
 # local deployment helper (machine-specific paths; run manually)
 scripts/deploy-local.mjs
 scripts/deploy-local.log
-scripts/probe-vault.mjs
