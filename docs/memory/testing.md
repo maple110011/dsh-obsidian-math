@@ -59,3 +59,4 @@ node scripts/qa/e2e.mjs --cases my-cases.json --port 3192   # 自定义用例集
 - 轮询历史时 `turn/end` 与最终 `assistant/message` 可能不同页——必须等到「turn/end 且 finalText 非空」；
 - 工具调用参数在 `data.arguments`（JSON 字符串），读取目标从 `file_path/path/pattern/query` 提取；
 - 无答案类断言用 mustContain「库里没有」而非 mustNotContain 公式——模型会一边声明缺失一边写出公式。
+- **ask_user_question 会让轮次挂起等待用户答复**——驱动器把「存在未答复的 ask_user_question」视为合法终态（否则误报超时）；这也是观察「捕获协议」行为的窗口。

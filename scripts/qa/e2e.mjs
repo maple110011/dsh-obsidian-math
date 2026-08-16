@@ -83,13 +83,16 @@ async function runCase(index, testCase, serviceLog) {
   const readTargets = new Set();
   let finalText = "";
   let sawTurnEnd = false;
+  let pendingQuestion = false;
   while (Date.now() < deadline) {
     await sleep(2000);
     const entries = await history(sessionId);
+    const unanswered = new Set();
     for (const entry of entries) {
       const e = entry.event ?? entry;
       if (e?.type === "tool/call") {
         toolNames.add(e.data?.name ?? "?");
+        if (e.data?.name === "ask_user_question") unanswered.add(e.data.callId);
         if (e.data?.name === "read" || e.data?.name === "note_recall" || e.data?.name === "grep" || e.data?.name === "glob") {
           try {
             const a = JSON.parse(e.data.arguments ?? "{}");
@@ -97,6 +100,7 @@ async function runCase(index, testCase, serviceLog) {
           } catch { /* ignore */ }
         }
       }
+      if (e?.type === "tool/result" && e.data?.callId !== undefined) unanswered.delete(e.data.callId);
       if (e?.type === "assistant/message") {
         const content = e.data?.message?.content ?? e.data?.content ?? [];
         const txt = (Array.isArray(content) ? content : []).filter((b) => b?.type === "text").map((b) => b.text).join("");
@@ -104,7 +108,10 @@ async function runCase(index, testCase, serviceLog) {
       }
       if (e?.type === "turn/end") sawTurnEnd = true;
     }
-    if (sawTurnEnd && finalText !== "") break;
+    // A pending ask_user_question leaves the turn open by design (the agent
+    // waits for the human): a legitimate terminal state for QA.
+    pendingQuestion = unanswered.size > 0;
+    if ((sawTurnEnd || pendingQuestion) && finalText !== "") break;
   }
   const tokens = estimateTokens(await history(sessionId));
   const failures = [];
@@ -116,9 +123,10 @@ async function runCase(index, testCase, serviceLog) {
   for (const needle of expect.mustContain ?? []) if (!finalText.includes(needle)) failures.push(`回答未包含 ${needle}`);
   for (const needle of expect.mustNotContain ?? []) if (finalText.includes(needle)) failures.push(`回答不应包含 ${needle}`);
   if (expect.answerNotEmpty === true && finalText.trim() === "") failures.push("回答为空");
-  if (!sawTurnEnd) failures.push("轮次未在超时内结束");
+  if (!sawTurnEnd && !pendingQuestion) failures.push("轮次未在超时内结束");
   if (failures.length === 0) {
-    log(`[PASS] 案例${index + 1}（约 ${tokens.toLocaleString()} tokens）: ${testCase.question.slice(0, 46)}`);
+    const pendingNote = pendingQuestion ? "（ask_user_question 挂起等待用户答复）" : "";
+    log(`[PASS] 案例${index + 1}${pendingNote}（约 ${tokens.toLocaleString()} tokens）: ${testCase.question.slice(0, 46)}`);
   } else {
     log(`[FAIL] 案例${index + 1}: ${failures.join("；")}`);
     log("      tools:", [...toolNames].join(","), "| reads:", [...readTargets].slice(0, 4).join(","));

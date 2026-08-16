@@ -52,5 +52,19 @@
       "answerNotEmpty": true,
       "timeoutMs": 420000
     }
+  },
+  {
+    "label": "成本基准（旧系统同题实测 17 万 tokens）",
+    "question": "泛性质型定义非常广泛吗，我需不需要为了这个专门去学习范畴论呢",
+    "expect": {
+      "mustUse": [
+        "note_recall"
+      ],
+      "mustRead": [
+        "泛性质型定义"
+      ],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
   }
 ]
