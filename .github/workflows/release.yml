@@ -18,10 +18,13 @@ jobs:
           node-version: 22
       - name: Rebuild generated main.js
         run: node scripts/build-obsidian.mjs
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: awk '/^## \[/{n++} n==1{print}' CHANGELOG.md > release-notes.md
       - name: Create GitHub release with Obsidian assets
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             main.js
             manifest.json
