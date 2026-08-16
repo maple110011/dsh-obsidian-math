@@ -443,6 +443,61 @@ export function computeDocFreq(tokenLists) {
   return { docCount: tokenLists.length, map };
 }
 
+// ── memory v3: BM25 scorer (retrieval-v3.md S2) ──────────────────────────────
+
+/**
+ * Corpus statistics for BM25: document count, average length, term df table.
+ * Independent of the overlap coefficient's { docCount, map } shape so the
+ * two scorers stay interchangeable during the transition.
+ */
+export function computeCorpusStats(tokenizedDocs) {
+  const docFreq = new Map();
+  let totalLen = 0;
+  for (const tokens of tokenizedDocs) {
+    totalLen += tokens.length;
+    for (const token of new Set(tokens)) docFreq.set(token, (docFreq.get(token) ?? 0) + 1);
+  }
+  return {
+    docCount: tokenizedDocs.length,
+    avgLen: tokenizedDocs.length > 0 ? totalLen / tokenizedDocs.length : 1,
+    docFreq
+  };
+}
+
+/**
+ * Standard BM25 (k1=1.2, b=0.75): term-frequency saturation, inverse document
+ * frequency, and document-length normalization. Strong classic lexical
+ * baseline — strictly better than the overlap coefficient for ranking.
+ * Query repetition is honored (each query occurrence adds its own term),
+ * document repetition saturates.
+ */
+export function bm25Score(queryTokens, docTokens, stats, k1 = 1.2, b = 0.75) {
+  if (queryTokens.length === 0 || docTokens.length === 0 || stats.docCount === 0) return 0;
+  const qFreq = tokenFrequencies(queryTokens);
+  const dFreq = tokenFrequencies(docTokens);
+  const docLen = docTokens.length;
+  const lengthNorm = 1 - b + b * (docLen / Math.max(1, stats.avgLen));
+  let score = 0;
+  for (const [token, qCount] of qFreq) {
+    const df = stats.docFreq.get(token) ?? 0;
+    if (df === 0) continue; // unseen terms carry no BM25 signal
+    const tf = dFreq.get(token) ?? 0;
+    if (tf === 0) continue;
+    const idf = Math.log(1 + (stats.docCount - df + 0.5) / (df + 0.5));
+    score += qCount * idf * (tf * (k1 + 1)) / (tf + k1 * lengthNorm);
+  }
+  return score;
+}
+
+/**
+ * Rank documents with BM25, returning sorted [score, index] pairs (desc).
+ */
+export function rankBm25(queryTokens, tokenizedDocs, stats) {
+  const scored = tokenizedDocs.map((docTokens, index) => ({ index, score: bm25Score(queryTokens, docTokens, stats) }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
 function hookList(hook, key) {
   const value = hook?.[key];
   if (Array.isArray(value)) return value.join(" ");
@@ -829,24 +884,35 @@ export async function apply(ctx, config) {
       }
 
       if (cards.length > 0) {
-        const docFreq = computeDocFreq(cards.map((card) => tokenize(cardRetrievalText(card.title, card.hook, card.body))));
-        const scored = cards.map((card) => {
+        // memory v3 S2: BM25 over the kind-aware retrieval text and each hook
+        // field; components are max-normalized across the candidate pool so the
+        // ISM weights stay meaningful on the unbounded BM25 scale.
+        const corpusStats = computeCorpusStats(cards.map((card) => tokenize(cardRetrievalText(card.title, card.hook, card.body))));
+        const raw = cards.map((card) => {
           const hook = card.hook;
-          const lexical = weightedOverlap(queryTokens, tokenize(cardRetrievalText(card.title, hook, card.body)), docFreq);
-          const structure = weightedOverlap(queryTokens, tokenize(hookList(hook, "pattern")), docFreq);
-          const heuristics = weightedOverlap(queryTokens, tokenize(hookList(hook, "heuristics")), docFreq);
-          const quantity = weightedOverlap(queryTokens, tokenize(hookList(hook, "quantity")), docFreq);
+          const lexical = bm25Score(queryTokens, tokenize(cardRetrievalText(card.title, hook, card.body)), corpusStats);
+          const structure = bm25Score(queryTokens, tokenize(hookList(hook, "pattern")), corpusStats);
+          const heuristics = bm25Score(queryTokens, tokenize(hookList(hook, "heuristics")), corpusStats);
+          const quantity = bm25Score(queryTokens, tokenize(hookList(hook, "quantity")), corpusStats);
           const successRate = hookNumber(hook, "success_rate", 0.5);
           const uses = Math.max(0, Math.trunc(hookNumber(hook, "uses", 0)));
           const prior = 0.5 * successRate + 0.5 * Math.min(uses / 10, 1);
-          const score = 0.55 * lexical + 0.15 * structure + 0.15 * heuristics + 0.05 * quantity + 0.10 * prior;
-          return {
-            card,
-            score,
-            breakdown: { lexical, structure, heuristics, quantity, prior },
-            operatorMatch: operator === null || normalizeOperator(hook.operator) === operator
-          };
+          return { card, lexical, structure, heuristics, quantity, prior, operatorMatch: operator === null || normalizeOperator(hook.operator) === operator };
         });
+        const norm = (key) => {
+          const max = Math.max(...raw.map((entry) => entry[key]));
+          return max > 0 ? max : 1;
+        };
+        const maxLex = norm("lexical");
+        const maxStruct = norm("structure");
+        const maxHeur = norm("heuristics");
+        const maxQuant = norm("quantity");
+        const scored = raw.map((entry) => ({
+          card: entry.card,
+          score: 0.55 * (entry.lexical / maxLex) + 0.15 * (entry.structure / maxStruct) + 0.15 * (entry.heuristics / maxHeur) + 0.05 * (entry.quantity / maxQuant) + 0.10 * entry.prior,
+          breakdown: { lexical: entry.lexical, structure: entry.structure, heuristics: entry.heuristics, quantity: entry.quantity, prior: entry.prior },
+          operatorMatch: entry.operatorMatch
+        }));
 
         let pool = scored;
         let operatorFallback = false;
@@ -880,12 +946,14 @@ export async function apply(ctx, config) {
         };
       }
 
-      // Fallback: no hook cards in this vault — rank notes by token overlap.
-      const docFreq = computeDocFreq(fallbackDocs.map((doc) => tokenize(`${doc.title} ${doc.body.slice(0, 4000)}`)));
-      const scored = fallbackDocs.map((doc) => {
-        const lexical = weightedOverlap(queryTokens, tokenize(`${doc.title} ${doc.body.slice(0, 4000)}`), docFreq);
-        return { doc, score: lexical };
-      });
+      // Fallback: no hook cards in this vault — rank notes by BM25 over
+      // title + body head (memory v3 S2).
+      const fallbackTokenized = fallbackDocs.map((doc) => tokenize(`${doc.title} ${doc.body.slice(0, 4000)}`));
+      const corpusStats = computeCorpusStats(fallbackTokenized);
+      const scored = fallbackDocs.map((doc, index) => ({
+        doc,
+        score: bm25Score(queryTokens, fallbackTokenized[index], corpusStats)
+      }));
       scored.sort((a, b) => b.score - a.score);
       const top = scored.slice(0, limit);
       return {

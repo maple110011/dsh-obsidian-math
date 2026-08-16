@@ -61,6 +61,37 @@
 
 ---
 
+## 7. AgentIR: Reasoning-Aware Retrieval for Deep Research Agents（arXiv:2603.04384）
+
+- 来源：https://arxiv.org/abs/2603.04384（Chen, Ma, Zhuang, Lin, Asai, Zhong；UQ/Waterloo/CMU）
+- 核心结论：Deep Research agent 每次搜索前会生成**显式自然语言推理**，现有检索器只拿 query、完全忽略这段推理。把「当前轮推理 + query」联合嵌入（即使冻结 backbone 不微调）即可把检索准确率从 48.7% 提到 55.5%；配合合成数据微调（AgentIR-4B）在 BrowseComp-Plus 上 68% vs 同尺寸基线 52%、BM25 37%。
+- 关键分析（5.2/5.3，可直接迁移的负面结论）：
+  - **历史不是资产**：把 prior queries / prior reasonings 拼进查询会引入大量冗余与错误假设（Forgetting as a Feature）——当前推理对已确认结论的**摘要**是最干净的检索信号，旧假设（如错猜的人名）是噪声。
+  - **原子线索（Atomic Clues）**：把推理分解成短的、互相独立的陈述再用于检索，比整段推理更干净——即“结构化挑战描述”。
+  - 查询扩展类（HyDE）是次优信号。
+- 映射：note_retrieve 的查询 = 当前轮「挑战描述 + 候选技巧」（原子线索式），**绝不拼接历史对话**；recall 注入已用最新用户消息（= 当前上下文），与“遗忘是特性”一致。
+- 不适用：其训练与 4B embedding 部署成本不符合本项目约束；只取其查询侧洞察。
+
+## 8. RaDeR: Reasoning-aware Dense Retrieval Models（arXiv:2505.18405）
+
+- 来源：https://arxiv.org/abs/2505.18405（Das, O'Nuallain, Rahimi）
+- 核心结论：用 LLM 的数学解题「检索增强推理轨迹」+ 自反思相关性评估合成训练数据（含 hard negatives），训练出的 dense retriever 在查询是 **CoT 推理步骤**时首次超过 BM25，且在 Math/Coding 切片上大幅领先；只用同类工作 2.5% 的训练数据。
+- 关键洞察：term-matching 检索器在“推理相关”场景失效（如 pigeonhole 问题与答案间零词面重叠）；**查询应该是推理步骤而不是关键词**。
+- 映射：问题蒸馏后「挑战描述 + 候选技巧」作为查询（已有雏形，v3 升级为结构化协议）；hard negatives 的教训——相关性不是词面重叠，hook 的 techniques/applications 字段正是“推理对齐”的轻量替代。
+- 不适用：模型训练路线整体跳过。
+
+## 9. LeanSearch v2: Global Premise Retrieval for Lean 4 Theorem Proving（arXiv:2605.13137）
+
+- 来源：https://arxiv.org/abs/2605.13137（北大/IQuest 等；代码 https://github.com/frenzymath/LeanSearch-v2）
+- 任务：全局前提检索——一次找回证明整个定理所需的**一组**引理，而非单条声明。
+- 标准模式：① hierarchy-informalized 语料（每个声明配自然语言描述，且**依赖感知自底向上 informalize**）；② 结构化 passage 模板（kind + 类型签名 + 非正式描述 + value 字段，**按声明类型区别处理**——definition 类单独调优）；③ embedder 取 top-50 → reranker 二分类相关性重排。无领域微调，nDCG@10 0.62 vs 次优 0.53。
+- 推理模式（sketch-retrieve-reflect 循环）：sketch 生成器把定理分解成多个子查询（每步=数学动作+上下文+检索 query）→ 每步子查询检索 → **filter LLM 逐个标记相关/不相关，且允许返回空集**（∅ 是信号：区分“检索到支持”与“没检索到有用的”，top-k 规则会把两者混为一谈）→ 可行性 judge 接受或给结构化反馈 → sketch 修订器迭代。69 题基准上 10 个候选内找回 46.1% 前提组。
+- 映射：
+  - 结构化 passage = 我们的 hook 块 + cardRetrievalText（v3 按 card.type 分组组装）；
+  - 空结果是信号 → 协议条款“检索不到就明说/改查询/换路线”，不硬凑；
+  - 分步 sketch → 我们的零 token 版本：模型在自身生成里先给证明草图，对每个外部结果步骤分别 note_retrieve（已有「子目标分解计划」原语的强化）；
+  - 检索质量传播到证明成功率（20% vs 16% vs 4%）→ 支持优先投检索而非其它。
+- 不适用：其每轮 sketch/filter/judge 的多 LLM 调用与 8B embedder/reranker 均超本项目 token/部署预算。
 ## 待读清单（后续追加）
 
 - arXiv:2606.24775 原文细读（当前只有二手摘要）；

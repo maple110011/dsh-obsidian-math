@@ -11,6 +11,7 @@
 | [`design.md`](design.md) | **当前实现**的记忆系统规格：五层结构、注入预算、检索路由、写回协议、生命周期与安全边界 | 每次代码改动落地后同步 |
 | [`assessment.md`](assessment.md) | **评估记录**：两轮系统评估的完整结论（问题清单、打分、改进优先级） | 每轮正式评估后追加 |
 | [`v2-proposal.md`](v2-proposal.md) | **改造方案**：hook schema、两级检索、确定性维护 pass、验证等级、记忆控制面；标注实现状态 | 方案定稿/实现状态变化时更新 |
+| [`retrieval-v3.md`](retrieval-v3.md) | **检索 v3 提案**：三篇推理感知检索论文的可迁移机制、Tier A（零成本）/Tier B（可选本地 embedding）设计、成本对照 | 检索设计变更前必读；实现状态随进度更新 |
 | [`references.md`](references.md) | **参考文献笔记**：每篇论文的核心结论、可借鉴机制、与我们的映射关系 | 读完新论文后追加 |
 | [`changelog.md`](changelog.md) | **记忆系统专属变更日志**：比仓库根 CHANGELOG 更细的"为什么改、改了什么" | 每次记忆系统改动后追加 |
 

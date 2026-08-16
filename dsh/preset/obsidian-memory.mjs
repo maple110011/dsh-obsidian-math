@@ -899,8 +899,16 @@ export function rankRecall(docs, queryText, helpers, topK, maxChars) {
   const queryTokens = helpers.tokenize(queryText);
   if (queryTokens.length === 0 || docs.length === 0) return "";
   const tokenized = docs.map((doc) => helpers.tokenize(doc.text));
-  const docFreq = helpers.computeDocFreq(tokenized);
-  const scored = docs.map((doc, i) => ({ doc, score: helpers.weightedOverlap(queryTokens, tokenized[i], docFreq) }));
+  // memory v3 S2: BM25 replaces the overlap coefficient for recall ranking.
+  const stats = typeof helpers.computeCorpusStats === "function"
+    ? helpers.computeCorpusStats(tokenized)
+    : null;
+  const scored = docs.map((doc, i) => ({
+    doc,
+    score: stats !== null && typeof helpers.bm25Score === "function"
+      ? helpers.bm25Score(queryTokens, tokenized[i], stats)
+      : helpers.weightedOverlap(queryTokens, tokenized[i], helpers.computeDocFreq(tokenized))
+  }));
   scored.sort((a, b) => b.score - a.score);
   const lines = [];
   let used = 0;
@@ -1366,7 +1374,9 @@ export async function apply(ctx, config) {
     parseHookFrontmatter: notes.parseHookFrontmatter,
     tokenize: notes.tokenize,
     weightedOverlap: notes.weightedOverlap,
-    computeDocFreq: notes.computeDocFreq
+    computeDocFreq: notes.computeDocFreq,
+    bm25Score: notes.bm25Score,
+    computeCorpusStats: notes.computeCorpusStats
   });
   ctx.on("system-prompt/assemble", async (assembly, context, next) => {
     const assembled = await next();

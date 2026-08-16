@@ -15,7 +15,9 @@ import {
   tokenize,
   computeDocFreq,
   weightedOverlap,
-  cacheEntryFresh
+  cacheEntryFresh,
+  bm25Score,
+  computeCorpusStats
 } from '../dsh/preset/obsidian-notes.mjs';
 import {
   buildAuditReport,
@@ -196,7 +198,7 @@ const recD = readFileSync(join(recordsDir, 'rec-d.md'), 'utf8');
 check('sync: never-used card gets no invented last_used', !recD.includes('last_used'));
 
 // ── 6. memory v2 recall injection (B) ──────────────────────────────────────
-const recallHelpers = { tokenize, weightedOverlap, computeDocFreq };
+const recallHelpers = { tokenize, weightedOverlap, computeDocFreq, bm25Score, computeCorpusStats };
 const recallDocs = buildRecallIndex(root, { parseHookFrontmatter, tokenize });
 check('recall: index contains cards', recallDocs.some((doc) => doc.kind === 'card' && doc.rel.includes('rec-a')));
 const recallText = rankRecall(recallDocs, '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli', recallHelpers, 6, 2200);
@@ -246,6 +248,31 @@ check('B1: stats zeroed after merge', statsAfter['.deepseek/memory/records/rec-a
 
 // ── 10. D: cache freshness helper ───────────────────────────────────────────
 check('cacheEntryFresh', cacheEntryFresh({ mtimeMs: 1, size: 2, raw: 'x' }, 1, 2) === true && cacheEntryFresh({ mtimeMs: 1, size: 2, raw: 'x' }, 1, 3) === false);
+
+// ── 15. BM25 scorer (memory v3 S2) ─────────────────────────────────────────
+const bmDocs = [
+  tokenize('子序列证明模式 subsequence_argument borel-cantelli subsequence-trick 证明 a.s. 收敛类问题 概率'),
+  tokenize('矩阵谱半径估计 spectral_radius gelfand 分析'),
+  tokenize('子序列 subsequence subsequence subsequence subsequence subsequence')
+];
+const bmStats = computeCorpusStats(bmDocs);
+const bmQuery = tokenize('证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli');
+check('bm25: relevant beats irrelevant', bm25Score(bmQuery, bmDocs[0], bmStats) > bm25Score(bmQuery, bmDocs[1], bmStats));
+check('bm25: idf favors rare terms', (() => {
+  const stats = computeCorpusStats([tokenize('rare rare'), tokenize('common common'), tokenize('common')]);
+  return bm25Score(tokenize('rare'), tokenize('rare'), stats) > bm25Score(tokenize('common'), tokenize('common'), stats);
+})());
+check('bm25: tf saturates (10x tf < 10x score)', (() => {
+  const stats = computeCorpusStats([tokenize('t'), tokenize('t t t t t t t t t t'), tokenize('x')]);
+  const s2 = bm25Score(tokenize('t'), tokenize('t t'), stats);
+  const s10 = bm25Score(tokenize('t'), tokenize('t t t t t t t t t t'), stats);
+  return s10 > s2 && s10 < s2 * 10;
+})());
+check('bm25: length norm penalizes long docs at equal tf', (() => {
+  const stats = computeCorpusStats([tokenize('a b c d e f'), tokenize('a b'), tokenize('q')]);
+  return bm25Score(tokenize('a'), tokenize('a b'), stats) > bm25Score(tokenize('a'), tokenize('a b c d e f'), stats);
+})());
+check('bm25: unseen term contributes zero', bm25Score(tokenize('nope'), tokenize('a b'), bmStats) === 0);
 
 // ── 11. dialogue-index cache schema gate (pre-filter caches must rebuild) ──
 check('cacheIndexValid: current version accepted', cacheIndexValid({ schemaVersion: 2, generatedAt: 1, sources: [], entries: [] }) === true);
