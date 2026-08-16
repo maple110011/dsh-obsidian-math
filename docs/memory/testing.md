@@ -30,7 +30,7 @@
 }
 ```
 - 断言维度覆盖协议的四个关键行为：**首选入口**（mustUse note_recall）、**精读核实**（mustRead）、**空结果诚实**（mustContain 库里没有）、**改写重试**（Q2 类用例用两次 note_recall 观察）。
-- token 成本：每用例按历史事件的字符量估算（zh-heavy ×0.9），报告打印；后续可挂 `dsh-token-meter` 换精确计量。
+- token 成本：**真实数字**——dsh-web-app 已挂 `dsh-token-meter`，会话事件的 `assistant/chunk` 携带 `usage` 块（input/output/reasoning/cacheRead，直接来自 DeepSeek API 响应）；驱动器按用例汇总并打印分项。注意 usage 在 chunk 块里，不在顶层事件类型里。
 
 ## 2. 用法
 

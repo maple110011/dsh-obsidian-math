@@ -54,6 +54,21 @@ async function history(sessionId) {
   return h?.result?.ok ? (h.result.value.events ?? []) : [];
 }
 
+function realUsage(events) {
+  const usage = { input: 0, output: 0, reasoning: 0, cacheRead: 0 };
+  for (const entry of events) {
+    const e = entry.event ?? entry;
+    if (e?.type === "assistant/chunk" && e.data?.chunk?.type === "usage") {
+      const u = e.data.chunk.usage ?? {};
+      usage.input += Number(u.inputTokens ?? 0);
+      usage.output += Number(u.outputTokens ?? 0);
+      usage.reasoning += Number(u.reasoningTokens ?? 0);
+      usage.cacheRead += Number(u.cacheReadTokens ?? 0);
+    }
+  }
+  return usage;
+}
+
 function estimateTokens(events) {
   let chars = 0;
   for (const entry of events) {
@@ -113,7 +128,8 @@ async function runCase(index, testCase, serviceLog) {
     pendingQuestion = unanswered.size > 0;
     if ((sawTurnEnd || pendingQuestion) && finalText !== "") break;
   }
-  const tokens = estimateTokens(await history(sessionId));
+  const usage = realUsage(await history(sessionId));
+  const tokens = usage.input + usage.output + usage.reasoning;
   const failures = [];
   for (const tool of expect.mustUse ?? []) if (!toolNames.has(tool)) failures.push(`未使用工具 ${tool}`);
   for (const path of expect.mustRead ?? []) {
@@ -126,7 +142,7 @@ async function runCase(index, testCase, serviceLog) {
   if (!sawTurnEnd && !pendingQuestion) failures.push("轮次未在超时内结束");
   if (failures.length === 0) {
     const pendingNote = pendingQuestion ? "（ask_user_question 挂起等待用户答复）" : "";
-    log(`[PASS] 案例${index + 1}${pendingNote}（约 ${tokens.toLocaleString()} tokens）: ${testCase.question.slice(0, 46)}`);
+    log(`[PASS] 案例${index + 1}${pendingNote}（真实 tokens: ${tokens.toLocaleString()} = 输入 ${usage.input.toLocaleString()} + 输出 ${usage.output.toLocaleString()} + 推理 ${usage.reasoning.toLocaleString()}，缓存命中 ${usage.cacheRead.toLocaleString()}）: ${testCase.question.slice(0, 40)}`);
   } else {
     log(`[FAIL] 案例${index + 1}: ${failures.join("；")}`);
     log("      tools:", [...toolNames].join(","), "| reads:", [...readTargets].slice(0, 4).join(","));
@@ -152,7 +168,7 @@ try {
     if (result.ok) pass += 1;
     totalTokens += result.tokens ?? 0;
   }
-  log(`\nE2E 结果: ${pass}/${cases.length} PASS，约 ${totalTokens.toLocaleString()} tokens 总消耗（字符估算）`);
+  log(`\nE2E 结果: ${pass}/${cases.length} PASS，真实 tokens 总消耗 ${totalTokens.toLocaleString()}（来自 DeepSeek API usage）`);
   process.exitCode = pass === cases.length ? 0 : 1;
 } catch (error) {
   log("[ERROR]", String(error));
