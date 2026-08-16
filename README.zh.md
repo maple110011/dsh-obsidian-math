@@ -46,6 +46,7 @@
 
 ## 特性
 
+- **捕获策略分级**：`.deepseek/capture-policy.md`（用户维护）以 `idea/fact/preference × auto/ask/off` 控制捕获节奏——auto 直接写入、ask 先征得同意、off 不主动捕获；默认与既有行为一致，当前档位在记忆面板摘要可见。
 - **最小工具面**：`read / write / edit / glob / grep / read_image / ask_user_question`，外加专用笔记工具 `note_search`（tag 过滤）、`note_create`（拒绝覆盖）、`note_links`（反链查询）、`note_retrieve`（记忆 v2 策略检索）。没有 shell、没有网页工具、没有子代理。
 - **策略检索（记忆 v2）**：`note_retrieve` 对带 `hook:` frontmatter 块的记忆卡做两级检索——算子硬过滤 + 加权打分（token 相似 / 结构模式 / 启发式 / 数量 / 成功率先验），参考 [arXiv:2606.31191](https://arxiv.org/abs/2606.31191)（ISM）与 [EMNLP 2025 Findings 1162](https://aclanthology.org/2025.findings-emnlp.1162/)（Dual RAG）；vault 没有 hook 卡时自动退化为全文 token 排序。
 - **确定性记忆体检**：插件每日扫描卡片 frontmatter 与 hook 字段，把卡片分类为 strong / weak / unused / 疑似重复 / unverified，把 `note_retrieve` 命中统计回写进 `hook.uses` / `hook.last_used`，并把有界体检报告注入每次系统提示；模型按 AGENTS.md 对体检清单行动——合并只标 superseded，从不删除。

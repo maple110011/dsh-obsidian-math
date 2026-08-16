@@ -45,7 +45,8 @@ const templates = {
   "episodes-readme.md": readNormalized(join(root, "dsh", "templates", "episodes-readme.md")),
   "episodes-index.md": readNormalized(join(root, "dsh", "templates", "episodes-index.md")),
   "inbox-readme.md": readNormalized(join(root, "dsh", "templates", "inbox-readme.md")),
-  "inbox-index.md": readNormalized(join(root, "dsh", "templates", "inbox-index.md"))
+  "inbox-index.md": readNormalized(join(root, "dsh", "templates", "inbox-index.md")),
+  "capture-policy.md": readNormalized(join(root, "dsh", "templates", "capture-policy.md"))
 };
 
 const main = template

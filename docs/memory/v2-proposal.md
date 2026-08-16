@@ -139,7 +139,7 @@ Fallback 无任何 hook 卡片时，退化为对全库标题/正文的 token 加
 - 面板：分层浏览/搜索/编辑/删除任意记忆，每条显示来源与引用次数（复用 /open 跳转）——规划为 Obsidian 侧 ItemView（阶段 1b，评估见 control-panel.md）；
 - 溯源：答案底部标注依据文件 + 验证等级徽标；
 - 反馈按钮：这条错了 / 不再适用 / 记住这件事 / 忘记——同时是 Demote/Promote 信号源、Antipattern 触发器、验证等级升级通道。**阶段 1a 已实现**：回复内的反馈链接 `[✅ 这条对] [❌ 这条错]` 经 loopback `/feedback` 端点由 Obsidian 插件确定性改写 verified/success_rate/status（confirm/wrong/stale/forget）；链接带 `t=` CSRF 校验参数，由系统提示注入，详见 control-panel.md；
-- 捕获策略分级：auto / ask / off 按类别（偏好、事实、想法）分别设置；
+- 捕获策略分级：auto / ask / off 按类别（想法、事实、偏好）分别设置；**已实现（阶段 1c）**：`.deepseek/capture-policy.md` + 系统提示注入 + 面板摘要，见 control-panel.md §2.4；
 - 冷启动 onboarding：首次运行 5-8 问生成 profile。
 
 ## 8. 实现状态
@@ -161,4 +161,5 @@ Fallback 无任何 hook 卡片时，退化为对全库标题/正文的 token 加
 | dialogue index 修复 | ✅ | 按 vault 过滤 + 问答配对取轮次最后一条 assistant 回复 |
 | 备忘录相关性提醒 | ✅ | relevance(0.7) × recency(0.3) 双分数 |
 | 安全/质量加固 | ✅ | /feedback CSRF token、皮肤缺失自动降级、stats 串行队列、安装器漂移检测、debug.log 轮转 |
+| 捕获策略分级（1c） | ✅ | `capture-policy.md` 解析 + 系统提示注入 + 面板摘要（control-panel.md §2.4） |
 | 零 token 回归检查（不做 benchmark） | ✅ | `scripts/test-memory.mjs` + 被动信号，见 §6 |

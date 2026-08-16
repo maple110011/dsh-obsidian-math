@@ -25,7 +25,8 @@ import {
   latestUserText,
   pairMessages,
   cacheIndexValid,
-  buildMemorySection
+  buildMemorySection,
+  parseCapturePolicy
 } from '../dsh/preset/obsidian-memory.mjs';
 
 const results = [];
@@ -264,6 +265,28 @@ check('links: /feedback confirm carries t=', linkSection.includes('action=confir
 check('links: /feedback wrong carries t=', linkSection.includes('action=wrong&t=test-token-42)'));
 if (prevLinkUrl === undefined) delete process.env.DSH_OBSIDIAN_LINK_URL; else process.env.DSH_OBSIDIAN_LINK_URL = prevLinkUrl;
 if (prevFeedbackToken === undefined) delete process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN; else process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = prevFeedbackToken;
+
+// ── 13. capture policy (control surface 1c) ────────────────────────────────
+check('policy: defaults when missing/empty',
+  parseCapturePolicy('').idea === 'ask' && parseCapturePolicy('').fact === 'auto' && parseCapturePolicy('').preference === 'auto');
+check('policy: parses valid modes',
+  (() => { const pol = parseCapturePolicy('---\nidea: ask\nfact: ask\npreference: off\n---'); return pol.fact === 'ask' && pol.preference === 'off'; })());
+check('policy: invalid values keep defaults',
+  (() => { const pol = parseCapturePolicy('---\nidea: auto\nfact: maybe\npreference: off\n---'); return pol.idea === 'auto' && pol.fact === 'auto' && pol.preference === 'off'; })());
+writeFileSync(join(root, '.deepseek', 'capture-policy.md'), card([
+  '---',
+  'idea: ask',
+  'fact: ask',
+  'preference: off',
+  '---',
+  '# 捕获策略'
+]));
+const policySection = buildMemorySection(
+  { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
+  'live-session', { sources: [], entries: [] }, undefined, '', '');
+check('policy: section injected with modes',
+  policySection.includes('想法 idea: ask') && policySection.includes('事实 fact（事实/事件/指令）: ask') && policySection.includes('偏好 preference: off'));
+check('policy: file present → no missing-file hint', !policySection.includes('策略文件缺失'));
 
 rmSync(root, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok).length;

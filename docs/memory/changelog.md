@@ -2,6 +2,26 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 捕获策略分级（控制面 1c）落地
+
+### 背景
+
+control-panel.md 阶段 1c（捕获策略分级）是控制面三阶段里的最后一个未做项：让用户按对象类型决定助手“写不写、要不要先问”。
+
+### 设计
+
+- **策略载体**：`vault/.deepseek/capture-policy.md`（frontmatter `idea/fact/preference: auto|ask|off`），用户维护，模型不得修改；默认档位（idea=ask、fact=auto、preference=auto）与既有行为完全一致，因此是纯增量、零迁移。
+- **执行方式**：确定性表面化 + 模型执行——obsidian-memory 解析策略文件并把档位注入系统提示（与三写协议同一种执行哲学）；AGENTS.md §2 增“捕获档位”条款、§6 想法捕获改按 `idea` 档位执行、§7 目录树登记新文件。
+- **配套**：模板随 Obsidian 插件 bootstrap、npm 安装器、deploy-local 三路安装（缺文件才创建，不覆盖用户修改）；记忆面板摘要行展示当前档位（如 `捕获 ask/auto/auto`）。
+
+### 回归
+
+- `scripts/test-memory.mjs` 新增第 13 节（默认档位 / 合法值解析 / 非法值回落默认 / 注入段 / 缺失提示语义），总数 33 → 38，全绿。
+
+### 待办
+
+- 面板内直接编辑策略文件（随 handoff 序 2「面板内编辑记忆」一并落地）。
+
 ## 2026-08 · 推送前修复轮（feedback token 接线 / 缓存 schemaVersion / 皮肤 fallback 时序）
 
 ### 背景

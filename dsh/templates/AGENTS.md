@@ -37,6 +37,8 @@
 
 **执行纪律**：把同一轮的记忆写入合并成最少的工具调用，不要反复改；完成后只在回复末尾用一行说明（如“已记录：2 条”），不展示写入内容与过程。
 
+**捕获档位**：以 `.deepseek/capture-policy.md` 为准（idea/fact/preference × auto/ask/off）；auto=按本协议直接写入，ask=先经 ask_user 征得同意，off=不主动捕获（用户明确要求除外）。本协议其余文字按 auto 档位书写；用户口头指令优先于策略文件。
+
 维护：agent 只维护索引与记录内容（`edit` 可增删行）；**旧 episode 的归档由 Obsidian 插件执行**（>90 天自动移入 `archive/`），不要自己移动/删除文件。冲突记录用 `superseded` 标记；profile 超过约 120 行时把收束条目改写为 episode/record 引用。
 
 **hook 块纪律**：卡片 frontmatter 里的 `hook:` 块中，`operator/pattern/heuristics/quantity/techniques/applications/verified` 由你在创建或 reinforce 时维护；`uses/success_rate/last_used` 由插件确定性维护（`note_retrieve` 命中计数 + 每日体检回写），**你不要手改这三个统计字段**。verified 只能写 `single-source`，升级到 `cross-referenced`（与笔记互证）或 `user-confirmed`（用户确认）必须用户参与，不得自升。
@@ -97,7 +99,7 @@
 
 ## 6. 备忘录（捕获 → 关联 → 打磨）
 
-- **捕获**：识别到“一般性数学思路/方法/技巧/观点”时，回复末尾给 `💡 可捕捉的想法`，用 ask_user 征得同意（写入新 memo / 并入已有 / 稍后 / 忽略）。未经同意不新建；长期授权记入 profile。
+- **捕获**：识别到“一般性数学思路/方法/技巧/观点”时，按 `.deepseek/capture-policy.md` 的 `idea` 档位执行——ask 档（默认）：回复末尾给 `💡 可捕捉的想法`，用 ask_user 征得同意（写入新 memo / 并入已有 / 稍后 / 忽略）；auto 档直接写入；off 档不主动捕捉。长期授权记入 profile。
 - **关联检测**：写入前读 `inbox/index.md`。高度相关 → 并入已有 memo 的“关联观察”；中度相关 → 新建并互加 `related` 双链；独立 → 新建。memo 模板见 `inbox/_README.md`。
 - **自动维护**：新证据追加到“关联观察”并更新 `updated`；状态流转 `inbox → polishing → done` 时更新 index；done 的升华内容写入正式笔记前仍需询问，memo 保留去向链接。
 - **主动提醒**：本轮讨论与某 memo 明显相关，或插件标出陈旧候选（polishing > 3 天、inbox > 7 天、今天未提醒）时，回复末尾给 `🔔 备忘录提醒` 并 ask_user。每条每天最多一次，每轮最多 2 条；提醒后更新其 `last_reminded`。
@@ -116,6 +118,7 @@ vault/
     memory/templates/                问题模板库（题型/解法模板 ↔ 定理关联图）
     memory/episodes/                 证据层（index + 日期文件 + archive/）
     inbox/                           想法层（index + <slug>.md）
+    capture-policy.md                捕获策略（idea/fact/preference × auto/ask/off，用户维护）
     cache/                           机器生成的对话索引（勿动）
 ```
 

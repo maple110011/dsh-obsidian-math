@@ -42,6 +42,7 @@
 辅助结构：
 - `memory/theorems/index.md`：个人 Matlas 定理索引（一行一条，领域/关键词/状态）；
 - `memory/templates/<slug>.md`：问题模板卡（题型/解法 ↔ 定理关联图），索引注入 ≤600 字符；
+- `capture-policy.md`：捕获策略（idea/fact/preference × auto/ask/off，frontmatter，用户维护；随系统提示注入，默认 ask/auto/auto 与既有行为一致）；
 - `cache/`：机器生成的对话索引与记忆体检报告（用户勿动）。
 
 ## 3. 注入预算（`obsidian-memory.mjs` 常量）
@@ -84,6 +85,7 @@
 
 ## 6. 备忘录生命周期与提醒
 
+- 捕获档位（1c）：以 `.deepseek/capture-policy.md` 为准——`idea` 档 ask（默认）先问、auto 直接写、off 不主动捕捉；事实/偏好同理（`fact`/`preference` 档，默认 auto，即三写协议原节奏）；
 - 捕获：识别到“一般性数学思路/方法/技巧/观点”时回复末尾给 `💡 可捕捉的想法`，ask_user 征得同意才写；新想法与已有 memo 高度相关则并入、中度相关加 related 双链、独立新建。
 - 提醒候选（插件确定性扫描）：陈旧（inbox > 7 天、polishing > 3 天）**或与当前消息相关（relevance ≥ 0.15）**且今天未提醒，按 0.7×相关性 + 0.3×新鲜度 排序取 top3 注入；模型在相关讨论时给 `🔔 备忘录提醒` 并 ask_user，每天每条最多一次（`last_reminded`）。
 - 状态流转 inbox→polishing→done 更新 index；done 的升华内容写入正式笔记前仍需询问。

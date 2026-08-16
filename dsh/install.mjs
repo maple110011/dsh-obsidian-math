@@ -157,7 +157,8 @@ function installVaultTemplates(options) {
     ["episodes-readme.md", join(".deepseek", "memory", "episodes", "_README.md")],
     ["episodes-index.md", join(".deepseek", "memory", "episodes", "index.md")],
     ["inbox-readme.md", join(".deepseek", "inbox", "_README.md")],
-    ["inbox-index.md", join(".deepseek", "inbox", "index.md")]
+    ["inbox-index.md", join(".deepseek", "inbox", "index.md")],
+    ["capture-policy.md", join(".deepseek", "capture-policy.md")]
   ];
   for (const [source, target] of templates) {
     copyTemplate(options, source, join(vault, target), false);

@@ -49,9 +49,17 @@
 - 按文件名/tag/operator 过滤搜索；点击打开原文（复用 /open 跳转）；
 - 编辑走原文编辑；删除仅指“归档/标记 superseded”，无硬删除按钮。
 
-### 2.4 捕获策略分级（可选项，随视图落地）
+### 2.4 捕获策略分级（✅ 已实现，阶段 1c）
 
-偏好/事实/想法三类各自 auto / ask / off；写入 profile 的“长期授权”段。
+想法/事实/偏好三类各自 `auto` / `ask` / `off`，写在 vault 根 `.deepseek/capture-policy.md` 的 frontmatter（用户维护，模型不得修改）：
+
+| 档位 | 含义 |
+|---|---|
+| `auto` | 按 AGENTS.md 三写协议直接写入 |
+| `ask` | 先用 ask_user 征得同意，再写入 |
+| `off` | 不主动捕获（用户明确要求时除外） |
+
+默认 `idea=ask、fact=auto、preference=auto`（与既有行为一致）；策略随系统提示注入，记忆面板摘要展示当前档位。
 
 ## 3. 注入方案评估（本机生态实测）
 
@@ -77,7 +85,7 @@
 |---|---|---|
 | 1a | `/feedback` 端点（confirm/wrong/stale/forget 确定性改写）+ 代理侧徽标与反馈链接渲染规则 | ✅ 已实现 |
 | 1b | Obsidian ItemView「记忆面板」：五层浏览 + hook 统计（uses/成功率/验证徽标）+ 搜索 + 逐卡 ✅/❌/过期/归档按钮 + 体检报告展示 + 一键归档旧事件 | ✅ 已实现（`main.template.js` MemoryView + `styles.css`） |
-| 1c | 捕获策略分级（auto/ask/off × 偏好/事实/想法） | ⬜ 下一步 |
+| 1c | 捕获策略分级（auto/ask/off × 想法/事实/偏好） | ✅ 已实现（`.deepseek/capture-policy.md` + 系统提示注入 + 面板摘要） |
 | 2 | dsh 客户端记忆列（官方槽位出现后） | ⬜ 待上游 |
 
 ## 5. 与现有机制的衔接

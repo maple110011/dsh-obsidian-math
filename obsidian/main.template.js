@@ -718,7 +718,8 @@ function bootstrapVaultTemplates(plugin, force = false) {
     ['episodes-readme.md', join(vault, '.deepseek', 'memory', 'episodes', '_README.md')],
     ['episodes-index.md', join(vault, '.deepseek', 'memory', 'episodes', 'index.md')],
     ['inbox-readme.md', join(vault, '.deepseek', 'inbox', '_README.md')],
-    ['inbox-index.md', join(vault, '.deepseek', 'inbox', 'index.md')]
+    ['inbox-index.md', join(vault, '.deepseek', 'inbox', 'index.md')],
+    ['capture-policy.md', join(vault, '.deepseek', 'capture-policy.md')]
   ];
   const written = [];
   for (const [key, target] of mapping) {
@@ -1015,7 +1016,17 @@ function collectMemoryState(vaultPath, filter) {
   }
   const profile = existsSync(join(vaultPath, '.deepseek', 'memory', 'profile.md'));
   const auditText = readAuditText(join(vaultPath, '.deepseek', 'cache', 'memory-audit.json'));
-  return { records, templates, memos, episodes, profile, auditText };
+  const capturePolicy = (() => {
+    try {
+      const raw = readFileSync(join(vaultPath, '.deepseek', 'capture-policy.md'), 'utf8');
+      const { meta } = parseMemoryFrontmatter(raw);
+      const mode = (value, fallback) => typeof value === 'string' && ['auto', 'ask', 'off'].includes(value) ? value : fallback;
+      return { idea: mode(meta.idea, 'ask'), fact: mode(meta.fact, 'auto'), preference: mode(meta.preference, 'auto') };
+    } catch {
+      return { idea: 'ask', fact: 'auto', preference: 'auto' };
+    }
+  })();
+  return { records, templates, memos, episodes, profile, auditText, capturePolicy };
 }
 
 function readAuditText(path) {
@@ -1161,6 +1172,7 @@ class MemoryView extends ItemView {
     const summary = [];
     if (state.profile) summary.push('画像 ✅');
     summary.push(`记录 ${state.records.length}`, `模板 ${state.templates.length}`, `备忘录 ${state.memos.length}`, `事件 ${state.episodes.length}`);
+    summary.push(`捕获 ${state.capturePolicy.idea}/${state.capturePolicy.fact}/${state.capturePolicy.preference}`);
     body.createDiv({ cls: 'dsh-memory-summary', text: summary.join(' · ') });
 
     if (state.records.length > 0) {

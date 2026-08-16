@@ -31,7 +31,8 @@ const checks = [
   join(vault, '.deepseek', 'memory', 'theorems', 'index.md'),
   join(vault, '.deepseek', 'memory', 'templates', 'index.md'),
   join(vault, '.deepseek', 'memory', 'episodes', 'index.md'),
-  join(vault, '.deepseek', 'inbox', 'index.md')
+  join(vault, '.deepseek', 'inbox', 'index.md'),
+  join(vault, '.deepseek', 'capture-policy.md')
 ];
 let failed = 0;
 for (const path of checks) {

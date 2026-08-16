@@ -344,6 +344,41 @@ export function parseMemoFrontmatter(text) {
   return meta;
 }
 
+// ── capture policy (control surface 1c) ────────────────────────────────────
+
+const CAPTURE_POLICY_FILE = join(MEMORY_DIR, "capture-policy.md");
+const CAPTURE_MODES = new Set(["auto", "ask", "off"]);
+const DEFAULT_CAPTURE_POLICY = { idea: "ask", fact: "auto", preference: "auto" };
+
+/**
+ * Parse the vault's user-maintained capture policy
+ * (.deepseek/capture-policy.md frontmatter): idea / fact / preference ×
+ * auto / ask / off. Missing file, missing fields, or unknown values fall
+ * back to the defaults — which reproduce the pre-policy behavior (ideas ask,
+ * facts and preferences auto per the three-write protocol).
+ */
+export function parseCapturePolicy(text) {
+  const policy = { ...DEFAULT_CAPTURE_POLICY };
+  if (typeof text !== "string" || text === "") return policy;
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (match === null) return policy;
+  for (const line of match[1].split(/\r?\n/)) {
+    const pair = /^(idea|fact|preference):\s*([A-Za-z_-]+)\s*$/.exec(line.trim());
+    if (pair !== null && CAPTURE_MODES.has(pair[2])) policy[pair[1]] = pair[2];
+  }
+  return policy;
+}
+
+function capturePolicyText(root) {
+  const path = join(root, CAPTURE_POLICY_FILE);
+  if (!existsSync(path)) return "";
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
 function parseLocalDay(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
   if (match === null) return null;
@@ -931,6 +966,20 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
       `- 本回复依据了记忆卡时，在末尾给反馈链接（path 为该卡 vault 相对路径，需 URL 编码）：[✅ 这条对](${linkBaseUrl}/feedback?path=<卡路径>&action=confirm${tokenSuffix}) [❌ 这条错](${linkBaseUrl}/feedback?path=<卡路径>&action=wrong${tokenSuffix})；用户点击后由 Obsidian 插件直接改写验证等级与成功率，无需你代劳。`
     );
   }
+
+  // Capture policy (control surface 1c): the user-maintained policy file gates
+  // how the agent may write NEW memory. Deterministic surfacing + model
+  // execution, consistent with the rest of the protocol.
+  const captureText = capturePolicyText(vaultRoot);
+  const capturePolicy = parseCapturePolicy(captureText);
+  lines.push(
+    "",
+    "### 捕获策略（.deepseek/capture-policy.md，用户维护，模型不得修改）",
+    "",
+    `- 💡 想法 idea: ${capturePolicy.idea} · 事实 fact（事实/事件/指令）: ${capturePolicy.fact} · 偏好 preference: ${capturePolicy.preference}`,
+    "- auto=按三写协议直接写入；ask=先经 ask_user 征得同意再写；off=不主动捕获（用户明确要求时除外）。",
+    captureText === "" ? "- （策略文件缺失，按默认档位 ask/auto/auto 执行。）" : "- 用户口头指令优先于策略文件。"
+  );
 
   if (profile !== "") {
     lines.push("", "### 用户画像与稳定偏好（.deepseek/memory/profile.md）", "", profile);
