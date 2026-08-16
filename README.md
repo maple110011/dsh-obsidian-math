@@ -33,9 +33,10 @@ Mathematics learning is long-horizon accumulation: notation habits, theoretical 
 - **Memory panel**: browse all five layers, search, hook stats with 📈 usage trends, per-card ✅/❌/supersede/archive, audit report; **edit-and-save in the panel** (mtime conflict guard); capture policy editable on the settings page with effect descriptions.
 - **Feedback loop**: `[✅ 这条对] [❌ 这条错]` links in replies deterministically rewrite cards through the loopback `/feedback` endpoint (CSRF-token protected); note references are clickable and jump into Obsidian (`/open`).
 - **Reply-quality protocol**: intuition before formalism, anchoring new material to your existing notes, difficulty adaptation, Socratic correction, low-frequency check questions.
+- **Skins & background opacity (aesthetics only, no agent tools added)**: the obsidian profile mounts the dsh-web-ui **skin center** (skin picker + background-opacity control); **every other dsh-web-ui family feature stays unmounted** (task board / SSH / aionui panel / git-graph / pet / live-stats, etc.) to keep the minimal tool surface. The skin choice is shared with the main web profile (one global setting).
 
 ### Safety (fail-closed)
-- Tool surface: file read/write/search + four note tools + ask_user; no shell, no web, no subagents, no delete tools.
+- Tool surface: file read/write/search + four note tools + ask_user; no shell, no web, no subagents, no delete tools. Of the dsh-web-ui ecosystem only the **skin center** is kept (aesthetics); every functional plugin is dropped.
 - Writes confined to the vault (workspace-write); interactive escalation prompts disabled (`approval: never`); `DSH_PERMISSION_MODE=danger-full-access` only re-enables escalation prompts, the sandbox itself stays workspace-write.
 - All memory lives as markdown inside the vault; archiving instead of deleting; the model may not edit policy or statistics fields.
 

@@ -18,3 +18,7 @@
 # from the web profile's node_modules via junctions (syncGlobalPackageLinks),
 # so the skin package always resolves and the obsidian web UI follows the
 # same skin the user picked for the main web profile. No id lists to keep.
+#
+# The profile also mounts the skin center (ui-skin-center in cordis.patch.yml)
+# for the background-opacity control — aesthetics only, no agent tools; the
+# rest of the dsh-web-ui family stays unmounted to keep the minimal surface.

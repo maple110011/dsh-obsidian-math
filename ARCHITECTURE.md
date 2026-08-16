@@ -31,7 +31,7 @@
 | `manifest.json` / `main.js` / `styles.css` | Obsidian 社区插件发布物（`main.js` 由构建生成，勿手改） |
 | `obsidian/main.template.js` | 插件源码：服务管理、LinkServer（/open + /feedback）、记忆面板、预览编辑、皮肤 junction 同步、设置页（含捕获策略下拉框）、bootstrap |
 | `dsh/preset/` | **agent preset `obsidian`**：`preset.yml`（元信息）、`agent.cordis.yml`（装配：最小工具 + 记忆插件配置）、`obsidian-memory.mjs`（记忆注入引擎 + 体检 + 对话索引 + 记号/捕获策略注入）、`obsidian-notes.mjs`（笔记工具：note_recall/note_search/note_create/note_links + BM25 检索引擎） |
-| `dsh/profile/` | **profile `obsidian`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset）、`obsidian.patch.yml`（workspace 自动注册，插件刷新）、`obsidian-workspace.mjs` |
+| `dsh/profile/` | **profile `obsidian`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset + **仅挂皮肤中心 ui-skin-center**：皮肤选择与背景透明度，美观需求；其余 web-ui 生态一律不装）、`obsidian.patch.yml`（workspace 自动注册，插件刷新）、`obsidian-workspace.mjs` |
 | `dsh/templates/` | **vault 模板**：`AGENTS.md`（工作协议，自动加载）、`profile.md`、`notation.md`（记号体系）、`topics-index.md`、`records-{readme,index}.md`、`theorems-*.md`、`templates-*.md`、`episodes-*.md`、`inbox-*.md`、`capture-policy.md` |
 | `dsh/install.mjs` | npm CLI 安装器（`dsh-obsidian-math install --vault …`），幂等、保留用户编辑 |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
@@ -75,5 +75,5 @@ dsh --profile obsidian --port 3180 --patch <home>/profiles/obsidian/obsidian.pat
 1. 逻辑放对层：host（Obsidian 插件）/ agent（preset）/ 数据（vault 模板）；
 2. 纯函数进 `scripts/test-memory.mjs` 回归；行为断言进 `scripts/qa/`；
 3. 新模板三路安装（main.template.js bootstrap / install.mjs / deploy-local.mjs）+ 进 build-obsidian.mjs 嵌入清单；
-4. 文档同步：design.md（规格）、CHANGELOG.md + docs/memory/changelog.md（细账）、README（特性）、必要时 handoff.md；
+4. 文档同步：design.md（规格）、CHANGELOG.md + docs/memory/changelog.md（细账）、**README.md 与 README.zh.md 中英同步（中文文档必须始终保留）**、必要时 handoff.md；
 5. 构建 → npm test → npm run qa → deploy-local →（用户口令后）提交推送。

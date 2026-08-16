@@ -41,6 +41,19 @@
 # The permission preset table must describe the composed default
 # (workspace-write sandbox + never approval), otherwise boot fails with
 # "composed sandbox and approval defaults match no preset".
+
+# UI aesthetics only (no agent tools added): the dsh-web-ui skin center
+# brings the skin picker and the background-opacity control
+# (skin-background settings namespace). The rest of the dsh-web-ui family
+# (task-board / ssh / aionui-panel / git-graph / pet / live-stats /
+# remote-web-ui / web-ui-settings) is deliberately NOT mounted here — the
+# obsidian mode keeps the minimal tool surface and only keeps the skin
+# capability for looks. The skin choice is shared with the main web profile
+# (both write the same $DSH_HOME/cordis.patch.yml managed section).
+- insert:
+    - id: ui-skin-center
+      name: '@linxin666/dsh-client-ui-skin-center'
+
 - id: permission
   config:
     defaultPreset: obsidian-locked

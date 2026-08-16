@@ -33,9 +33,10 @@
 - **记忆面板**：五层浏览、搜索、hook 统计与 📈 使用趋势、逐卡 ✅/❌/过期/归档、体检报告展示；**面板内直接编辑保存**（mtime 冲突防护）；捕获策略与策略说明在设置页可见可改。
 - **反馈闭环**：回复内 `[✅ 这条对] [❌ 这条错]` 链接经 loopback `/feedback` 端点确定性改写卡片（CSRF token 保护）；笔记引用可点击跳转 Obsidian（`/open`）。
 - **回复质量协议**：直觉先行、认知锚定（新内容挂钩你的笔记）、难度自适应、苏格拉底式纠错、低频检查性收尾。
+- **皮肤与背景透明度（仅美观，不加任何 agent 工具）**：obsidian profile 挂载 dsh-web-ui 的**皮肤中心**（皮肤选择 + 背景透明度调节）；**其余 dsh-web-ui 生态功能一律不装**（任务看板/SSH/aionui 面板/git-graph/宠物/统计等），以保持最小工具面。皮肤选择与主 web profile 共享（同一全局设置）。
 
 ### 安全（fail-closed）
-- 工具面：文件读写/搜索 + 四个笔记工具 + ask_user；无 shell/web/子代理/删除工具。
+- 工具面：文件读写/搜索 + 四个笔记工具 + ask_user；无 shell/web/子代理/删除工具。dsh-web-ui 生态只保留**皮肤中心**（美观），功能类插件全部舍去。
 - 写操作限定 vault（workspace-write）；交互式提权默认禁用（`approval: never`）；`DSH_PERMISSION_MODE=danger-full-access` 仅重开提权询问、沙箱不变。
 - 记忆全部是 vault 内 markdown；归档代替删除；模型不得修改策略/统计字段。
 
