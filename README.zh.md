@@ -162,7 +162,7 @@ node scripts/test-installer.mjs # 临时目录端到端测试安装器
 
 全部本地运行：dsh 只绑定 `127.0.0.1`，记忆全部是 vault 内 markdown，历史会话索引不出本机。
 
-`obsidian` profile 默认 **fail-closed**：写入被限制在 vault 内（`workspace-write`），交互式提权审批**默认关闭**（`approval: never`，不会弹出“是否升权”窗口，杜绝误点扩大权限边界），工具集中没有删除类工具。如确需一次性全权限，必须显式设置 `DSH_PERMISSION_MODE=danger-full-access` 并重启服务。
+`obsidian` profile 默认 **fail-closed**：写入被限制在 vault 内（`workspace-write`），交互式提权审批**默认关闭**（`approval: never`，不会弹出“是否升权”窗口，杜绝误点扩大权限边界），工具集中没有删除类工具。如确需交互式提权，可显式设置 `DSH_PERMISSION_MODE=danger-full-access` 并重启服务——沙箱本身仍是 `workspace-write`，每次越出 vault 的写操作仍需逐次明确确认。
 
 由于 agent 没有删除/移动工具，生命周期维护由 Obsidian 插件承担：超过 90 天的旧事件卡会在启动时自动移入 `episodes/archive/`（可在设置中关闭或手动触发）。记录冲突用 `superseded` 标记而非删除，不会静默丢失历史。
 

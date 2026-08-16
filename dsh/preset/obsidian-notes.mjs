@@ -134,7 +134,7 @@ function isExcluded(name, relDir, patterns) {
 
 // ── note discovery / parsing ────────────────────────────────────────────────
 
-async function listNotes(ctx, rootTarget, signal, excludePatterns) {
+async function listNotes(ctx, rootTarget, signal, excludePatterns, extraExcludeDirs = []) {
   const notes = [];
   const seenDirectories = new Set();
 
@@ -145,6 +145,7 @@ async function listNotes(ctx, rootTarget, signal, excludePatterns) {
     for (const entry of entries) {
       if (entry.type === "directory") {
         if (isExcluded(entry.name, relDir, excludePatterns)) continue;
+        if (extraExcludeDirs.includes(entry.name)) continue;
         if (!ctx.fs.contains(rootTarget, entry.target)) continue;
         await walk(entry.target, relDir === "" ? entry.name : `${relDir}/${entry.name}`);
       } else if (entry.type === "file" && entry.name.toLowerCase().endsWith(".md")) {
@@ -527,7 +528,7 @@ export async function apply(ctx, config) {
   // ── note_search ────────────────────────────────────────────────────────
   ctx.tools.register(defineTool({
     name: "note_search",
-    description: `Search the Obsidian vault for markdown notes whose title or body contains a query string, optionally filtered by a tag. Returns up to ${DEFAULT_MAX_RESULTS} matches by default, each with vault-relative path, title, tags, and a text snippet. Prefer this over raw grep when the user asks to find notes by topic, keyword, or tag.`,
+    description: `Search the Obsidian vault for markdown notes whose title or body contains a query string, optionally filtered by a tag. Returns up to ${DEFAULT_MAX_RESULTS} matches by default, each with vault-relative path, title, tags, and a text snippet. Prefer this over raw grep when the user asks to find notes by topic, keyword, or tag. The hidden .deepseek memory tree is excluded — use grep/read for memory files.`,
     parameters: {
       query: { type: "string", description: "Case-insensitive substring matched against note titles and bodies. Omit to search by tag only." },
       tag: { type: "string", description: "Optional tag filter without leading '#' (e.g. \"analysis\" also matches nested tag \"math/analysis\")." },
@@ -575,7 +576,9 @@ export async function apply(ctx, config) {
       }
       const limit = Math.min(requested, HARD_MAX_RESULTS);
 
-      const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns);
+      // note_search is user-note scoped: the hidden .deepseek memory tree is
+      // excluded (memory files are reached via grep/read per the routing rules).
+      const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns, [".deepseek"]);
       const matches = [];
       for (const note of notes) {
         if (matches.length >= limit) break;

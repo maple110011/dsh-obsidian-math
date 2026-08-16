@@ -26,8 +26,10 @@
 
 # Fail-closed approval: the Obsidian mode never pops an "escalate to
 # danger-full-access?" prompt, so an accidental click cannot widen the write
-# boundary. If a user really needs one-off full access, they can set
-# DSH_PERMISSION_MODE=danger-full-access explicitly and restart the service.
+# boundary. Setting DSH_PERMISSION_MODE=danger-full-access explicitly (and
+# restarting) re-enables those prompts (approval: ask); the sandbox itself
+# stays workspace-write, so every widening beyond the vault still needs an
+# explicit per-operation confirmation.
 # NOTE: keep the folded-block `!!js >-` form — inline `? :` ternaries are
 # mis-parsed by js-yaml into a mapping ({...: 'never'}).
 - id: approval

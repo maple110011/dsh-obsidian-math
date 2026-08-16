@@ -2,6 +2,13 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 低危清单清理（handoff 序 4）
+
+- **note_search 排除 .deepseek**：`listNotes` 增加 `extraExcludeDirs` 参数，note_search 传入 `['.deepseek']`——用户笔记语义与记忆树彻底分开（note_links/note_retrieve 不排除，前者需要记忆卡的反链、后者靠记忆卡检索）；工具描述、系统提示段与 AGENTS.md §5 同步。
+- **归档同步 records source**：`archiveOldEpisodes` 移动 episode 后，除更新 episodes/index.md 外，现在扫描 `.deepseek/memory/records/*.md` 并把 `[[旧stub]]` 改写为 `[[archive/新stub]]`（有改动才写，best-effort）——溯源链跨归档不断。
+- **端口占用提示**：`DshService.warnPortOccupied()` 一次性 Notice——端口有响应但本插件从未 spawn 过子进程时提示检查端口；`keepAliveOnUnload` 场景（重启后旧服务仍在）自动豁免，避免误报。
+- **权限措辞**：README 中英与 cordis.patch.yml 注释改为准确描述——`DSH_PERMISSION_MODE=danger-full-access` 只重开交互式提权（approval: ask），沙箱仍是 workspace-write。
+
 ## 2026-08 · hook 趋势可视化（handoff 序 3）
 
 - **历史记录**：`buildAuditReport` 在每日体检末尾调用 `writeHookHistory`——纯函数 `buildHookHistory`（导出，可测）按“同日更新原位、新日追加”把 `{date, uses, successRate}` 写入 `cache/hook-history.json`；每卡 30 点、全局 500 卡有界；只记带 block-style hook 的卡。

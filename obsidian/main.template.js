@@ -468,8 +468,21 @@ class DshService {
     return this.cachedLocation;
   }
 
+  /**
+   * One-shot hint when the port answers but this plugin never spawned the
+   * service. Skipped when keepAliveOnUnload is on: a still-running service
+   * from the previous Obsidian process is the expected state there.
+   */
+  warnPortOccupied() {
+    if (this.child !== null || this.portOccupiedNotified === true || this.plugin.settings.keepAliveOnUnload) return;
+    this.portOccupiedNotified = true;
+    this.appendLog(`端口 ${this.plugin.settings.port} 已有其他 HTTP 服务在响应（未由本插件启动）。若侧栏显示的不是 dsh 笔记助手，请在设置中更换端口并重启服务。`);
+    new Notice(`dsh 笔记助手：端口 ${this.plugin.settings.port} 已有其他服务在运行。若侧栏内容异常，请在插件设置中更换端口。`);
+  }
+
   async ensureStarted() {
     if (await probeService(this.plugin.settings.port, 1200)) {
+      this.warnPortOccupied();
       this.setStatus('running');
       return;
     }
@@ -479,6 +492,7 @@ class DshService {
   async start() {
     if (this.child !== null && this.child.exitCode === null) return;
     if (await probeService(this.plugin.settings.port, 1200)) {
+      this.warnPortOccupied();
       this.setStatus('running');
       return;
     }
@@ -786,6 +800,28 @@ function archiveOldEpisodes(plugin, maxDays = 90) {
         writeFileSync(indexPath, indexText, 'utf8');
       } catch {
         // Index update is best-effort; moved files are already safe.
+      }
+    }
+    // Keep record cards' source links pointing at the archived episode so
+    // provenance chains survive the move (best-effort, never a hard fail).
+    const recordsDir = join(vault, '.deepseek', 'memory', 'records');
+    if (existsSync(recordsDir)) {
+      for (const entry of readdirSync(recordsDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'index.md' || entry.name.startsWith('_')) continue;
+        const recordPath = join(recordsDir, entry.name);
+        try {
+          const before = readFileSync(recordPath, 'utf8');
+          let after = before;
+          for (const item of moved) {
+            const oldStem = item.name.replace(/\.md$/, '');
+            const newStem = item.linkName.replace(/\.md$/, '');
+            after = after.replaceAll(`[[${oldStem}|`, `[[${newStem}|`);
+            after = after.replaceAll(`[[${oldStem}]]`, `[[${newStem}]]`);
+          }
+          if (after !== before) writeFileSync(recordPath, after, 'utf8');
+        } catch {
+          // A single unreadable card must not block the maintenance pass.
+        }
       }
     }
   }

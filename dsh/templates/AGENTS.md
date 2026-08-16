@@ -83,7 +83,7 @@
 
 | 查询类型 | 路由 |
 |---|---|
-| 按关键词或 tag 找笔记 | `note_search`（query 和/或 tag）→ 读命中文件；比裸 grep 更懂 Obsidian 笔记结构 |
+| 按关键词或 tag 找笔记 | `note_search`（query 和/或 tag）→ 读命中文件；比裸 grep 更懂 Obsidian 笔记结构（不含 `.deepseek` 记忆树，记忆文件走 grep/read） |
 | 某篇笔记被哪些笔记引用 | `note_links(note)` → 读来源文件核对引用语境 |
 | 精确事实 / 用户原话 / 日期数字 | grep `memory/episodes/` → 读命中文件 |
 | 类型化原子事实 | 先看 `memory/records/index.md` → grep/读记录 → `source` 回原始证据 |
