@@ -200,11 +200,22 @@ const recD = readFileSync(join(recordsDir, 'rec-d.md'), 'utf8');
 check('sync: never-used card gets no invented last_used', !recD.includes('last_used'));
 
 // ── 6. navigation-only injection (retrieval v3 S5) ──────────────────────────
+writeFileSync(join(root, '.deepseek', 'memory', 'notation.md'), card([
+  '---',
+  'type: memory/notation',
+  '---',
+  '# 记号体系',
+  '',
+  '## 已采纳',
+  '',
+  '| $W_p$ | Wasserstein 距离 |'
+]) + '\n');
 const navSection = buildMemorySection(
   { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
   'live-session', { sources: [], entries: [] }, undefined, '');
 check('nav: static navigation layers present',
   navSection.includes('用户画像与稳定偏好') && navSection.includes('研究主题索引') && navSection.includes('记忆记录摘要') && navSection.includes('近期事件时间线'));
+check('nav: notation system injected', navSection.includes('记号体系') && navSection.includes('Wasserstein 距离'));
 check('nav: no per-request recall section', !navSection.includes('本轮记忆召回'));
 check('nav: total memory section is bounded', navSection.length <= 9000, `len=${navSection.length}`);
 

@@ -42,6 +42,7 @@
 辅助结构：
 - `memory/theorems/index.md`：个人 Matlas 定理索引（一行一条，领域/关键词/状态）；
 - `memory/templates/<slug>.md`：问题模板卡（题型/解法 ↔ 定理关联图），索引注入 ≤600 字符；
+- `memory/notation.md`：记号体系（已采纳/候选/已否决三表 + 修订历史；收集→统一→维护，≤800 字符随提示注入）；
 - `capture-policy.md`：捕获策略（idea/fact/preference × auto/ask/off，frontmatter，用户维护；随系统提示注入，默认 ask/auto/auto 与既有行为一致）；
 - `cache/`：机器生成的对话索引、记忆体检报告与 hook 历史快照（用户勿动）。
 

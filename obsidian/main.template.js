@@ -757,7 +757,8 @@ function bootstrapVaultTemplates(plugin, force = false) {
     ['episodes-index.md', join(vault, '.deepseek', 'memory', 'episodes', 'index.md')],
     ['inbox-readme.md', join(vault, '.deepseek', 'inbox', '_README.md')],
     ['inbox-index.md', join(vault, '.deepseek', 'inbox', 'index.md')],
-    ['capture-policy.md', join(vault, '.deepseek', 'capture-policy.md')]
+    ['capture-policy.md', join(vault, '.deepseek', 'capture-policy.md')],
+    ['notation.md', join(vault, '.deepseek', 'memory', 'notation.md')]
   ];
   const written = [];
   for (const [key, target] of mapping) {

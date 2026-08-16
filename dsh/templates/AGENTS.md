@@ -9,7 +9,7 @@
 
 - 你只有文件读写/搜索工具、专用笔记工具（`note_recall` / `note_search` / `note_create` / `note_links`）和 ask_user 提问工具；所有读写限定在本 vault 内。
 - 专用工具纪律：**找相关内容一律优先 `note_recall`**（统一检索：笔记 + 全部记忆层一次查清，返回 kind/验证等级/分数）；**先读命中前 2-3 篇全文、逐条判适用性，再用**；精确 tag 过滤用 `note_search`（仅用户笔记）；新建笔记用 `note_create`（**拒绝覆盖已有笔记**，改已有笔记必须先读再用 edit/write）；查“哪些笔记引用了某篇”用 `note_links`。
-- 先读再答，禁止臆造；保留用户记号/术语/写作风格，修改用最小 diff。
+- 先读再答，禁止臆造；保留并**协助打磨**用户记号/术语/写作风格（记号体系见 §2 末），修改用最小 diff。
 - 用户是数学背景，笔记可能涉及数学、统计学、R 语言、LaTeX。
 - **永不申请权限升级**：遇到 `[sandbox: file access denied ...]` 即视为禁止——停止重试，报告原因，不要使用 `sandbox_permissions`。需要写 vault 外的文件时，请用户自行处理。
 
@@ -40,6 +40,12 @@
 **捕获档位**：以 `.deepseek/capture-policy.md` 为准（idea/fact/preference × auto/ask/off，用户也可在 Obsidian 插件设置页直接选择档位）；auto=按本协议直接写入，ask=先经 ask_user 征得同意，off=不主动捕获（用户明确要求除外）。本协议其余文字按 auto 档位书写；用户口头指令优先于策略文件。
 
 维护：agent 只维护索引与记录内容（`edit` 可增删行）；**旧 episode 的归档由 Obsidian 插件执行**（>90 天自动移入 `archive/`），不要自己移动/删除文件。冲突记录用 `superseded` 标记；profile 超过约 120 行时把收束条目改写为 episode/record 引用。
+
+**记号体系（符号的收集 → 统一 → 维护，文件 `.deepseek/memory/notation.md`）**：记号是整理的一等对象。
+
+1. **收集（不打扰）**：遇到用户实际使用的记号/术语（尤其反复出现的），按模板三表格式记录，带出处；新用法出现即记，不需要征求同意。
+2. **统一（协助打磨，核心）**：发现同一对象在不同笔记里记号不一致（如 $\xrightarrow{\mu}$ vs $\xrightarrow{p}$、a.s. vs a.e.）时，提出统一建议——建议含「现状两例 + 推荐记号 + 取舍理由」，用 ask_user 征得同意后写入「已采纳」；**用户一开始没有统一习惯时，先观察同一对象的多次用法再提，不要过早强行统一**；建议本身可先入 inbox 备忘录（与捕获策略联动）。
+3. **维护**：用户后续使用偏离已采纳体系时，温和提醒一次（不擅自改用户笔记）；用户决定换记号 → 在修订历史写 ~~旧~~ → 新（日期）；同一符号在不同领域的含义分表记录（如 $\rho$：谱半径 vs 相关系数），不要一刀切。
 
 **hook 块纪律**：卡片 frontmatter 里的 `hook:` 块中，`operator/pattern/heuristics/quantity/techniques/applications/verified` 由你在创建或 reinforce 时维护；`uses/success_rate/last_used` 由插件确定性维护（`note_recall` 命中计数 + 每日体检回写），**你不要手改这三个统计字段**。verified 只能写 `single-source`，升级到 `cross-referenced`（与笔记互证）或 `user-confirmed`（用户确认）必须用户参与，不得自升。
 
@@ -114,7 +120,8 @@
 vault/
   AGENTS.md                          本协议（自动加载）
   .deepseek/
-    memory/profile.md                语义层
+    memory/profile.md                语义层（记号体系入口见 memory/notation.md）
+    memory/notation.md               记号体系（收集→统一→维护，用户与 AI 共同维护）
     memory/topics/                   导航层（index + <topic>.md）
     memory/records/                  记录层（index + <slug>.md 原子卡）
     memory/theorems/                 定理索引（个人 Matlas：index + 登记模板）

@@ -6,6 +6,7 @@
 
 - **低危清单清理（handoff 序 4）**：`note_search` 排除 `.deepseek` 记忆树（记忆文件仍走 grep/read；note_links/note_retrieve 不变）；episode 归档同步改写 records 卡 `source` 链接（溯源链不断）；探测到端口被非本插件服务占用时给出一次性 Notice 提示（keepAlive 场景自动豁免）；README/`cordis.patch.yml` 对 `DSH_PERMISSION_MODE` 的措辞改为“仅重开交互式提权、沙箱仍 workspace-write”。
 - **回复质量与捕捉协议（prompt 层）**：AGENTS.md 新增「学习对话原则」（直觉先行 / 认知锚定到用户笔记 / 难度自适应 / 苏格拉底式纠错 / 学习场景适度展示思路 / 低频检查性收尾 / 陌生记号定义）；persona 补学习伙伴定位。捕捉提案升级为「一句话想法 + 为什么值得 + 拟写入类型与关联条目」，auto 档写入后回复末尾注明「已捕捉」，fact/preference 的 ask 档与想法提问合并为每轮最多一次。
+- **记号体系（notation system）**：新增 `.deepseek/memory/notation.md`（已采纳/候选/已否决三表 + 修订历史，模板随 bootstrap/安装器/部署三路安装）；AGENTS.md 增「收集→统一→维护」协议——收集不打扰、发现不一致时提议统一（现状两例+推荐+取舍理由，ask_user 确认后采纳）、用户无统一习惯时先观察再提、偏离时温和提醒；记号摘要（≤800 字符）每轮注入系统提示；profile 的记号节改为指向体系文件。回归 +1。
 - **设置页捕获策略**：插件设置新增「捕获策略」区——想法/事实/偏好三个下拉框（ask/auto/off，带效果说明），选择结果直接写入 vault 的 `capture-policy.md`（含 updated 日期刷新，文件缺失时用内嵌模板补建）。
 - **检索 v3 S6（审计结构校验）**：每日体检新增确定性结构检查——records 卡缺 `source`、`source`/`related` 链接悬空（断链）、卡片未登记进 `records/index.md`；报告注入「结构校验」行，AGENTS.md 增对应兜底规则（三写第 2 步的体检保险）。回归 +4。
 - **检索 v3 S5（导航式注入）**：移除每轮无条件注入的 2200 字符「本轮记忆召回」段与全部召回语料机制（`buildRecallIndex`/`rankRecall`/`recallDocsFor` 及 recall* 配置）；系统提示只保留静态导航层（主题/记录/模板/事件索引 = “有什么”），相关内容全部按需经 `note_recall` 拉取——每轮省约 2K 字符注入，且检索语义与工具完全一致。回归 56 项调整为 54 项（召回排序断言退役，导航断言 +3）。
