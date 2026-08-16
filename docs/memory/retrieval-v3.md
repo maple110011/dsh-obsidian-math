@@ -131,3 +131,13 @@
 - `scripts/probe-vault.mjs`（本机脚本，gitignore，类 deploy-local）：12 组 ground-truth 断言（换说法/连字符变体/读取半径/无答案弱信号），对真实 vault 用部署同款打分器断言 recall；本轮运行 **12/12 PASS**。
 - 探针发现并修复一个真实缺陷：max 归一化让「无答案」查询也产出 0.9+ 自信高分 → 新增 `coverage`（查询词覆盖率）弱信号指示，<0.35 视为词面巧合；AGENTS.md 精读纪律同步。
 - ground truth 与 vault 绑定，vault 内容变化时需同步维护该脚本。
+
+### 真实会话端到端验收（已执行，2026-08-16，经真实 web 服务 + obsidian preset）
+
+- 方法：临时 web 实例（--profile obsidian --port 3181）→ typert 协议 session.create（cwd=vault, agentPreset=obsidian）→ session.prompt → session.history 检查工具轨迹。
+- 结果 4/4 通过：
+  - Q1 换说法策略题：note_recall 蒸馏查询「依测度收敛 加强到 几乎处处收敛 子列 Riesz定理 Borel-Cantelli 快速子列」→ 读子列备忘录+episode → 答案正确且以用户记忆为准；
+  - Q2 无答案题：note_recall 两次调用（改写重试协议真实执行），模型自行引用「coverage < 0.35 属词面巧合」判定弱命中，grep 交叉核实后**明说库里没有、不编造**——coverage 弱信号端到端生效；
+  - Q3 定理题：note_recall → theorems/index + 备忘录 + 关联笔记，答对；
+  - Q4 笔记题：note_recall + 顺链读 + 诚实披露「仅两行 stub、无完整陈述」后给出标准定理并对照用户反例。
+- 教训：headless runner（dsh-headless）不装配 agent preset，不能用于本插件验收；真实路径 = web 服务 + preset 会话。
