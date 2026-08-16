@@ -506,6 +506,21 @@ export function rankBm25(queryTokens, tokenizedDocs, stats) {
  * the query appear in the doc. Bridges short-vs-long word mismatch (子列 vs
  * 子序列) that bigram tokenization cannot see; zero for non-CJK queries.
  */
+/**
+ * Fraction of DISTINCT query tokens covered by the doc (BM25-token level).
+ * A high ranking score with low coverage is a lexical coincidence: the
+ * relative max-normalization hides it, so the tool exposes this as a
+ * weak-signal indicator (retrieval v3 probe finding).
+ */
+export function queryCoverage(queryTokens, docTokens) {
+  const distinct = new Set(queryTokens);
+  if (distinct.size === 0) return 1;
+  const docSet = new Set(docTokens);
+  let hit = 0;
+  for (const token of distinct) if (docSet.has(token)) hit += 1;
+  return hit / distinct.size;
+}
+
 export function cjkCharOverlap(queryText, docText) {
   const chars = (value) => {
     const set = new Set();
@@ -900,7 +915,7 @@ export async function apply(ctx, config) {
   // ── note_recall (memory v3 S1: unified entry) ─────────────────────────────
   ctx.tools.register(defineTool({
     name: "note_recall",
-    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry — prefer it over grep and over per-layer routes whenever you need to find relevant content; it answers in one call what previously took several. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate and score. Then READ the top 2-3 matches in full before using them. An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards.`,
+    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry — prefer it over grep and over per-layer routes whenever you need to find relevant content; it answers in one call what previously took several. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high). Then READ the top 2-3 matches in full before using them. An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards.`,
     parameters: {
       query: { type: "string", required: true, description: "Distilled search query: the reasoning challenge plus candidate technique keywords, e.g. '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli'." },
       operator: { type: "string", description: `Optional stage-1 hard filter, one of ${[...HOOK_OPERATORS].join("/")}. Only hook cards with a matching operator are scored; when none matches, all docs are scored and mode reports the fallback.` },
@@ -930,7 +945,8 @@ export async function apply(ctx, config) {
                 hookOperator: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
                 uses: { type: "integer", required: true },
                 successRate: { oneOf: [{ type: "number" }, { type: "null" }], required: true },
-                score: { type: "number", required: true }
+                score: { type: "number", required: true },
+                coverage: { type: "number", required: true }
               }
             }
           }
@@ -944,11 +960,13 @@ export async function apply(ctx, config) {
             match.verified === null ? "" : { "user-confirmed": "✅", "cross-referenced": "⚖️", "single-source": "❓" }[match.verified] ?? match.verified,
             match.hookOperator === null ? "" : `算子:${match.hookOperator}`,
             `uses:${match.uses}`,
-            match.successRate === null ? "" : `成功率:${match.successRate}`
+            match.successRate === null ? "" : `成功率:${match.successRate}`,
+            `覆盖:${match.coverage}`
           ].filter((part) => part !== "").join(" · ");
           return `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path}) score ${match.score.toFixed(3)}${extra === "" ? "" : " · " + extra}\n  ${match.snippet}`;
         });
-        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实后再使用）:\n${lines.join("\n")}` }];
+        const weak = value.matches.filter((match) => match.coverage < 0.35).length;
+        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实后再使用；${weak} 条 coverage<0.35 属弱信号，多为词面巧合）:\n${lines.join("\n")}` }];
       }
     },
     isConcurrencySafe: () => true,
@@ -993,6 +1011,7 @@ export async function apply(ctx, config) {
 
       const passages = docs.map((doc) => composePassage(doc.kind, doc));
       const corpusStats = computeCorpusStats(passages.map((passage) => tokenize(passage)));
+      const docTokenSets = passages.map((passage) => new Set(tokenize(passage)));
       const rawScores = docs.map((doc, i) => bm25Score(queryTokens, tokenize(passages[i]), corpusStats));
       const maxScore = Math.max(1e-9, ...rawScores);
       const priorOf = (doc) => doc.hook === null
@@ -1035,7 +1054,8 @@ export async function apply(ctx, config) {
           hookOperator: typeof doc.hook?.operator === "string" ? doc.hook.operator : null,
           uses: Math.max(0, Math.trunc(hookNumber(doc.hook, "uses", 0))),
           successRate: Number.isFinite(Number(doc.hook?.success_rate)) ? Number(doc.hook.success_rate) : null,
-          score: Number(score.toFixed(4))
+          score: Number(score.toFixed(4)),
+          coverage: Number(queryCoverage(queryTokens, docTokenSets[i]).toFixed(2))
         }))
       };
     },

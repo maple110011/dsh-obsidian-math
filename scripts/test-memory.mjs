@@ -20,7 +20,8 @@ import {
   computeCorpusStats,
   classifyVaultDoc,
   composePassage,
-  cjkCharOverlap
+  cjkCharOverlap,
+  queryCoverage
 } from '../dsh/preset/obsidian-notes.mjs';
 import {
   buildAuditReport,
@@ -321,6 +322,11 @@ check('s6: missing source detected', s6Report.structural?.missingSource >= 2, JS
 check('s6: broken link detected', s6Report.structural?.brokenLinks >= 1);
 check('s6: not-in-index detected', s6Report.structural?.notInIndex >= 3);
 check('s6: report carries 结构校验 line', s6Report.report.includes('结构校验'));
+
+// ── 19. query coverage weak-signal indicator (probe finding) ───────────────
+check('coverage: full hit = 1', queryCoverage(tokenize('子列 收敛'), tokenize('子列选取 收敛性')) === 1);
+check('coverage: partial hit', (() => { const q = tokenize('谱半径 gelfand 估计'); const d = tokenize('矩阵 估计 杂想'); const cov = queryCoverage(q, d); return cov > 0 && cov < 0.5; })());
+check('coverage: no hit = 0', queryCoverage(tokenize('gelfand'), tokenize('矩阵')) === 0);
 
 // ── 11. dialogue-index cache schema gate (pre-filter caches must rebuild) ──
 check('cacheIndexValid: current version accepted', cacheIndexValid({ schemaVersion: 2, generatedAt: 1, sources: [], entries: [] }) === true);
