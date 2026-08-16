@@ -20,7 +20,13 @@ control-panel.md 阶段 1c（捕获策略分级）是控制面三阶段里的最
 
 ### 待办
 
-- 面板内直接编辑策略文件（随 handoff 序 2「面板内编辑记忆」一并落地）。
+- 面板内直接编辑策略文件 → 已随 handoff 序 2 落地（预览弹窗编辑 + 策略链接）。
+
+## 2026-08 · 面板内编辑记忆（handoff 序 2）
+
+- **预览弹窗编辑**：`MemoryPreviewModal` 新增「编辑」→ textarea +「保存/取消」；保存前做 mtime 冲突检查（打开时快照 vs 保存前 stat，不一致则拒绝覆盖并提示重新打开）；保存后回调刷新面板。适用于 records/templates/memos/episodes 卡与 capture-policy.md。
+- **策略快捷入口**：面板摘要行下新增 `⚙️ 捕获 ask/auto/auto（点击编辑策略）` 链接，直接打开 `.deepseek/capture-policy.md` 的编辑弹窗。
+- 样式：`.dsh-memory-preview-editor` / `.dsh-memory-policy-link`。UI 代码无法进零 token 回归，验证 = `--check` + 构建 + 部署 + 用户点击实测。
 
 ## 2026-08 · 推送前修复轮（feedback token 接线 / 缓存 schemaVersion / 皮肤 fallback 时序）
 

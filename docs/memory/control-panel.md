@@ -46,8 +46,8 @@
 
 - 分层浏览五层记忆（profile/topics/records/templates/episodes/inbox）+ 体检报告；
 - 每条记忆显示：验证徽标、`hook.uses/success_rate/last_used`、source 链、引用次数；
-- 按文件名/tag/operator 过滤搜索；点击打开原文（复用 /open 跳转）；
-- 编辑走原文编辑；删除仅指“归档/标记 superseded”，无硬删除按钮。
+- 按文件名/tag/operator 过滤搜索；点击打开预览弹窗（阶段 1b 起，dot 目录限制），**弹窗内可直接编辑保存（mtime 冲突防护）**；
+- 删除仅指“归档/标记 superseded”，无硬删除按钮。
 
 ### 2.4 捕获策略分级（✅ 已实现，阶段 1c）
 

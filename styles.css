@@ -212,3 +212,28 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+
+.dsh-memory-preview-editor {
+  width: 100%;
+  min-height: 280px;
+  resize: vertical;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 8px;
+  margin: 8px 0;
+}
+
+.dsh-memory-policy-link {
+  cursor: pointer;
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+  margin: 2px 0 8px 0;
+}
+
+.dsh-memory-policy-link:hover {
+  text-decoration: underline;
+}

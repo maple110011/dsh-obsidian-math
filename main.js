@@ -1046,11 +1046,23 @@ function readAuditText(path) {
  * any TFile-based API. The panel reads them with node fs and shows them here.
  */
 class MemoryPreviewModal extends Modal {
-  constructor(app, title, content, fullPath) {
+  constructor(app, title, content, fullPath, onSaved = null) {
     super(app);
     this.titleText = title;
     this.contentText = content;
     this.fullPath = fullPath;
+    this.onSaved = onSaved;
+    this.editing = false;
+    this.editorEl = null;
+    this.bodyEl = null;
+    // mtime snapshot at open time: the conflict guard refuses to clobber
+    // external edits made between open and save.
+    this.readMtimeMs = 0;
+    try {
+      this.readMtimeMs = statSync(fullPath).mtimeMs;
+    } catch {
+      this.readMtimeMs = 0;
+    }
   }
 
   onOpen() {
@@ -1058,8 +1070,10 @@ class MemoryPreviewModal extends Modal {
     contentEl.addClass('dsh-memory-preview');
     contentEl.createEl('h3', { text: this.titleText });
     contentEl.createDiv({ cls: 'dsh-memory-preview-path', text: this.fullPath });
-    contentEl.createEl('pre', { cls: 'dsh-memory-preview-body', text: this.contentText });
+    this.bodyEl = contentEl.createEl('pre', { cls: 'dsh-memory-preview-body', text: this.contentText });
     const actions = contentEl.createDiv({ cls: 'dsh-memory-preview-actions' });
+    const edit = actions.createEl('button', { text: '编辑' });
+    edit.addEventListener('click', () => this.enterEditMode());
     const copy = actions.createEl('button', { text: '复制内容' });
     copy.addEventListener('click', async () => {
       try {
@@ -1090,6 +1104,43 @@ class MemoryPreviewModal extends Modal {
     });
     const closeButton = actions.createEl('button', { text: '关闭' });
     closeButton.addEventListener('click', () => this.close());
+  }
+
+  enterEditMode() {
+    if (this.editing) return;
+    this.editing = true;
+    this.bodyEl?.remove();
+    this.bodyEl = null;
+    this.editorEl = this.contentEl.createEl('textarea', { cls: 'dsh-memory-preview-editor' });
+    this.editorEl.value = this.contentText;
+    const saveRow = this.contentEl.createDiv({ cls: 'dsh-memory-preview-actions' });
+    const save = saveRow.createEl('button', { text: '保存', cls: 'mod-cta' });
+    save.addEventListener('click', () => this.saveEdit());
+    const cancel = saveRow.createEl('button', { text: '取消' });
+    cancel.addEventListener('click', () => this.close());
+  }
+
+  saveEdit() {
+    const value = this.editorEl?.value ?? '';
+    let currentMs = 0;
+    try {
+      currentMs = statSync(this.fullPath).mtimeMs;
+    } catch (error) {
+      new Notice('无法保存：' + String(error));
+      return;
+    }
+    if (this.readMtimeMs !== 0 && currentMs !== this.readMtimeMs) {
+      new Notice('文件已在别处被修改，拒绝覆盖。请关闭后重新打开再编辑。');
+      return;
+    }
+    try {
+      writeFileSync(this.fullPath, value, 'utf8');
+    } catch (error) {
+      new Notice('保存失败：' + String(error));
+      return;
+    }
+    this.close();
+    if (typeof this.onSaved === 'function') this.onSaved();
   }
 
   onClose() {
@@ -1172,8 +1223,9 @@ class MemoryView extends ItemView {
     const summary = [];
     if (state.profile) summary.push('画像 ✅');
     summary.push(`记录 ${state.records.length}`, `模板 ${state.templates.length}`, `备忘录 ${state.memos.length}`, `事件 ${state.episodes.length}`);
-    summary.push(`捕获 ${state.capturePolicy.idea}/${state.capturePolicy.fact}/${state.capturePolicy.preference}`);
     body.createDiv({ cls: 'dsh-memory-summary', text: summary.join(' · ') });
+    const policyLink = body.createEl('a', { cls: 'dsh-memory-policy-link', text: `⚙️ 捕获 ${state.capturePolicy.idea}/${state.capturePolicy.fact}/${state.capturePolicy.preference}（点击编辑策略）` });
+    policyLink.addEventListener('click', () => this.openNote('.deepseek/capture-policy.md', '捕获策略 capture-policy.md'));
 
     if (state.records.length > 0) {
       this.section(body, '记忆记录 .deepseek/memory/records/', state.records.length);
@@ -1224,12 +1276,12 @@ class MemoryView extends ItemView {
   // blank and the container element was passed to openLinkText).
   // Hidden .deepseek files cannot be opened via Obsidian APIs at all, so
   // clicking a card shows an in-panel preview modal instead.
-  openNote(rel) {
+  openNote(rel, title = null) {
     if (typeof rel !== 'string' || rel === '') return;
     const fullPath = join(this.vaultPath(), ...rel.split('/'));
     try {
       const content = readFileSync(fullPath, 'utf8');
-      new MemoryPreviewModal(this.app, rel, content, fullPath).open();
+      new MemoryPreviewModal(this.app, title ?? rel, content, fullPath, () => this.render()).open();
     } catch (error) {
       new Notice('无法读取该文件：' + String(error));
     }
