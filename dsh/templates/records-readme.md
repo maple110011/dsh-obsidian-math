@@ -54,9 +54,9 @@ hook:                 # 可选：检索特征块（记忆 v2，供 note_retrieve
 ## hook 块说明（记忆 v2，检索特征）
 
 - **写什么**：`operator/pattern/heuristics/quantity/techniques/applications/verified` 由你在创建卡片时填写，`techniques` 在 reinforce 时追加（来自真实证明/解题过程，不得编造）。
-- **谁维护统计**：`uses/success_rate/last_used` 由插件确定性维护——`note_retrieve` 命中计数写入 `cache/retrieval-stats.json`，每日体检把计数回写进 hook 块。**你永远不手写/手改这三个字段**。
+- **谁维护统计**：`uses/success_rate/last_used` 由插件确定性维护——`note_recall` 命中计数写入 `cache/retrieval-stats.json`，每日体检把计数回写进 hook 块。**你永远不手写/手改这三个字段**。
 - **验证等级**：新建只能写 `single-source`；与 vault 内笔记互证后可升级 `cross-referenced`；`user-confirmed` 只能在用户明确确认后写。
-- **为什么要有 hook**：策略检索（`note_retrieve`）依赖它做算子硬过滤与加权打分；没有 hook 的卡只能靠全文匹配被找到，检索质量明显更低。artifact 与 solution 类卡片**建议必有**，fact/preference 类可省略。
+- **为什么要有 hook**：统一检索（`note_recall`）用 hook 字段加权打分与算子过滤；没有 hook 的卡只能靠全文匹配被找到，检索质量明显更低。artifact 与 solution 类卡片**建议必有**，fact/preference 类可省略。
 
 ## 维护规则（AI 执行）
 

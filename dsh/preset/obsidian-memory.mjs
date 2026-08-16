@@ -494,7 +494,7 @@ export function memoDigest(root, maxChars, query = "", helpers = undefined) {
 
 // ── memory v2: deterministic audit pass (ISM Self-Audit, localized) ─────────
 
-/** Load the retrieval-stats cache written by note_retrieve (best-effort). */
+/** Load the retrieval-stats cache written by note_recall (best-effort). */
 function readRetrievalStats(root) {
   const path = join(root, RETRIEVAL_STATS_FILE);
   try {
@@ -556,7 +556,7 @@ function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
 }
 
 /**
- * Scan every memory card once, merge the note_retrieve hit statistics, and
+ * Scan every memory card once, merge the note_recall hit statistics, and
  * classify cards into ISM-style buckets: strong / weak / unused / duplicate
  * candidates / unverified. Pure function of the vault's files — no model.
  */
@@ -614,7 +614,7 @@ export function buildAuditReport(root, helpers) {
   }
 
   // Deterministic hook-stats sync (opt-out via auditMaintainHookStats: false).
-  // FIX(B1): after merging the note_retrieve hit counts into hook.uses, the
+  // FIX(B1): after merging the note_recall hit counts into hook.uses, the
   // stats entries are zeroed — otherwise every daily audit re-adds the same
   // hits and uses grows without bound.
   if (helpers.maintainHookStats !== false) {
@@ -1390,7 +1390,7 @@ export async function apply(ctx, config) {
   });
 
   // Apply the dedicated note tools (note_search / note_create / note_links /
-  // note_retrieve) on the same context — reuse the module imported above.
+  // note_recall) on the same context — reuse the module imported above.
   // This file is always refreshed on upgrade, so existing installations pick
   // the tools up even though agent.cordis.yml preserves user edits. The
   // sibling module resolves `defineTool` through the harness loader, so it

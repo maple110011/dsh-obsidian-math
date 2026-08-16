@@ -2,6 +2,35 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 检索 v3 第一批（S1 统一入口 + S2 BM25 + S3 精读协议）
+
+### 背景
+
+依据 AgentIR/RaDeR/LeanSearch v2 三篇论文与端到端审视（retrieval-v3.md v2 提案），用户确认「现状可推倒重来，优先正确且快速，token 花在刀刃上」。
+
+### S2 BM25 打分器
+
+- `bm25Score`/`computeCorpusStats`/`rankBm25`（k1=1.2, b=0.75）：词频饱和、IDF、长度归一；note_retrieve 打分与召回注入排序两处替换 overlap 系数（`weightedOverlap` 仅保留给 memo 相关性阈值——需要 [0,1] 有界刻度）。
+
+### S1 统一入口 note_recall
+
+- 一次 `listNotes` 遍历同时覆盖用户笔记与 `.deepseek` 记忆层；`classifyVaultDoc`（note/record/template/memo/topic/theorem-index/episode-index/skip——episode 正文与脚手架不进语料，证据仍走 grep/read）；
+- `composePassage` kind-aware 组装（LeanSearch structured passage 本土化）：hook 卡强调 hook 字段+正文头 800，memo/note 强调正文头，索引类保留行内容，frontmatter 一律剔除；
+- 打分 = 0.85×BM25 池内归一 + 0.10×CJK 字符包含 + 0.05×成功/使用先验；hook 命中统计（uses/last_used）迁移到 note_recall，体检回写闭环不变；
+- 真实 vault 探针发现并修复两个词法缺口：Unicode 连字符归一（Borel–Cantelli≡borel-cantelli）、`cjkCharOverlap`（桥接 子列/子序列）；探针结果：Wasserstein 查询命中 topic+memo+相关笔记混排正确，「子列选取 紧性 加强」备忘录 #1；
+- `note_retrieve` 工具退役（解析/打分纯函数保留供体检复用）；旧统计注释与文档全部同步。
+
+### S3 精读挑选协议（AGENTS.md 重写）
+
+- 查询蒸馏强制格式：挑战描述 + 2~3 候选技巧；多步问题先写步骤草图、逐步检索；
+- 精读挑选：读 top 2-3 全文逐条判适用/不适用；空结果=信号，改写查询重试最多一次，仍无则明说没有；
+- 精读纪律：同一轮最多 2 次 note_recall、每次读全文 ≤3 篇；顺链扩读（related/source 邻域）；
+- 路由表从「四路分裂 + 手写决策树」收敛为 note_recall 默认首选 + 精确场景专用路由。
+
+### 回归
+
+- 测试 47 → 56（BM25 5 + 统一语料 5 + 连字符/CJK 4 + 缓存门控 4 + 链接 token 3 等）全绿；npm test exit 0。
+
 ## 2026-08 · 低危清单清理（handoff 序 4）
 
 - **note_search 排除 .deepseek**：`listNotes` 增加 `extraExcludeDirs` 参数，note_search 传入 `['.deepseek']`——用户笔记语义与记忆树彻底分开（note_links/note_retrieve 不排除，前者需要记忆卡的反链、后者靠记忆卡检索）；工具描述、系统提示段与 AGENTS.md §5 同步。

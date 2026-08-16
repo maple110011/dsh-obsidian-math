@@ -4,7 +4,8 @@
 #   - tool-fs          read/write/edit files inside the Obsidian vault
 #   - tool-fs-search   search/glob inside the vault
 #   - tool-ask-user    ask before capturing key ideas, big edits, etc.
-#   - obsidian-notes   dedicated note tools: note_search (tag filtering),
+#   - obsidian-notes   dedicated note tools: note_recall (unified ranked search
+#                      over notes + memory), note_search (tag filtering),
 #                      note_create (refuses overwrite), note_links (backlinks)
 #                      (applied by obsidian-memory below, which always updates)
 # Everything else (shell, web, subagents, workflows, goals, todo, ...) is

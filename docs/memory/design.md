@@ -66,7 +66,7 @@
 粗到细的路由规则，核心是“注入的是导航，证据在磁盘”：
 
 - 关键词/tag 找笔记 → `note_search`；反链 → `note_links`；
-- v2 新增：证明类问题的**策略检索** → `note_retrieve`（hook 两级检索，见 v2-proposal）；系统提示的「本轮记忆召回」段按当前消息相关性注入 top-k；
+- v3（检索重构，见 retrieval-v3.md）：统一入口 `note_recall`——BM25 对笔记+全部记忆层一次排序，kind-aware passage，空结果/重试协议；「本轮记忆召回」按当前消息相关性注入 top-k（S5 将改按需导航）；
 - **隐藏目录限制**：Obsidian 的 vault 索引排除所有点号开头的路径段（已核对 1.13.7 源码），`.deepseek` 文件无法经 openLinkText/TFile 打开——记忆面板点击卡片走插件内预览 Modal。
 - 精确事实/原话/日期 → grep episodes → 读命中文件；
 - 类型化事实 → records/index → grep/读记录 → `source` 回证据；

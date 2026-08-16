@@ -15,7 +15,7 @@ related_theorems:
   - '[[theorems/index#定理名|定理名]]'
 related_notes: []
 source: '[[YYYY-MM-DD-episode-slug]]'
-hook:                 # 可选：检索特征块（记忆 v2，供 note_retrieve 两级检索）
+hook:                 # 可选：检索特征块（供 note_recall 统一检索加权）
   operator: probability
   pattern: subsequence_argument
   heuristics:
@@ -47,12 +47,12 @@ hook:                 # 可选：检索特征块（记忆 v2，供 note_retrieve
 
 - 模板卡的 `hook.operator/pattern/heuristics/techniques/applications` 由你创建时填写、reinforce 时追加；`uses/success_rate/last_used` 由插件维护，**不要手写**。
 - `verified` 新建只能写 `single-source`；升级到 `cross-referenced`/`user-confirmed` 必须用户参与。
-- 有 hook 的模板卡才能被 `note_retrieve` 按策略检索到；solution 类卡片建议必有 hook。
+- 有 hook 的模板卡才能被 `note_recall` 按策略加权检索到；solution 类卡片建议必有 hook。
 
 ## 维护规则（AI 执行）
 
 1. **问题蒸馏（检索前）**：遇到新问题时，先把它抽象成模板表达（去掉具体数字/语境），并转成“挑战描述 + 2~3 条候选技巧关键词”。
-2. **策略检索**：先用 `note_retrieve`（可带 operator 硬过滤）检索带 hook 的卡片；同时查 `templates/index.md`。
+2. **策略检索**：先用 `note_recall`（可带 operator 过滤）统一检索（笔记+带 hook 卡片）；同时查 `templates/index.md`。
 3. **命中**：读命中的模板卡与 `related_theorems`，对定理**去重聚合**后进入推理；不要只取表面相似度最高的一个。
 4. **未命中**：问题解决后，把新题型/新解法提取为模板卡（从你的实际解题过程中抽象），并把用到的定理写入 `related_theorems`——这就是“从种子问题逐步扩展知识库”。
 5. **验证**：模板卡必须来源于真实解决过的问题或笔记（`source` 链接）；不得凭空编造定理名或引用不存在的笔记。
