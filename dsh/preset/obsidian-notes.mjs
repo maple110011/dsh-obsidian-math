@@ -1,14 +1,13 @@
 /**
  * obsidian-notes — dedicated Obsidian note tools for the `obsidian` dsh agent
  * preset:
- *   - note_search    full-text / tag-filtered search across vault notes
+ *   - note_recall    unified BM25-ranked recall over notes + memory layers
+ *                    (retrieval v3 primary entry; hook-field weighting, CJK
+ *                    char containment, success-rate prior, coverage weak-signal
+ *                    indicator; hit stats land in .deepseek/cache/retrieval-stats.json)
+ *   - note_search    full-text / tag-filtered search across user notes only
  *   - note_create    create a new note; refuses to overwrite an existing one
  *   - note_links     backlink (wikilink) queries
- *   - note_retrieve  memory-v2 two-stage strategy retrieval over cards that
- *                    carry a "hook:" frontmatter block (ISM-style feature hook:
- *                    operator hard filter + weighted soft scoring), with a
- *                    full-text token-ranking fallback; records hits into the
- *                    plugin-owned cache at .deepseek/cache/retrieval-stats.json
  *
  * Registered through `defineTool` from @deepseek-ai/dsh-tools, following the
  * same pattern as the dsh-obsidian-assistant reference plugin. Every touch of

@@ -2,6 +2,12 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 回复质量原则与捕获策略补强（prompt 层 + 设置页 UI）
+
+- **学习对话原则**（AGENTS.md §8）：直觉先行、认知锚定（新内容与用户已有笔记挂钩并点明关系）、难度自适应（拿不准就问「直觉版还是严格版」）、苏格拉底式纠错（先反问引导一轮再直接纠正）、学习场景适度展示思路、低频检查性收尾、陌生记号定义；persona 同步「学习伙伴」定位。
+- **捕捉协议补强**（AGENTS.md §6）：ask 档提案必须含「一句话想法 + 为什么值得捕捉 + 拟写入类型与关联条目」；auto 档写入后回复末尾注明「已捕捉：<标题>」（用户可见 auto 写了什么）；fact/preference 的 ask 档与想法提问合并，每轮最多一次。
+- **设置页捕获策略 UI**（main.template.js）：三个下拉框（idea/fact/preference × ask/auto/off，含效果说明文案）→ `setCapturePolicyMode` 主机侧最小 diff 写回 `capture-policy.md`（刷新 updated 日期；文件缺失时以内嵌模板补建）。设置页与面板编辑、文件直改三入口等效。
+
 ## 2026-08 · 检索 v3 自动探针与真实会话端到端验收
 
 - 零 token 引擎探针 `scripts/probe-vault.mjs`（本机脚本，12 组 ground-truth）：发现并修复「无答案查询仍得 0.9+ 自信分」缺陷——`note_recall` 命中新增 `coverage`（查询词覆盖率，<0.35 判弱信号），AGENTS.md 同步；修复后 12/12 PASS。

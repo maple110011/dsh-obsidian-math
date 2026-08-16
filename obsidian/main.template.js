@@ -152,6 +152,30 @@ function setTopField(frontmatterText, field, value) {
   return updated.join(frontmatterText.includes('\r\n') ? '\r\n' : '\n');
 }
 
+/**
+ * Update one capture-policy mode in the vault's .deepseek/capture-policy.md
+ * (host side, minimal frontmatter diff; also refreshes the updated date).
+ * The settings page dropdowns call this so policy edits never need a text
+ * editor; the model is still forbidden from touching the file.
+ */
+function setCapturePolicyMode(plugin, field, mode) {
+  const vault = plugin.app.vault.adapter.getBasePath();
+  const policyPath = join(vault, '.deepseek', 'capture-policy.md');
+  let text;
+  if (existsSync(policyPath)) {
+    text = readFileSync(policyPath, 'utf8');
+  } else {
+    text = typeof EMBEDDED_TEMPLATES['capture-policy.md'] === 'string' ? EMBEDDED_TEMPLATES['capture-policy.md'] : '';
+    if (text === '') throw new Error('capture policy template missing');
+  }
+  const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (fmMatch === null) throw new Error('capture-policy.md 没有 frontmatter');
+  let frontmatter = setTopField(fmMatch[1], field, mode);
+  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  frontmatter = setTopField(frontmatter, 'updated', today);
+  writeFileSync(policyPath, text.replace(fmMatch[1], frontmatter), 'utf8');
+}
+
 /** Apply one feedback action to a card file (in place, minimal diff). */
 function applyFeedback(filePath, action) {
   const text = readFileSync(filePath, 'utf8');
@@ -1743,6 +1767,46 @@ class DshObsidianSettingTab extends PluginSettingTab {
         this.plugin.settings.keepAliveOnUnload = value;
         await this.plugin.saveSettings();
       }));
+
+    containerEl.createEl('h3', { text: '捕获策略' });
+    containerEl.createEl('p', { cls: 'dsh-obsidian-math-security-note', text: '控制助手把新信息写入记忆的方式。选择结果直接写入 vault 内的 .deepseek/capture-policy.md（模型不得修改此文件；你的口头指令永远优先于策略）。' });
+    containerEl.createEl('p', { text: 'auto = 按三写协议直接写入（回复末尾注明）；ask = 先用提问征得同意再写；off = 不主动捕获（你明确要求除外）。' });
+    const captureVault = this.plugin.app.vault.adapter.getBasePath();
+    const captureMeta = (() => {
+      try {
+        const raw = readFileSync(join(captureVault, '.deepseek', 'capture-policy.md'), 'utf8');
+        const { meta } = parseMemoryFrontmatter(raw);
+        return meta;
+      } catch {
+        return {};
+      }
+    })();
+    const captureDescriptions = {
+      idea: '💡 想法捕获：识别到一般性思路/方法/技巧时，是否写入 inbox 备忘录。',
+      fact: '📌 事实捕获：新事实/事件/指令是否写入 records 原子卡（三写第 2 步）。',
+      preference: '👤 偏好捕获：稳定偏好/记号/授权是否写入 profile（三写第 3 步）。'
+    };
+    const addCaptureSetting = (key, fallback) => {
+      new Setting(containerEl)
+        .setName(captureDescriptions[key])
+        .addDropdown((dropdown) => dropdown
+          .addOption('ask', 'ask — 先征得同意')
+          .addOption('auto', 'auto — 直接写入')
+          .addOption('off', 'off — 不主动捕获')
+          .setValue(['auto', 'ask', 'off'].includes(captureMeta[key]) ? captureMeta[key] : fallback)
+          .onChange(async (value) => {
+            try {
+              setCapturePolicyMode(this.plugin, key, value);
+              new Notice(`捕获策略已更新：${key} → ${value}`);
+            } catch (error) {
+              new Notice('更新捕获策略失败：' + String(error));
+            }
+            this.display();
+          }));
+    };
+    addCaptureSetting('idea', 'ask');
+    addCaptureSetting('fact', 'auto');
+    addCaptureSetting('preference', 'auto');
 
     containerEl.createEl('h3', { text: '配置' });
     const configRow = containerEl.createDiv({ cls: 'dsh-obsidian-math-config-actions' });
