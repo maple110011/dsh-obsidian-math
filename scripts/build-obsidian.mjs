@@ -10,35 +10,42 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const template = readFileSync(join(root, "obsidian", "main.template.js"), "utf8");
+/**
+ * Read with CRLF→LF normalization: Windows checkouts (core.autocrlf) present
+ * CRLF working-tree files, and embedding the raw text would bake \r\n escape
+ * sequences into main.js. CI checks out LF and rebuilds, so the embedded
+ * content must be line-ending-independent for the rebuild-diff gate to pass.
+ */
+const readNormalized = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
+const template = readNormalized(join(root, "obsidian", "main.template.js"));
 
 const preset = {
-  "preset.yml": readFileSync(join(root, "dsh", "preset", "preset.yml"), "utf8"),
-  "agent.cordis.yml": readFileSync(join(root, "dsh", "preset", "agent.cordis.yml"), "utf8"),
-  "obsidian-memory.mjs": readFileSync(join(root, "dsh", "preset", "obsidian-memory.mjs"), "utf8"),
-  "obsidian-notes.mjs": readFileSync(join(root, "dsh", "preset", "obsidian-notes.mjs"), "utf8"),
-  "profile-package.json": readFileSync(join(root, "dsh", "profile", "package.json"), "utf8"),
-  "profile-cordis.yml": readFileSync(join(root, "dsh", "profile", "cordis.yml"), "utf8"),
-  "profile-cordis.patch.yml": readFileSync(join(root, "dsh", "profile", "cordis.patch.yml"), "utf8"),
-  "profile-pnpm-workspace.yaml": readFileSync(join(root, "dsh", "profile", "pnpm-workspace.yaml"), "utf8"),
-  "profile-obsidian-workspace.mjs": readFileSync(join(root, "dsh", "profile", "obsidian-workspace.mjs"), "utf8"),
-  "profile-obsidian.patch.yml": readFileSync(join(root, "dsh", "profile", "obsidian.patch.yml"), "utf8")
+  "preset.yml": readNormalized(join(root, "dsh", "preset", "preset.yml")),
+  "agent.cordis.yml": readNormalized(join(root, "dsh", "preset", "agent.cordis.yml")),
+  "obsidian-memory.mjs": readNormalized(join(root, "dsh", "preset", "obsidian-memory.mjs")),
+  "obsidian-notes.mjs": readNormalized(join(root, "dsh", "preset", "obsidian-notes.mjs")),
+  "profile-package.json": readNormalized(join(root, "dsh", "profile", "package.json")),
+  "profile-cordis.yml": readNormalized(join(root, "dsh", "profile", "cordis.yml")),
+  "profile-cordis.patch.yml": readNormalized(join(root, "dsh", "profile", "cordis.patch.yml")),
+  "profile-pnpm-workspace.yaml": readNormalized(join(root, "dsh", "profile", "pnpm-workspace.yaml")),
+  "profile-obsidian-workspace.mjs": readNormalized(join(root, "dsh", "profile", "obsidian-workspace.mjs")),
+  "profile-obsidian.patch.yml": readNormalized(join(root, "dsh", "profile", "obsidian.patch.yml"))
 };
 
 const templates = {
-  "AGENTS.md": readFileSync(join(root, "dsh", "templates", "AGENTS.md"), "utf8"),
-  "profile.md": readFileSync(join(root, "dsh", "templates", "profile.md"), "utf8"),
-  "topics-index.md": readFileSync(join(root, "dsh", "templates", "topics-index.md"), "utf8"),
-  "records-readme.md": readFileSync(join(root, "dsh", "templates", "records-readme.md"), "utf8"),
-  "records-index.md": readFileSync(join(root, "dsh", "templates", "records-index.md"), "utf8"),
-  "theorems-readme.md": readFileSync(join(root, "dsh", "templates", "theorems-readme.md"), "utf8"),
-  "theorems-index.md": readFileSync(join(root, "dsh", "templates", "theorems-index.md"), "utf8"),
-  "templates-readme.md": readFileSync(join(root, "dsh", "templates", "templates-readme.md"), "utf8"),
-  "templates-index.md": readFileSync(join(root, "dsh", "templates", "templates-index.md"), "utf8"),
-  "episodes-readme.md": readFileSync(join(root, "dsh", "templates", "episodes-readme.md"), "utf8"),
-  "episodes-index.md": readFileSync(join(root, "dsh", "templates", "episodes-index.md"), "utf8"),
-  "inbox-readme.md": readFileSync(join(root, "dsh", "templates", "inbox-readme.md"), "utf8"),
-  "inbox-index.md": readFileSync(join(root, "dsh", "templates", "inbox-index.md"), "utf8")
+  "AGENTS.md": readNormalized(join(root, "dsh", "templates", "AGENTS.md")),
+  "profile.md": readNormalized(join(root, "dsh", "templates", "profile.md")),
+  "topics-index.md": readNormalized(join(root, "dsh", "templates", "topics-index.md")),
+  "records-readme.md": readNormalized(join(root, "dsh", "templates", "records-readme.md")),
+  "records-index.md": readNormalized(join(root, "dsh", "templates", "records-index.md")),
+  "theorems-readme.md": readNormalized(join(root, "dsh", "templates", "theorems-readme.md")),
+  "theorems-index.md": readNormalized(join(root, "dsh", "templates", "theorems-index.md")),
+  "templates-readme.md": readNormalized(join(root, "dsh", "templates", "templates-readme.md")),
+  "templates-index.md": readNormalized(join(root, "dsh", "templates", "templates-index.md")),
+  "episodes-readme.md": readNormalized(join(root, "dsh", "templates", "episodes-readme.md")),
+  "episodes-index.md": readNormalized(join(root, "dsh", "templates", "episodes-index.md")),
+  "inbox-readme.md": readNormalized(join(root, "dsh", "templates", "inbox-readme.md")),
+  "inbox-index.md": readNormalized(join(root, "dsh", "templates", "inbox-index.md"))
 };
 
 const main = template
