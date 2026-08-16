@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-08-16
+
+### Added
+
+- **皮肤中心（背景透明度，仅美观）**：obsidian profile 挂载 dsh-web-ui 皮肤中心（`ui-skin-center`）——皮肤选择 + 背景透明度调节（`skin-background` 设置命名空间），不增加任何 agent 工具；其余 dsh-web-ui 生态功能（任务看板/SSH/aionui/git-graph/宠物/统计等）一律不装，保持最小工具面；皮肤选择与主 web profile 共享。README 中英与 ARCHITECTURE 写明取舍；「README.zh.md 必须始终保留并与 README.md 同步」写入落地清单。真实启动验证通过。
+
 ## [0.5.0] - 2026-08-16
 
 ### Added
