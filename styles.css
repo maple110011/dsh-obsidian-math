@@ -62,3 +62,153 @@
   white-space: pre-wrap;
   font-size: var(--font-ui-smaller);
 }
+
+/* ── DSH 记忆面板（memory v2 control surface, phase 1b） ── */
+
+.dsh-memory-panel {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.dsh-memory-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.dsh-memory-toolbar input[type='search'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.dsh-memory-toolbar button,
+.dsh-memory-actions button {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: var(--font-ui-smaller);
+}
+
+.dsh-memory-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dsh-memory-summary {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding-bottom: 4px;
+}
+
+.dsh-memory-section {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dsh-memory-section-title {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.dsh-memory-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dsh-memory-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+}
+
+.dsh-memory-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.dsh-memory-title {
+  color: var(--text-accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.dsh-memory-title:hover {
+  text-decoration: underline;
+}
+
+.dsh-memory-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-memory-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.dsh-memory-audit {
+  white-space: pre-wrap;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+}
+
+.dsh-memory-error {
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  white-space: pre-wrap;
+}
+
+.dsh-memory-footer {
+  margin-top: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--background-modifier-border);
+  color: var(--text-faint);
+  font-size: var(--font-ui-smallest);
+  word-break: break-all;
+}
+
+.dsh-memory-preview-path {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  word-break: break-all;
+  margin-bottom: 8px;
+}
+
+.dsh-memory-preview-body {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.dsh-memory-preview-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

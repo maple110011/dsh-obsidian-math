@@ -1,17 +1,24 @@
 /**
  * obsidian-notes — dedicated Obsidian note tools for the `obsidian` dsh agent
  * preset:
- *   - note_search  full-text / tag-filtered search across vault notes
- *   - note_create  create a new note; refuses to overwrite an existing one
- *   - note_links   backlink (wikilink) queries
+ *   - note_search    full-text / tag-filtered search across vault notes
+ *   - note_create    create a new note; refuses to overwrite an existing one
+ *   - note_links     backlink (wikilink) queries
+ *   - note_retrieve  memory-v2 two-stage strategy retrieval over cards that
+ *                    carry a "hook:" frontmatter block (ISM-style feature hook:
+ *                    operator hard filter + weighted soft scoring), with a
+ *                    full-text token-ranking fallback; records hits into the
+ *                    plugin-owned cache at .deepseek/cache/retrieval-stats.json
  *
  * Registered through `defineTool` from @deepseek-ai/dsh-tools, following the
- * same pattern as the dsh-obsidian-assistant reference plugin. Every file
- * touch goes through the harness `ctx.fs` service so the profile's
- * workspace-write sandbox and fail-closed approval stay authoritative; no raw
- * Node fs bypass exists here.
+ * same pattern as the dsh-obsidian-assistant reference plugin. Every touch of
+ * a USER NOTE goes through the harness `ctx.fs` service so the profile's
+ * workspace-write sandbox and fail-closed approval stay authoritative. The
+ * only raw Node fs usage below is the plugin-owned retrieval-stats cache
+ * under .deepseek/cache/ (the same convention as obsidian-memory.mjs).
  */
-import { isAbsolute, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const name = "obsidian-notes";
 export const inject = ["tools", "fs", "systemPrompt", "loader"];
@@ -164,6 +171,101 @@ function splitFrontmatter(raw) {
   return { frontmatter, body };
 }
 
+// ── memory v2: feature-hook parsing (informed by arXiv:2606.31191, ISM) ─────
+
+/**
+ * Parse a card's optional `hook:` frontmatter block into retrieval features.
+ * Block style only (flow-style `hook: { ... }` is ignored; the audit pass in
+ * obsidian-memory.mjs writes uses/last_used back in block style).
+ *
+ *   hook:
+ *     operator: number-theory
+ *     pattern: subsequence_argument
+ *     heuristics:
+ *       - decompose
+ *     quantity: sum-of-independent-rvs
+ *     techniques:
+ *       - borel-cantelli
+ *     applications: 证明 a.s. 收敛类问题
+ *     uses: 7
+ *     success_rate: 0.86
+ *     last_used: 2026-08-16
+ *     verified: user-confirmed
+ */
+export function parseHookFrontmatter(text) {
+  if (typeof text !== "string" || text === "") return null;
+  const lines = text.split(/\r?\n/);
+  const hook = {};
+  let inHook = false;
+  let lastListKey = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!inHook) {
+      if (/^hook:\s*$/.test(trimmed)) { inHook = true; lastListKey = null; }
+      continue;
+    }
+    if (line !== "" && !/^\s/.test(line)) break; // left the hook block
+    if (trimmed === "") continue;
+    const pair = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(trimmed);
+    if (pair !== null) {
+      const key = pair[1];
+      const value = pair[2].trim();
+      if (value === "") { hook[key] = []; lastListKey = key; }
+      else if (value.startsWith("[") && value.endsWith("]")) {
+        hook[key] = value.slice(1, -1).split(",").map((part) => stripQuotes(part.trim())).filter((part) => part !== "");
+        lastListKey = null;
+      } else { hook[key] = stripQuotes(value); lastListKey = null; }
+    } else if (trimmed.startsWith("- ") && lastListKey !== null) {
+      if (!Array.isArray(hook[lastListKey])) hook[lastListKey] = [];
+      hook[lastListKey].push(stripQuotes(trimmed.slice(2).trim()));
+    }
+  }
+  return Object.keys(hook).length === 0 ? null : hook;
+}
+
+function stripQuotes(value) {
+  return value.replace(/^['"]|['"]$/g, "");
+}
+
+// ── incremental note-text cache (memory v2 perf, D) ─────────────────────────
+// note_search / note_links previously read every .md on every call. This cache
+// reuses the raw text while a file's mtime+size stay unchanged: per call the
+// cost drops to a metadata stat plus reading only files that actually changed.
+const NOTE_CACHE_LIMIT = 5000;
+const noteReadCache = new Map(); // rootPath -> Map<relPath, {mtimeMs, size, raw}>
+
+export function cacheEntryFresh(entry, mtimeMs, size) {
+  return entry !== undefined && entry !== null && entry.mtimeMs === mtimeMs && entry.size === size;
+}
+
+async function readNoteTextCached(ctx, rootPath, note, signal) {
+  let cache = noteReadCache.get(rootPath);
+  if (cache === undefined) {
+    cache = new Map();
+    noteReadCache.set(rootPath, cache);
+  }
+  let info;
+  try {
+    info = await ctx.fs.stat(note.target, signal);
+  } catch {
+    return null;
+  }
+  if (info === undefined) return null;
+  const mtimeMs = typeof info.mtimeMs === "number" ? info.mtimeMs : (info.mtime instanceof Date ? info.mtime.getTime() : 0);
+  const size = typeof info.size === "number" ? info.size : -1;
+  const hit = cache.get(note.path);
+  if (cacheEntryFresh(hit, mtimeMs, size)) return hit.raw;
+  let raw;
+  try {
+    raw = await ctx.fs.readText(note.target, signal);
+  } catch {
+    return null;
+  }
+  cache.set(note.path, { mtimeMs, size, raw });
+  if (cache.size > NOTE_CACHE_LIMIT) noteReadCache.delete(rootPath); // rebuild lazily on a huge vault
+  return raw;
+}
+
 function cleanTagToken(token) {
   return token.trim().replace(/^['"]|['"]$/g, "").replace(/^#+/, "");
 }
@@ -276,6 +378,136 @@ function normalizeNoteRelPath(input) {
 
 const OVERWRITE_REFUSAL = (rel) => `note_create: note already exists (${rel}); refusing to overwrite. Read it and use edit/write only when the user explicitly asks to change the existing note.`;
 
+// ── memory v2: two-stage strategy retrieval (ISM scoring + Dual RAG query) ──
+
+const RETRIEVE_DEFAULT_MAX_RESULTS = 10;
+const RETRIEVE_HARD_MAX_RESULTS = 20;
+
+/** Known operator vocabulary (hard-filter key, stage 1). */
+const HOOK_OPERATORS = new Set([
+  "algebra", "number-theory", "geometry", "combinatorics", "probability",
+  "analysis", "statistics", "calculus", "linear-algebra", "topology", "logic"
+]);
+
+function normalizeOperator(raw) {
+  return String(raw ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+/** ASCII words plus CJK bigrams (with the full run as a fallback token). */
+export function tokenize(text) {
+  const tokens = [];
+  if (typeof text !== "string") return tokens;
+  const normalized = text.toLowerCase();
+  for (const token of normalized.match(/[a-z0-9][a-z0-9_-]*/g) ?? []) tokens.push(token);
+  for (const run of normalized.match(/[\u4e00-\u9fff]+/g) ?? []) {
+    if (run.length === 1) { tokens.push(run); continue; }
+    for (let i = 0; i < run.length - 1; i += 1) tokens.push(run.slice(i, i + 2));
+    tokens.push(run);
+  }
+  return tokens;
+}
+
+function tokenFrequencies(tokens) {
+  const freq = new Map();
+  for (const token of tokens) freq.set(token, (freq.get(token) ?? 0) + 1);
+  return freq;
+}
+
+/**
+ * IDF-weighted overlap coefficient in [0,1]: how much of the query's token
+ * mass is covered by the card, down-weighting tokens that appear everywhere
+ * (the dependency-free stand-in for ISM's embedding similarity term).
+ */
+export function weightedOverlap(queryTokens, cardTokens, docFreq) {
+  if (queryTokens.length === 0 || cardTokens.length === 0) return 0;
+  const qFreq = tokenFrequencies(queryTokens);
+  const cFreq = tokenFrequencies(cardTokens);
+  const docCount = Math.max(1, docFreq.docCount);
+  let matched = 0;
+  let total = 0;
+  for (const [token, qCount] of qFreq) {
+    const df = docFreq.map.get(token) ?? 0;
+    const idf = Math.log(1 + docCount / Math.max(1, df + 1));
+    total += qCount * idf;
+    matched += Math.min(qCount, cFreq.get(token) ?? 0) * idf;
+  }
+  return total === 0 ? 0 : matched / total;
+}
+
+export function computeDocFreq(tokenLists) {
+  const map = new Map();
+  for (const tokens of tokenLists) {
+    for (const token of new Set(tokens)) map.set(token, (map.get(token) ?? 0) + 1);
+  }
+  return { docCount: tokenLists.length, map };
+}
+
+function hookList(hook, key) {
+  const value = hook?.[key];
+  if (Array.isArray(value)) return value.join(" ");
+  return typeof value === "string" ? value : "";
+}
+
+function hookNumber(hook, key, fallback) {
+  const value = Number(hook?.[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+/** Retrieval text for one card: title + hook features + a bounded body head. */
+function cardRetrievalText(title, hook, body) {
+  const bodyHead = typeof body === "string" ? body.slice(0, 2000) : "";
+  return [title, hookList(hook, "pattern"), hookList(hook, "techniques"),
+    hookList(hook, "applications"), hookList(hook, "heuristics"),
+    hookList(hook, "quantity"), bodyHead].join(" ");
+}
+
+function localDateString() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+// Serialize stats writes: note_retrieve declares itself concurrency-safe,
+// so two concurrent hits could otherwise interleave read-modify-write and
+// lose a count. A module-level promise queue makes the update atomic.
+let statsWriteQueue = Promise.resolve();
+
+function recordRetrievalStatsNow(vaultPath, cardPaths) {
+  const statsPath = join(vaultPath, ".deepseek", "cache", "retrieval-stats.json");
+  let stats = {};
+  try {
+    if (existsSync(statsPath)) stats = JSON.parse(readFileSync(statsPath, "utf8")) ?? {};
+  } catch {
+    stats = {};
+  }
+  const today = localDateString();
+  for (const rel of cardPaths) {
+    const entry = stats[rel] ?? {};
+    entry.uses = (Number.isFinite(entry.uses) ? entry.uses : 0) + 1;
+    entry.last_used = today;
+    stats[rel] = entry;
+  }
+  try {
+    mkdirSync(dirname(statsPath), { recursive: true });
+    writeFileSync(statsPath, JSON.stringify(stats, null, 2), "utf8");
+  } catch {
+    // Stats are advisory; ignore write failures.
+  }
+}
+
+/**
+ * Best-effort hit accounting into the plugin-owned stats cache
+ * (.deepseek/cache/retrieval-stats.json). The audit pass in
+ * obsidian-memory.mjs merges this into the cards' hook.uses / last_used and
+ * then zeroes the entries (no double counting). Never throws: a stats write
+ * failure must not fail the retrieval itself.
+ */
+function recordRetrievalStats(vaultPath, cardPaths) {
+  if (typeof vaultPath !== "string" || vaultPath === "" || cardPaths.length === 0) return;
+  statsWriteQueue = statsWriteQueue
+    .then(() => recordRetrievalStatsNow(vaultPath, cardPaths))
+    .catch(() => {});
+}
+
 // ── cordis plugin ────────────────────────────────────────────────────────────
 
 export async function apply(ctx, config) {
@@ -287,7 +519,8 @@ export async function apply(ctx, config) {
     order: 103,
     text:
       "Use the dedicated Obsidian note tools for note-level operations: note_search (text and/or tag filter, better than raw grep for \"find my notes\"), " +
-      "note_create (new note only — it refuses to overwrite an existing note), and note_links (which notes link to a note). " +
+      "note_create (new note only — it refuses to overwrite an existing note), note_links (which notes link to a note), and " +
+      "note_retrieve (memory-v2 strategy retrieval: hard operator filter + weighted scoring over cards with a hook: frontmatter block — prefer it for proving/constructing/solving tasks, after distilling the problem into a challenge description plus candidate technique keywords). " +
       "For ordinary file read/write/edit/glob/grep inside the vault keep using the generic file tools."
   });
 
@@ -330,7 +563,7 @@ export async function apply(ctx, config) {
     },
     isConcurrencySafe: () => true,
     async execute(args, exec) {
-      const { rootTarget } = await resolveVault(ctx, exec, cfg);
+      const { rootPath, rootTarget } = await resolveVault(ctx, exec, cfg);
       const query = typeof args.query === "string" ? args.query.trim().toLowerCase() : "";
       const tag = normalizeTagFilter(args.tag);
       if (query === "" && tag === "") {
@@ -346,12 +579,8 @@ export async function apply(ctx, config) {
       const matches = [];
       for (const note of notes) {
         if (matches.length >= limit) break;
-        let raw;
-        try {
-          raw = await ctx.fs.readText(note.target, exec?.signal);
-        } catch {
-          continue; // unreadable note is skipped, not a search failure
-        }
+        const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
+        if (raw === null) continue; // unreadable note is skipped, not a search failure
         const { frontmatter, body } = splitFrontmatter(raw);
         const tags = noteTags({ frontmatter, body });
         if (tag !== "" && !matchesTagFilter(tags, tag)) continue;
@@ -465,7 +694,7 @@ export async function apply(ctx, config) {
     },
     isConcurrencySafe: () => true,
     async execute(args, exec) {
-      const { rootTarget } = await resolveVault(ctx, exec, cfg);
+      const { rootPath, rootTarget } = await resolveVault(ctx, exec, cfg);
       const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns);
 
       const backlinks = new Map();
@@ -476,12 +705,8 @@ export async function apply(ctx, config) {
         notePaths.set(note.path.toLowerCase().replace(/\.md$/i, ""), note.name);
       }
       for (const note of notes) {
-        let raw;
-        try {
-          raw = await ctx.fs.readText(note.target, exec?.signal);
-        } catch {
-          continue;
-        }
+        const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
+        if (raw === null) continue;
         for (const target of extractWikiLinks(raw)) {
           const sources = backlinks.get(target) ?? [];
           if (!sources.some((source) => source.toLowerCase() === note.name.toLowerCase())) sources.push(note.name);
@@ -512,5 +737,171 @@ export async function apply(ctx, config) {
       return { queried: requested, exists: false, backlinks: { [requested]: [] }, total: 0 };
     },
     presentCall: (args) => ({ card: "generic", title: "Query backlinks", kind: "search", rawInput: args.note ?? "(all)" })
+  }));
+
+  // ── note_retrieve ──────────────────────────────────────────────────────
+  ctx.tools.register(defineTool({
+    name: "note_retrieve",
+    description: `Memory-v2 two-stage strategy retrieval (informed by ISM, arXiv:2606.31191, and Dual RAG, EMNLP 2025 Findings 1162). Scans vault notes that carry a "hook:" frontmatter block (records/templates memory cards with operator/pattern/heuristics/techniques fields). Stage 1: hard filter by hook.operator when the optional operator argument is given. Stage 2: weighted soft scoring = 0.55 token-IDF similarity + 0.15 structural pattern + 0.15 heuristics + 0.05 quantity + 0.10 prior (success_rate and uses). Returns top matches with a score breakdown and verification level. Use it for proving/constructing/solving tasks after 问题蒸馏 (distill the problem into a challenge description plus candidate technique keywords) — then read the matched card and verify against its source before using it. Falls back to full-text token ranking over all notes when the vault has no hook cards. Recording a hit updates the card's usage statistics in the plugin-owned cache (the audit pass syncs them back into hook.uses).`,
+    parameters: {
+      query: { type: "string", required: true, description: "Distilled problem description: the reasoning challenge plus candidate technique keywords, e.g. \"证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli\"." },
+      operator: { type: "string", description: `Optional stage-1 hard filter, one of ${[...HOOK_OPERATORS].join("/")}. Only cards with a matching hook.operator are scored; when no card matches, all cards are scored and the response notes the fallback.` },
+      maxResults: { type: "integer", description: `Optional cap on matches; defaults to ${RETRIEVE_DEFAULT_MAX_RESULTS}, maximum ${RETRIEVE_HARD_MAX_RESULTS}.` }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          mode: { type: "string", required: true, enum: ["hook", "fallback"] },
+          operator: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
+          matches: {
+            type: "array",
+            required: true,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                path: { type: "string", required: true },
+                title: { type: "string", required: true },
+                score: { type: "number", required: true },
+                breakdown: { type: "json", required: true },
+                operator: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
+                pattern: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
+                techniques: { type: "array", required: true, items: { type: "string" } },
+                verified: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
+                uses: { type: "integer", required: true },
+                successRate: { oneOf: [{ type: "number" }, { type: "null" }], required: true }
+              }
+            }
+          }
+        }
+      },
+      render: (_args, value) => {
+        if (value.matches.length === 0) return [{ type: "text", text: "No matching memory cards found." }];
+        const lines = value.matches.map((match) => {
+          const extra = [
+            match.operator === null ? "" : `算子:${match.operator}`,
+            match.pattern === null ? "" : `模式:${match.pattern}`,
+            match.techniques.length === 0 ? "" : `技巧:[${match.techniques.join(", ")}]`,
+            match.verified === null ? "" : `验证:${match.verified}`,
+            `uses:${match.uses}`,
+            match.successRate === null ? "" : `成功率:${match.successRate}`
+          ].filter((part) => part !== "").join(" · ");
+          return `- ${match.title} (${match.path}) score ${match.score.toFixed(3)}
+  ${extra}`;
+        });
+        return [{ type: "text", text: `mode ${value.mode}${value.operator === null ? "" : ` · 算子过滤 ${value.operator}`} · ${value.matches.length} 条命中:\n${lines.join("\n")}` }];
+      }
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const { rootPath, rootTarget } = await resolveVault(ctx, exec, cfg);
+      const query = String(args.query ?? "").trim();
+      if (query === "") throw new Error("note_retrieve: query is required");
+      const operator = args.operator === undefined || args.operator === null || String(args.operator).trim() === ""
+        ? null
+        : normalizeOperator(args.operator);
+      const requested = Number(args.maxResults ?? RETRIEVE_DEFAULT_MAX_RESULTS);
+      if (!Number.isInteger(requested) || requested < 1) {
+        throw new Error(`note_retrieve: maxResults must be a positive integer`);
+      }
+      const limit = Math.min(requested, RETRIEVE_HARD_MAX_RESULTS);
+
+      const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns);
+      const queryTokens = tokenize(query);
+      const cards = [];
+      const fallbackDocs = [];
+      for (const note of notes) {
+        if (note.path.startsWith(".deepseek/cache")) continue; // machine cache, not memory
+        const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
+        if (raw === null) continue;
+        const { frontmatter, body } = splitFrontmatter(raw);
+        const hook = frontmatter === null ? null : parseHookFrontmatter(frontmatter);
+        if (hook === null) {
+          fallbackDocs.push({ note, title: note.name, body });
+        } else {
+          cards.push({ note, title: note.name, body, hook });
+        }
+      }
+
+      if (cards.length > 0) {
+        const docFreq = computeDocFreq(cards.map((card) => tokenize(cardRetrievalText(card.title, card.hook, card.body))));
+        const scored = cards.map((card) => {
+          const hook = card.hook;
+          const lexical = weightedOverlap(queryTokens, tokenize(cardRetrievalText(card.title, hook, card.body)), docFreq);
+          const structure = weightedOverlap(queryTokens, tokenize(hookList(hook, "pattern")), docFreq);
+          const heuristics = weightedOverlap(queryTokens, tokenize(hookList(hook, "heuristics")), docFreq);
+          const quantity = weightedOverlap(queryTokens, tokenize(hookList(hook, "quantity")), docFreq);
+          const successRate = hookNumber(hook, "success_rate", 0.5);
+          const uses = Math.max(0, Math.trunc(hookNumber(hook, "uses", 0)));
+          const prior = 0.5 * successRate + 0.5 * Math.min(uses / 10, 1);
+          const score = 0.55 * lexical + 0.15 * structure + 0.15 * heuristics + 0.05 * quantity + 0.10 * prior;
+          return {
+            card,
+            score,
+            breakdown: { lexical, structure, heuristics, quantity, prior },
+            operatorMatch: operator === null || normalizeOperator(hook.operator) === operator
+          };
+        });
+
+        let pool = scored;
+        let operatorFallback = false;
+        if (operator !== null && scored.some((entry) => entry.operatorMatch)) {
+          pool = scored.filter((entry) => entry.operatorMatch);
+        } else if (operator !== null) {
+          operatorFallback = true; // no card carries this operator; score everyone
+        }
+        pool.sort((a, b) => b.score - a.score);
+        const top = pool.slice(0, limit);
+
+        recordRetrievalStats(rootPath, top.map((entry) => entry.card.note.path));
+
+        return {
+          mode: operatorFallback ? "fallback" : "hook",
+          operator,
+          matches: top.map(({ card, score, breakdown }) => ({
+            path: card.note.path,
+            title: card.title,
+            score: Number(score.toFixed(4)),
+            breakdown,
+            operator: typeof card.hook.operator === "string" ? card.hook.operator : null,
+            pattern: typeof card.hook.pattern === "string" ? card.hook.pattern : null,
+            techniques: Array.isArray(card.hook.techniques)
+              ? card.hook.techniques.filter((item) => typeof item === "string")
+              : [],
+            verified: typeof card.hook.verified === "string" ? card.hook.verified : null,
+            uses: Math.max(0, Math.trunc(hookNumber(card.hook, "uses", 0))),
+            successRate: Number.isFinite(Number(card.hook?.success_rate)) ? Number(card.hook.success_rate) : null
+          }))
+        };
+      }
+
+      // Fallback: no hook cards in this vault — rank notes by token overlap.
+      const docFreq = computeDocFreq(fallbackDocs.map((doc) => tokenize(`${doc.title} ${doc.body.slice(0, 4000)}`)));
+      const scored = fallbackDocs.map((doc) => {
+        const lexical = weightedOverlap(queryTokens, tokenize(`${doc.title} ${doc.body.slice(0, 4000)}`), docFreq);
+        return { doc, score: lexical };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      const top = scored.slice(0, limit);
+      return {
+        mode: "fallback",
+        operator,
+        matches: top.map(({ doc, score }) => ({
+          path: doc.note.path,
+          title: doc.title,
+          score: Number(score.toFixed(4)),
+          breakdown: { lexical: Number(score.toFixed(4)), structure: 0, heuristics: 0, quantity: 0, prior: 0 },
+          operator: null,
+          pattern: null,
+          techniques: [],
+          verified: null,
+          uses: 0,
+          successRate: null
+        }))
+      };
+    },
+    presentCall: (args) => ({ card: "generic", title: "Retrieve memory cards", kind: "search", rawInput: args.query })
   }));
 }

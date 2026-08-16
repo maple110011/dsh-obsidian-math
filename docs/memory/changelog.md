@@ -1,0 +1,108 @@
+# 记忆系统变更日志
+
+> 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
+
+## 2026-08 · A→F 全面修复轮（发布前最后一批）
+
+- **A（必修 bug）**：`hook.uses` 双计（stats 合并后清零）；AGENTS.md weak 规则与 hook 纪律矛盾（success_rate 归插件）；主视图 activateView 补 null-leaf 兜底；/feedback 加 CSRF token（`DSH_OBSIDIAN_FEEDBACK_TOKEN`）；debug.log 1MB 轮转；stats 写入串行队列；安装器漂移检测（11 对文件内容比对）。
+- **B（检索式注入落地）**：静态预算瘦身（topics 1800/records 800/templates 600/episodes 1200/inbox 1200 字符）+ 每轮按最近用户消息对卡片/备忘录/主题/事件做 IDF 加权召回 top-k（默认 6 条/2200 字符，mtime 指纹缓存）；`latestUserText` 从 `agent.session.log` 取最后一条真实用户消息。
+- **C（dialogue 修复）**：只保留 cwd 在本 vault 内的会话；问答配对改为取轮次**最后一条** assistant 回复（`pairMessages` 可测）。
+- **E（相关性提醒）**：提醒候选 = 陈旧 **或** relevance ≥ 0.15，排序 0.7×相关性 + 0.3×新鲜度。
+- **D（增量缓存）**：note_search/note_links/note_retrieve 用 mtime+size 校验的原文缓存（`readNoteTextCached`），避免每次全库重读。
+- **F（加固）**：皮肤 web profile 缺失时自动往 --patch overlay 追加禁用块；`cacheEntryFresh` 等纯函数进回归（**26/26 全绿**）。
+- **交接**：新增 [handoff.md](handoff.md)。
+
+## 2026-08 · 0.4.0 部署与调试收尾（本机 Obsidian 实测）
+
+### 部署过程中的真实坑（全部已修复并留档）
+
+1. **cpSync 原生崩溃**：本机 Node 24.14.1 上 `fs.cpSync`（递归目录拷贝）触发 0xC0000409（栈溢出），连 1 文件小目录都必崩，且会把托管进程一起带走（此前 dsh web 进程被杀的元凶）。规避：部署脚本改用「手动遍历 + copyFileSync」，禁止 cpSync。
+2. **皮肤管理器全局 patch**：`$DSH_HOME/cordis.patch.yml` 把当前皮肤 insert 进所有 profile，obsidian profile 无皮肤包 → 启动崩。修复：插件启动时把 web profile 的 `@linxin666/*` 全部 junction 镜像进 obsidian profile（`syncGlobalPackageLinks`），并按用户偏好让皮肤直接生效——任何现有/未来皮肤都自动适配，零清单维护。
+3. **readdirSync 未导入**（历史 bug）：`archiveOldEpisodes` 一直静默失败，>90 天事件归档从未生效；补导入修复。
+4. **视图方法名冲突**：记忆面板的「打开笔记」方法曾命名 `open`，与 Obsidian 1.13.7 视图生命周期的 `view.open(containerEl)` 冲突——面板空白、onOpen 不执行、容器对象被送进 openLinkText 导致 `e.toLowerCase is not a function` toast（那 toast 还是自己 catch 弹的）。修复：改名 `openNote` + 类型守卫。教训：ItemView 子类不得定义 `open/close/load` 等方法名。
+5. **隐藏目录进不了 Obsidian 索引**：vault 排除所有点号开头的路径段（已核对 1.13.7 源码），`.deepseek` 文件无法用 openLinkText/TFile 打开，点击会变成“创建文件”→ `Folder already exists`。方案：面板内预览 Modal（node fs 直读 + 复制/资源管理器/默认应用打开）。
+6. **Obsidian 1.13.7 Notice 不走 setMessage**：构造函数直接 `createDiv({text})`，给 setMessage 打补丁无效——调试期改用 DOM MutationObserver + 文件日志（`debug.log`，维护者直读）才抓到第 4 条的真凶。
+
+### 版本策略（用户约定）
+
+- 本地调试用 0.4.1~0.4.6 小版本滚动；**对外发布（GitHub）统一为 0.4.0**，仓库 manifest/package 已复位为 0.4.0。
+
+### 面板入口（最终形态）
+
+- 设置页「打开记忆面板」按钮 + 命令面板命令；视图标签 brain 图标；无独立 ribbon 按钮；
+- 点击卡片 = 预览弹窗（隐藏目录限制下的最优解）；✅/❌/过期/归档按钮 = 与回复内反馈链接同一套确定性写回。
+
+## 2026-08 · 部署事故：皮肤管理器全局 patch 导致 obsidian profile 启动失败
+
+### 现象与根因
+
+- obsidian profile 启动报 `Cannot find package '@linxin666/dsh-client-ui-skin-blue-fantasy'`；
+- 根因：web 皮肤管理器在 `$DSH_HOME/cordis.patch.yml`（全局层）里 insert 当前皮肤，**作用于所有 profile**，且该层应用在 profile 自己的 `cordis.patch.yml` 之后——所以在 `cordis.patch.yml` 写 disabled 无效（补丁匹配不到、warn-and-skip）；
+- 唯一能盖过全局层的层是启动命令的 `--patch` 覆盖层（`profiles/obsidian/obsidian.patch.yml`，最后应用）；而该文件被 Obsidian 插件每次加载时强制刷新（bootstrap overwrite=true），机器本地手工加的行会被冲掉。
+
+### 修复（最终版：皮肤适配而非禁用）
+
+- **持久机制**：插件启动时把 web profile 的 `node_modules/@linxin666/*` 全部包用 junction 镜像到 obsidian profile（`syncGlobalPackageLinks`），任何当前/未来皮肤都能解析，该故障模式不再可能复发；
+- **按用户偏好**：`obsidian.patch.yml` 不再禁用皮肤——obsidian 内嵌 web UI **直接应用**主 web 界面所选的皮肤，无需维护任何 id 清单；
+- 验证：皮肤实际加载的备用端口启动测试 15 秒存活；`npm test` 全绿。
+
+## 2026-08 · v2 控制面阶段 1b：Obsidian 记忆面板
+
+### 改动
+
+- **MemoryView ItemView**（`obsidian/main.template.js`，view 类型 `dsh-memory-panel`）：五层记忆浏览（画像存在性、records、templates、memos、episodes 最近 30 条）+ 体检报告展示；每张卡显示类型/算子/状态/验证徽标（✅/⚖️/❓）/uses/成功率/last_used/更新天数；搜索框按标题/算子/类型/主题过滤；逐卡操作按钮 ✅确认、❌错误、过期（superseded）、归档（移入 archive/records/，永不硬删），全部复用 1a 的确定性 frontmatter 手术；顶部「归档 >90 天事件」按钮。
+- **入口**（按用户偏好调整）：设置页按钮「打开记忆面板」+ 命令「打开 DSH 记忆面板」；视图标签用 brain 图标，不占用独立 ribbon 按钮。
+- **修复既有隐藏 bug**：`readdirSync` 未从 `node:fs` 导入，导致 `archiveOldEpisodes` 的目录扫描抛 ReferenceError 被 try/catch 吞掉——**事件归档（>90 天）实际上从未生效过**，一直静默返回 moved: 0。本次补上导入，归档与记忆面板扫描同时恢复。
+- **测试**：stub-Obsidian 集成验证新增 13 项断言（frontmatter/hook 解析、title 提取、collectMemoryState 五层收集与过滤、面板内 wrong 反馈改写），全部通过；`npm test` 全绿。
+
+### 设计要点
+
+- 面板只做**读 + 确定性写**：读走 `collectMemoryState`（node fs 直读 vault），写走 1a 的 `applyFeedback`/归档，不经模型、不经 dsh；
+- 面板的 ✅/❌ 与回复内的反馈链接是**同一套函数**，两个入口行为一致；
+- 体检报告（memory-audit.json）直接在面板可见——“记忆哪里需要打理”从此有可视入口。
+
+## 2026-08 · v2 控制面阶段 1a：验证徽标 + 反馈链接
+
+### 背景
+
+control-panel.md 定稿后评估了三种注入方案（dsh 客户端自挂列 / Obsidian 侧视图 + loopback 反馈 / 混合），选定混合方案 C：先用 loopback 反馈链接拿到纠错闭环，记忆视图留到阶段 1b。
+
+### 改动
+
+- **`/feedback` 端点**（`obsidian/main.template.js` LinkServer）：`confirm`（verified→user-confirmed、success_rate 提到 ≥0.9）/ `wrong`（success_rate 减半，≥0.05）/ `stale`（status→superseded）/ `forget`（移入 `.deepseek/archive/records/`，永不硬删）；确定性 frontmatter 行手术（setHookField/setTopField），安全约束：仅 vault 相对路径、必须在 `.deepseek/` 下、解析后必须落在 vault 内（win32 大小写不敏感）、action 白名单、只绑 127.0.0.1。
+- **徽标与反馈链接渲染规则**：`obsidian-memory.mjs` 的链接指令新增验证徽标（✅/⚖️/❓）与末尾反馈链接模板；AGENTS.md §8 同步纪律（不要自行改 verified/success_rate/status，不为凑反馈引用未用到的卡）。
+- **测试**：对构建产物 main.js 做 stub-Obsidian 集成验证（confirm/wrong/stale 改写、路径包含判断、归档移动），全部通过。
+
+### 设计要点
+
+- 反馈是**验证等级升级的唯一确定性通道**（模型无权自升 verified）；
+- `wrong` 直接喂给次日体检的 weak 检测（Demote 信号源），形成闭环；
+- 阶段 1b（Obsidian ItemView 记忆视图）与阶段 2（dsh 客户端列，待官方右侧槽位）见 control-panel.md。
+
+## 2026-08 · v2 第一批落地：hook 检索 + 记忆体检
+
+### 背景
+
+两轮系统评估（见 assessment.md）确认三大瓶颈：全量注入、模型自律写回、零透明控制面。结合 Dual RAG（EMNLP 2025 Findings 1162）与 ISM（arXiv:2606.31191）两篇论文，把 P0 改造从方向升级为规格。
+
+### 改动
+
+- **新增 `note_retrieve` 工具**（`dsh/preset/obsidian-notes.mjs`）：解析记忆卡 `hook:` frontmatter，执行 ISM 式两级检索——算子硬过滤 + 加权软打分（lexical 0.55 / structure 0.15 / heuristics 0.15 / quantity 0.05 / prior 0.10），prior 项含 success_rate 与 uses；无 hook 卡片时退化为全库 token 加权匹配。
+- **hook 字段正反馈**：note_retrieve 命中时插件直接更新该卡 `hook.uses` / `hook.last_used`（确定性写回，不走模型）。
+- **新增记忆体检（audit pass）**（`dsh/preset/obsidian-memory.mjs`）：确定性扫描 records/templates/inbox 的 frontmatter 与 hook，产出 `cache/memory-audit.json`，每 vault 每天最多重扫一次；报告随系统提示注入（≤1200 字符），列出 unused / weak / duplicate candidates / strong / unverified 清单。
+- **协议同步**：AGENTS.md 新增 note_retrieve 纪律、hook 字段维护规则、体检报告行动规则（merge/reinforce/demote 的模型执行版）；records/templates README 模板加 hook 块与 verified 等级说明。
+- **零 token 回归检查**：新增 `scripts/test-memory.mjs`（17 项断言：hook 解析 / 分词 / 打分排序 / 体检五类分类 / hook 统计回写语义），接入 `npm test`；`obsidian-memory.mjs` 补入 `--check` 链。
+- **文档基建**：新建 `docs/memory/` 知识库（README / design / assessment / v2-proposal / references / changelog）。
+
+### 未做（明确留待后续）
+
+- embedding 后端（当前 lexical 加权；接口已预留替换点）；
+- 记忆控制面板与反馈按钮（依赖 Web GUI 面板能力）；
+- 记忆 benchmark：**明确不做 token 消耗型基准**（无现成对口基准、烧 token、标注成本高），改为零 token 回归检查 + 被动信号 + 未来一次性手动探针（决策见 v2-proposal §6）；
+- dialogue index 的 vault 过滤与“最后一条 assistant 回复”配对质量改进。
+
+### 影响与兼容性
+
+- 对既有安装：obsidian-notes.mjs / obsidian-memory.mjs 随升级刷新（agent.cordis.yml 保留用户编辑的机制不变），工具自动出现；
+- 对既有记忆数据：hook 块为可选字段，旧记录卡无 hook 时 note_retrieve 走 fallback，体检报告给出“建议补 hook”提示；
+- 安全边界不变：新工具同样走 ctx.fs 沙箱，插件唯一新增写文件是 `cache/memory-audit.json` 与 hook 字段的 uses 更新。

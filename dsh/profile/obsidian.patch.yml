@@ -11,3 +11,10 @@
       name: ./obsidian-workspace.mjs
       config:
         vaultPath: !!js process.env.DSH_OBSIDIAN_VAULT
+
+# The skin manager writes a global patch ($DSH_HOME/cordis.patch.yml) that
+# inserts the ACTIVE web skin into EVERY profile. The obsidian profile
+# intentionally lets it apply: the plugin mirrors every @linxin666 package
+# from the web profile's node_modules via junctions (syncGlobalPackageLinks),
+# so the skin package always resolves and the obsidian web UI follows the
+# same skin the user picked for the main web profile. No id lists to keep.

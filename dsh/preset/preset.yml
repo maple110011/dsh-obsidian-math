@@ -1,3 +1,3 @@
 name: Obsidian 笔记助手
-description: 面向数学类笔记的最小 agent（试做型 0.3.x）：文件读写与搜索、专用笔记工具（note_search tag 过滤 / note_create 拒绝覆盖 / note_links 反链查询）、跨会话分层记忆、笔记工作流、关键想法捕获与备忘录提醒。记忆架构尚未经长期测试，会持续演进。
+description: 面向数学类笔记的最小 agent（试做型 0.4.x）：文件读写与搜索、专用笔记工具（note_search tag 过滤 / note_create 拒绝覆盖 / note_links 反链查询 / note_retrieve 策略两级检索）、跨会话分层记忆、每日记忆体检（ISM 式确定性维护）、笔记工作流、关键想法捕获与备忘录提醒。记忆架构尚未经长期测试，会持续演进。
 order: 1

@@ -41,6 +41,27 @@ for (const path of checks) {
 }
 const cordis = readFileSync(join(home, 'profiles', 'obsidian', 'cordis.patch.yml'), 'utf8');
 console.log('patch portable:', cordis.includes('process.env.DSH_OBSIDIAN_VAULT') && cordis.includes('process.cwd()'));
+// Drift detection: the always-refresh files written on the first run must be
+// byte-identical to the repo sources — a stale embedded copy in install.mjs
+// or main.js would otherwise ship silently.
+const driftPairs = [
+  [join(home, '.agent-presets', 'obsidian', 'obsidian-memory.mjs'), join(repo, 'dsh', 'preset', 'obsidian-memory.mjs')],
+  [join(home, '.agent-presets', 'obsidian', 'obsidian-notes.mjs'), join(repo, 'dsh', 'preset', 'obsidian-notes.mjs')],
+  [join(home, '.agent-presets', 'obsidian', 'preset.yml'), join(repo, 'dsh', 'preset', 'preset.yml')],
+  [join(home, '.agent-presets', 'obsidian', 'agent.cordis.yml'), join(repo, 'dsh', 'preset', 'agent.cordis.yml')],
+  [join(home, 'profiles', 'obsidian', 'package.json'), join(repo, 'dsh', 'profile', 'package.json')],
+  [join(home, 'profiles', 'obsidian', 'cordis.yml'), join(repo, 'dsh', 'profile', 'cordis.yml')],
+  [join(home, 'profiles', 'obsidian', 'cordis.patch.yml'), join(repo, 'dsh', 'profile', 'cordis.patch.yml')],
+  [join(home, 'profiles', 'obsidian', 'pnpm-workspace.yaml'), join(repo, 'dsh', 'profile', 'pnpm-workspace.yaml')],
+  [join(home, 'profiles', 'obsidian', 'obsidian-workspace.mjs'), join(repo, 'dsh', 'profile', 'obsidian-workspace.mjs')],
+  [join(home, 'profiles', 'obsidian', 'obsidian.patch.yml'), join(repo, 'dsh', 'profile', 'obsidian.patch.yml')],
+  [join(vault, 'AGENTS.md'), join(repo, 'dsh', 'templates', 'AGENTS.md')]
+];
+for (const [installed, source] of driftPairs) {
+  const same = readFileSync(installed, 'utf8') === readFileSync(source, 'utf8');
+  console.log(same ? '[ok]' : '[DRIFT]', installed, 'vs', source);
+  if (!same) failed += 1;
+}
 console.log('idempotent second run:');
 const again = spawnSync(process.execPath, [join(repo, 'dsh', 'install.mjs'), 'install', '--dsh-home', home, '--vault', vault], { stdio: ['ignore', 'inherit', 'inherit'] });
 console.log('second run exit:', again.status);

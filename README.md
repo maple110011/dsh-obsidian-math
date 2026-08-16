@@ -42,11 +42,15 @@ Note: the dsh side is **not** a Cordis bundle — it is an **agent preset + prof
 ## Scope & limitations
 
 - **Math-focused by design.** The memory layers, typed records, review workflow, and idea-memo reminders are tuned for math-adjacent knowledge (mathematics and statistics: concepts, propositions, proofs, methods). Different knowledge domains — codebases, law, medicine, engineering workflows — typically need different memory granularity and retrieval protocols; do not assume this design transfers unchanged.
-- **Prototype status (0.3.x).** The memory architecture is based on a small set of papers the author personally found relevant, has **not** been through long-term usage testing or systematic benchmark evaluation, and lacks long-term field experience. Layer boundaries, record types, and reminder policies are expected to evolve; a more complete agent-native memory architecture remains future work.
+- **Prototype status (0.4.x).** The memory architecture is based on a small set of papers the author personally found relevant, has **not** been through long-term usage testing or systematic benchmark evaluation, and lacks long-term field experience. Layer boundaries, record types, and reminder policies are expected to evolve; a more complete agent-native memory architecture remains future work.
 
 ## Highlights
 
-- **Minimal agent surface**: `read`, `write`, `edit`, `glob`, `grep`, `read_image`, `ask_user_question`, plus dedicated note tools `note_search` (tag filtering), `note_create` (overwrite protection), `note_links` (backlink queries). No shell, no web tools, no subagents.
+- **Minimal agent surface**: `read`, `write`, `edit`, `glob`, `grep`, `read_image`, `ask_user_question`, plus dedicated note tools `note_search` (tag filtering), `note_create` (overwrite protection), `note_links` (backlink queries), `note_retrieve` (memory-v2 strategy retrieval). No shell, no web tools, no subagents.
+- **Strategy retrieval (memory v2)**: `note_retrieve` performs two-stage retrieval over memory cards that carry a `hook:` frontmatter block — operator hard filter, then weighted scoring (token similarity / structural pattern / heuristics / quantity / success-rate prior), informed by [arXiv:2606.31191](https://arxiv.org/abs/2606.31191) (ISM) and [EMNLP 2025 Findings 1162](https://aclanthology.org/2025.findings-emnlp.1162/) (Dual RAG). Falls back to full-text token ranking when the vault has no hook cards.
+- **Deterministic memory health check**: a daily audit scans the cards' frontmatter and hook fields, classifies them (strong / weak / unused / duplicate candidates / unverified), syncs `note_retrieve` hit statistics back into `hook.uses` / `hook.last_used`, and injects a bounded audit section into every system prompt. The model then acts on the audit per AGENTS.md — merges are superseded, never deleted.
+- **Memory control surface**: verification badges (✅/⚖️/❓) and `[✅ 这条对] [❌ 这条错]` feedback links in agent replies (loopback `/feedback` endpoint with vault-containment), plus a dedicated **DSH 记忆面板** Obsidian view — browse all five memory layers with hook stats, search, and one-click confirm / wrong / supersede / archive per card (archive never hard-deletes).
+- **Memory system knowledge base**: the design, assessments, v2 proposal, and paper notes live under `docs/memory/` and are maintained alongside the code.
 - **Layered long-term memory** (references [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) and [arXiv:2607.05794](https://arxiv.org/abs/2607.05794)):
   - `profile.md` — semantic layer: stable preferences, notation, standing authorizations;
   - `topics/` — navigation layer: topic index and per-topic details;
@@ -95,6 +99,7 @@ That's it — no cmd window, no manual profile editing.
 | Start service automatically | on by default |
 | Initialize configuration automatically | on by default (first run only) |
 | Show ribbon icon | one-click sidebar button |
+| Memory panel | opened from the plugin settings page («打开记忆面板») or the command palette; no extra ribbon icon |
 | Keep service alive when Obsidian closes | off by default |
 
 ## Install B — dsh plugin via npm (optional; only if you skip the Obsidian plugin)
@@ -144,18 +149,21 @@ vault/
     memory/episodes/YYYY-MM-DD-*.md  raw event cards (append-only)
     inbox/index.md                memo index grouped by status
     inbox/<slug>.md               idea memos (inbox → polishing → done)
-    cache/                        machine-generated dialogue index (do not edit)
+    cache/                        machine-generated dialogue index, memory audit, retrieval stats (do not edit)
 ```
 
 ## Development
 
 ```bash
-npm test                       # syntax checks
+npm test                       # syntax checks + memory regression checks + installer e2e
 node scripts/build-obsidian.mjs  # regenerate main.js from obsidian/main.template.js + dsh/ files
+node scripts/test-memory.mjs     # zero-token memory v2 regression checks (synthetic vault)
 node scripts/test-installer.mjs  # end-to-end installer test against temp dirs
 ```
 
 `main.js` is generated — edit `obsidian/main.template.js` and the shared `dsh/` files, then rebuild.
+
+The memory system has its own knowledge base under [`docs/memory/`](docs/memory/): current design, assessment history, the memory-v2 proposal, and paper notes. Memory/retrieval changes are documented there together with the code.
 
 ## Privacy & safety
 

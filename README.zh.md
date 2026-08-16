@@ -42,11 +42,15 @@
 ## 适用范围与局限
 
 - **面向数学类知识设计**：记忆分层、类型化记录、审阅工作流与想法备忘录提醒都是围绕数学相关领域（数学、统计学：概念-命题-证明-方法）调校的。不同领域的知识（代码库、法律、医学、工程流程等）通常需要不同的记忆粒度与检索协议，不要默认这套设计可以原样迁移。
-- **试做型（0.3.x）**：当前记忆架构基于作者个人选取的若干相关文献，**尚未**经过长期使用测试，也没有系统的基准评测，且缺少长期落地实践经验；分层边界、记录类型、提醒策略都可能继续演进。更完善的 agent-native 记忆架构仍是后续研究课题。
+- **试做型（0.4.x）**：当前记忆架构基于作者个人选取的若干相关文献，**尚未**经过长期使用测试，也没有系统的基准评测，且缺少长期落地实践经验；分层边界、记录类型、提醒策略都可能继续演进。更完善的 agent-native 记忆架构仍是后续研究课题。
 
 ## 特性
 
-- **最小工具面**：`read / write / edit / glob / grep / read_image / ask_user_question`，外加专用笔记工具 `note_search`（tag 过滤）、`note_create`（拒绝覆盖）、`note_links`（反链查询）。没有 shell、没有网页工具、没有子代理。
+- **最小工具面**：`read / write / edit / glob / grep / read_image / ask_user_question`，外加专用笔记工具 `note_search`（tag 过滤）、`note_create`（拒绝覆盖）、`note_links`（反链查询）、`note_retrieve`（记忆 v2 策略检索）。没有 shell、没有网页工具、没有子代理。
+- **策略检索（记忆 v2）**：`note_retrieve` 对带 `hook:` frontmatter 块的记忆卡做两级检索——算子硬过滤 + 加权打分（token 相似 / 结构模式 / 启发式 / 数量 / 成功率先验），参考 [arXiv:2606.31191](https://arxiv.org/abs/2606.31191)（ISM）与 [EMNLP 2025 Findings 1162](https://aclanthology.org/2025.findings-emnlp.1162/)（Dual RAG）；vault 没有 hook 卡时自动退化为全文 token 排序。
+- **确定性记忆体检**：插件每日扫描卡片 frontmatter 与 hook 字段，把卡片分类为 strong / weak / unused / 疑似重复 / unverified，把 `note_retrieve` 命中统计回写进 `hook.uses` / `hook.last_used`，并把有界体检报告注入每次系统提示；模型按 AGENTS.md 对体检清单行动——合并只标 superseded，从不删除。
+- **记忆控制面**：回复中的验证徽标（✅/⚖️/❓）与 `[✅ 这条对] [❌ 这条错]` 反馈链接（loopback `/feedback` 端点，带 vault 包含校验），另有专门的 **DSH 记忆面板** Obsidian 视图——浏览五层记忆与 hook 统计、搜索、逐卡一键确认/纠错/过期/归档（归档从不硬删）。
+- **记忆系统知识库**：设计、评估、v2 方案与论文笔记统一维护在 `docs/memory/`，与代码同步演进。
 - **五层长期记忆**（参考 [arXiv:2606.24775](https://arxiv.org/abs/2606.24775) 与 [arXiv:2607.05794](https://arxiv.org/abs/2607.05794)）：
   - `profile.md` 语义层：稳定偏好、记号、长期授权；
   - `topics/` 导航层：主题索引与细节；
@@ -94,6 +98,7 @@ dsh 的 **web** profile 默认绑定 `127.0.0.1:3080`。本插件启动的是独
 | Start service automatically | 默认开启 |
 | Initialize configuration automatically | 默认开启（只补缺失） |
 | Show ribbon icon | 一键按钮 |
+| 记忆面板 | 从插件设置页「打开记忆面板」或命令面板进入，不占用独立 ribbon 按钮 |
 | Keep service alive when Obsidian closes | 默认关闭 |
 
 ## 安装方式 B：dsh 插件 via npm（可选；只有跳过 Obsidian 插件时才需要）
@@ -136,18 +141,21 @@ vault/
     memory/episodes/YYYY-MM-DD-*.md  原始事件卡（append-only）
     inbox/index.md               备忘录状态索引
     inbox/<slug>.md              想法 memo（inbox → polishing → done）
-    cache/                       机器生成的对话索引（勿动）
+    cache/                       机器生成的对话索引、记忆体检、检索统计（勿动）
 ```
 
 ## 开发
 
 ```bash
-npm test                        # 语法检查
+npm test                        # 语法检查 + 记忆回归检查 + 安装器端到端
 node scripts/build-obsidian.mjs # 用模板 + 共享 dsh/ 文件重新生成 main.js
+node scripts/test-memory.mjs    # 零 token 记忆 v2 回归检查（合成 vault）
 node scripts/test-installer.mjs # 临时目录端到端测试安装器
 ```
 
 `main.js` 是构建产物：改 `obsidian/main.template.js` 或共享 `dsh/` 文件后要重新构建。
+
+记忆系统有独立知识库 [`docs/memory/`](docs/memory/)：当前设计、评估记录、记忆 v2 方案与论文笔记。记忆/检索的改动都随代码一起在这里留档。
 
 ## 隐私与安全
 

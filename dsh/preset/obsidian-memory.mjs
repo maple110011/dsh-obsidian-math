@@ -11,11 +11,18 @@
  *      logs (session.jsonl.zstd files under `$DSH_HOME/sessions/`) — recent user
  *      questions plus short assistant conclusions — so a brand-new session
  *      no longer starts from zero.
- *   3. Appends one bounded "obsidian:memory" section to the assembled system
+ *   3. Runs a deterministic memory health check (memory v2, informed by
+ *      arXiv:2606.31191 ISM): scans records/templates/inbox frontmatter and
+ *      hook fields at most once per day per vault, writes
+ *      `<vault>/.deepseek/cache/memory-audit.json`, syncs usage statistics
+ *      back into the cards' hook.uses / hook.last_used (block-style hook
+ *      blocks only), and injects a bounded audit section into the prompt.
+ *   4. Appends one bounded "obsidian:memory" section to the assembled system
  *      prompt.
  *
- * It never calls the model and never mutates any user note. The only file it
- * writes is its own cache at `<vault>/.deepseek/cache/dialogue-index.json`.
+ * It never calls the model. Its only user-file mutation is the deterministic
+ * hook-stats sync described above (opt-out via auditMaintainHookStats: false);
+ * its own cache files live at `<vault>/.deepseek/cache/*`.
  *
  * Session logs are concatenated Zstandard frames (one JSONL batch per frame).
  * Node >= 22.5 provides zstd through node:zlib; on older runtimes the
@@ -46,16 +53,35 @@ const LOG_SUFFIX = ".jsonl.zstd";
 const MAX_LOG_FILES = 20;
 // Layered injection budget (arXiv:2606.24775): the prompt carries navigation
 // layers only; raw evidence lives on disk and is reached via grep/read.
+// Slimmed static budgets (memory v2 recall injection): indexes are now
+// navigation-only; the per-request recall section carries the top-k relevant
+// content, so static layers no longer need to be exhaustive.
 const MAX_PROFILE_CHARS = 4000;
-const MAX_TOPIC_INDEX_CHARS = 4000;
-const MAX_RECORD_INDEX_CHARS = 2000;
-const MAX_TEMPLATE_INDEX_CHARS = 1500;
-const MAX_EPISODE_INDEX_CHARS = 2500;
-const MAX_INBOX_CHARS = 2200;
+const MAX_TOPIC_INDEX_CHARS = 1800;
+const MAX_RECORD_INDEX_CHARS = 800;
+const MAX_TEMPLATE_INDEX_CHARS = 600;
+const MAX_EPISODE_INDEX_CHARS = 1200;
+const MAX_INBOX_CHARS = 1200;
 const MAX_DIALOGUE_PAIRS = 6;
 const MAX_DIALOGUE_CHARS = 3000;
 const DEFAULT_MAX_HISTORY_ENTRIES = 40;
 const DEFAULT_MAX_HISTORY_CHARS = 6000;
+const DEFAULT_RECALL_TOP_K = 6;
+const DEFAULT_RECALL_MAX_CHARS = 2200;
+// Memory-v2 audit pass (arXiv:2606.31191 ISM, localized): deterministic scan of
+// card frontmatter + hook fields, at most once per vault per auditIntervalMs.
+const AUDIT_FILE = join(CACHE_DIR, "memory-audit.json");
+const RETRIEVAL_STATS_FILE = join(CACHE_DIR, "retrieval-stats.json");
+const DEFAULT_AUDIT_INTERVAL_MS = 86400000; // 24h
+const MAX_AUDIT_CHARS = 1200;
+const AUDIT_CARD_DIRS = [join(MEMORY_DIR, "memory", "records"), join(MEMORY_DIR, "memory", "templates")];
+const AUDIT_UNUSED_DAYS = 30;
+const AUDIT_UNVERIFIED_DAYS = 60;
+const AUDIT_WEAK_USES = 3;
+const AUDIT_WEAK_RATE = 0.4;
+const AUDIT_STRONG_RATE = 0.8;
+const AUDIT_DUP_JACCARD = 0.7;
+const AUDIT_CARD_SCAFFOLD = new Set(["index.md", "_README.md"]);
 
 // ── zstd session-log decoding ───────────────────────────────────────────────
 
@@ -207,7 +233,7 @@ export function findSessionLogs(sessionsRoot, maxFiles = MAX_LOG_FILES) {
  * Build the dialogue index used by the memory section: recent user turns and
  * the assistant texts that followed, flattened in time order.
  */
-export function buildDialogueIndex(sessionsRoot, maxEntries, maxChars, maxFiles = MAX_LOG_FILES) {
+export function buildDialogueIndex(sessionsRoot, maxEntries, maxChars, maxFiles = MAX_LOG_FILES, vaultRoot = "") {
   const sources = [];
   const sessions = [];
   for (const log of findSessionLogs(sessionsRoot, maxFiles)) {
@@ -225,28 +251,22 @@ export function buildDialogueIndex(sessionsRoot, maxEntries, maxChars, maxFiles 
     }
     const entry = distillSession(events);
     if (entry.id !== undefined && entry.messages.length > 0) {
+      // Only sessions that ran inside this vault join the index: coding
+      // sessions from other workspaces must not leak into the math assistant.
+      if (vaultRoot !== "" && !pathIsInside(vaultRoot, entry.cwd ?? "")) continue;
       sources.push({ path: log.path, mtimeMs: log.mtimeMs, size: log.size });
       sessions.push(entry);
     }
   }
 
-  // Turn each real user message into a Q/A pair: the question plus the first
-  // assistant text that followed it in the same session. Newest pairs first.
+  // Turn each real user message into a Q/A pair: the question plus the FINAL
+  // assistant reply of that turn (the last assistant message before the next
+  // user message; the old first-message pairing often captured "让我查一下"
+  // openers instead of conclusions).
   const threads = [];
   for (const session of sessions) {
-    const messages = [...session.messages].sort((a, b) => a.time - b.time);
-    for (let index = 0; index < messages.length; index += 1) {
-      const message = messages[index];
-      if (message.role !== "user") continue;
-      const answer = messages.slice(index + 1).find((candidate) => candidate.role === "assistant");
-      threads.push({
-        sessionId: session.id,
-        title: session.title,
-        cwd: session.cwd,
-        time: message.time,
-        user: message,
-        assistant: answer
-      });
+    for (const pair of pairMessages(session.messages)) {
+      threads.push({ sessionId: session.id, title: session.title, cwd: session.cwd, time: pair.time, user: pair.user, assistant: pair.assistant });
     }
   }
   threads.sort((a, b) => a.time - b.time);
@@ -337,10 +357,12 @@ function localDateString() {
 
 /**
  * Memo status digest: group live memos by lifecycle state and surface the
- * top stale candidates (inbox >= 7 days, polishing >= 3 days, and not yet
- * reminded today) for the agent's proactive review prompts.
+ * top reminder candidates. Candidates are now BOTH time-stale (inbox >= 7
+ * days, polishing >= 3 days) AND relevance-scored against the current user
+ * message — a memo being actively discussed surfaces even before it goes
+ * stale. Ranking: 0.7 × relevance + 0.3 × recency (days/30, capped at 1).
  */
-export function memoDigest(root, maxChars) {
+export function memoDigest(root, maxChars, query = "", helpers = undefined) {
   const memoDir = join(root, MEMORY_DIR, "inbox");
   if (!existsSync(memoDir)) return "";
   let files = [];
@@ -355,10 +377,27 @@ export function memoDigest(root, maxChars) {
 
   const groups = { inbox: [], polishing: [], done: [] };
   const today = localDateString();
+  // Relevance scores: one doc per memo (title + body head), IDF over memos.
+  const canScore = query !== "" && typeof helpers?.tokenize === "function" && typeof helpers?.weightedOverlap === "function";
+  const queryTokens = canScore ? helpers.tokenize(query) : [];
+  const memoDocs = [];
   for (const file of files) {
+    let text = "";
+    try {
+      text = readFileSync(join(memoDir, file), "utf8");
+    } catch {
+      // keep empty; the memo still lists, just scores 0
+    }
+    memoDocs.push({ file, text });
+  }
+  const tokenizedDocs = memoDocs.map((doc) => helpers.tokenize((doc.file + " " + doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").slice(0, 1500))));
+  const docFreq = canScore ? helpers.computeDocFreq(tokenizedDocs) : null;
+
+  for (let i = 0; i < memoDocs.length; i += 1) {
+    const file = memoDocs[i].file;
     let meta;
     try {
-      meta = parseMemoFrontmatter(readFileSync(join(memoDir, file), "utf8"));
+      meta = parseMemoFrontmatter(memoDocs[i].text);
     } catch {
       continue;
     }
@@ -366,6 +405,7 @@ export function memoDigest(root, maxChars) {
     const status = MEMO_STATES.has(meta.status) ? meta.status : "inbox";
     const updated = meta.updated ?? "";
     const days = daysSinceLocal(updated);
+    const relevance = canScore && queryTokens.length > 0 ? helpers.weightedOverlap(queryTokens, tokenizedDocs[i], docFreq) : 0;
     const item = {
       slug,
       title: meta.title || slug,
@@ -373,7 +413,8 @@ export function memoDigest(root, maxChars) {
       updated,
       days,
       stale: days !== null && days >= (status === "polishing" ? MEMO_STALE_POLISHING_DAYS : MEMO_STALE_INBOX_DAYS),
-      alreadyReminded: meta.last_reminded === today
+      alreadyReminded: meta.last_reminded === today,
+      relevance
     };
     groups[status].push(item);
   }
@@ -392,17 +433,392 @@ export function memoDigest(root, maxChars) {
   }
 
   const candidates = [...groups.inbox, ...groups.polishing]
-    .filter((memo) => memo.stale && !memo.alreadyReminded)
-    .sort((a, b) => (b.days ?? -1) - (a.days ?? -1))
+    .filter((memo) => !memo.alreadyReminded && (memo.stale || memo.relevance >= 0.15))
+    .map((memo) => ({
+      ...memo,
+      rank: 0.7 * memo.relevance + 0.3 * Math.min(1, (memo.days ?? 0) / 30)
+    }))
+    .sort((a, b) => b.rank - a.rank)
     .slice(0, 3);
   if (candidates.length > 0) {
-    lines.push("- 🔔 提醒候选（久未更新）");
+    lines.push("- 🔔 提醒候选（陈旧或与当前讨论相关，按相关性×新鲜度排序）");
     for (const memo of candidates) {
-      lines.push(`  - [[${memo.slug}|${memo.title}]]：${memo.days} 天未更新，可在相关讨论时建议打磨`);
+      const reason = memo.stale ? `${memo.days} 天未更新` : "与当前讨论相关";
+      lines.push(`  - [[${memo.slug}|${memo.title}]]：${reason}（相关度 ${memo.relevance.toFixed(2)}），可在相关讨论时建议打磨`);
     }
   }
 
   return clip(lines.join("\n"), maxChars);
+}
+
+// ── memory v2: deterministic audit pass (ISM Self-Audit, localized) ─────────
+
+/** Load the retrieval-stats cache written by note_retrieve (best-effort). */
+function readRetrievalStats(root) {
+  const path = join(root, RETRIEVAL_STATS_FILE);
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Rewrite a block-style hook's uses/last_used lines inside the frontmatter
+ * text; returns the new frontmatter or null when there is no block-style hook
+ * (flow-style `hook: { ... }` is deliberately left untouched).
+ */
+function rewriteHookStats(frontmatterText, uses, lastUsed) {
+  const lines = frontmatterText.split(/\r?\n/);
+  const hookIdx = lines.findIndex((line) => /^hook:\s*$/.test(line));
+  if (hookIdx === -1) return null;
+  let endIdx = hookIdx + 1;
+  while (endIdx < lines.length && (lines[endIdx].trim() === "" || /^\s/.test(lines[endIdx]))) endIdx += 1;
+  const block = lines.slice(hookIdx + 1, endIdx);
+  let usesSeen = false;
+  let lastUsedSeen = false;
+  const updated = block.map((line) => {
+    const match = /^(\s*)(uses|last_used):\s*(.*)$/.exec(line);
+    if (match !== null && match[2] === "uses") { usesSeen = true; return `${match[1]}uses: ${uses}`; }
+    // An empty lastUsed means "never used": leave any existing value as the
+    // user/model wrote it and never invent a date.
+    if (match !== null && match[2] === "last_used" && lastUsed !== "") { lastUsedSeen = true; return `${match[1]}last_used: ${lastUsed}`; }
+    return line;
+  });
+  if (!usesSeen) updated.push(`  uses: ${uses}`);
+  if (!lastUsedSeen && lastUsed !== "") updated.push(`  last_used: ${lastUsed}`);
+  return [...lines.slice(0, hookIdx + 1), ...updated, ...lines.slice(endIdx)].join(frontmatterText.includes("\r\n") ? "\r\n" : "\n");
+}
+
+/**
+ * Best-effort deterministic sync of usage statistics into a card's hook block.
+ * Only touches `uses` / `last_used` lines; any parse surprise leaves the
+ * file untouched. The agent itself never maintains these two fields.
+ */
+function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
+  let text;
+  try {
+    text = readFileSync(filePath, "utf8");
+  } catch {
+    return;
+  }
+  const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
+  if (fmMatch === null) return;
+  const rewritten = rewriteHookStats(fmMatch[1], effectiveUses, lastUsed);
+  if (rewritten === null || rewritten === fmMatch[1]) return;
+  try {
+    writeFileSync(filePath, text.replace(fmMatch[1], rewritten), "utf8");
+  } catch {
+    // Stats sync is advisory; never let it break the prompt.
+  }
+}
+
+/**
+ * Scan every memory card once, merge the note_retrieve hit statistics, and
+ * classify cards into ISM-style buckets: strong / weak / unused / duplicate
+ * candidates / unverified. Pure function of the vault's files — no model.
+ */
+export function buildAuditReport(root, helpers) {
+  const stats = readRetrievalStats(root);
+  const today = localDateString();
+  const cards = [];
+
+  for (const dir of AUDIT_CARD_DIRS) {
+    const absDir = join(root, dir);
+    let files = [];
+    try {
+      files = readdirSync(absDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".md") && !AUDIT_CARD_SCAFFOLD.has(entry.name) && !entry.name.startsWith("_"))
+        .map((entry) => entry.name);
+    } catch {
+      continue; // directory missing: nothing to audit there yet
+    }
+    for (const file of files) {
+      const filePath = join(absDir, file);
+      let text;
+      try {
+        text = readFileSync(filePath, "utf8");
+      } catch {
+        continue;
+      }
+      const meta = parseMemoFrontmatter(text);
+      const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+      const hook = fmMatch === null ? null : (helpers.parseHookFrontmatter?.(fmMatch[1]) ?? null);
+      const rel = join(dir, file).replace(/\\/g, "/");
+      const statEntry = stats[rel] ?? {};
+      const statUses = Number.isFinite(statEntry.uses) ? statEntry.uses : 0;
+      const baseUses = Number.isFinite(Number(hook?.uses)) ? Number(hook.uses) : 0;
+      const uses = Math.max(0, Math.trunc(baseUses + statUses));
+      const lastUsed = typeof statEntry.last_used === "string" && statEntry.last_used !== ""
+        ? statEntry.last_used
+        : (typeof hook?.last_used === "string" ? hook.last_used : "");
+      const successRate = Number.isFinite(Number(hook?.success_rate)) ? Number(hook.success_rate) : null;
+      const days = daysSinceLocal(meta.updated ?? "");
+      cards.push({
+        rel,
+        filePath,
+        title: meta.title ?? file.replace(/\.md$/, ""),
+        type: meta.type ?? "unknown",
+        status: meta.status ?? "active",
+        hook,
+        uses,
+        lastUsed,
+        successRate,
+        verified: typeof hook?.verified === "string" ? hook.verified : null,
+        days,
+        updated: meta.updated ?? ""
+      });
+    }
+  }
+
+  // Deterministic hook-stats sync (opt-out via auditMaintainHookStats: false).
+  // FIX(B1): after merging the note_retrieve hit counts into hook.uses, the
+  // stats entries are zeroed — otherwise every daily audit re-adds the same
+  // hits and uses grows without bound.
+  if (helpers.maintainHookStats !== false) {
+    let mergedAny = false;
+    for (const card of cards) {
+      if (card.hook === null) continue; // no block-style hook: nothing to sync
+      const statEntry = stats[card.rel] ?? {};
+      if (Number.isFinite(statEntry.uses) && statEntry.uses > 0) mergedAny = true;
+      syncHookStatsToCard(card.filePath, card.uses, card.lastUsed);
+    }
+    if (mergedAny) {
+      const cleaned = {};
+      for (const [rel, entry] of Object.entries(stats)) {
+        cleaned[rel] = { uses: 0, last_used: typeof entry?.last_used === "string" ? entry.last_used : "" };
+      }
+      try {
+        writeFileSync(join(root, RETRIEVAL_STATS_FILE), JSON.stringify(cleaned, null, 2), "utf8");
+      } catch {
+        // best-effort; a failed reset only re-inflates counts, never breaks boot
+      }
+    }
+  }
+
+  const strong = cards.filter((card) => card.successRate !== null && card.successRate >= AUDIT_STRONG_RATE && card.uses >= 1);
+  const weak = cards.filter((card) => card.successRate !== null && card.successRate <= AUDIT_WEAK_RATE && card.uses >= AUDIT_WEAK_USES);
+  const unused = cards.filter((card) => card.uses === 0 && card.status === "active" && (card.days === null || card.days > AUDIT_UNUSED_DAYS));
+  const unverified = cards.filter((card) =>
+    (card.verified === null || card.verified === "single-source") &&
+    card.status === "active" &&
+    (card.days === null || card.days > AUDIT_UNVERIFIED_DAYS));
+
+  // Duplicate candidates: same operator, Jaccard(pattern+techniques) >= 0.7.
+  const tokenize = helpers.tokenize ?? ((text) => String(text ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  const byOperator = new Map();
+  for (const card of cards) {
+    const operator = normalizeOperatorText(card.hook?.operator);
+    if (operator === "") continue;
+    const bucket = byOperator.get(operator) ?? [];
+    bucket.push(card);
+    byOperator.set(operator, bucket);
+  }
+  const duplicates = [];
+  const seenPairs = new Set();
+  for (const bucket of byOperator.values()) {
+    for (let i = 0; i < bucket.length && duplicates.length < 3; i += 1) {
+      for (let j = i + 1; j < bucket.length; j += 1) {
+        const a = bucket[i];
+        const b = bucket[j];
+        const aTokens = new Set(tokenize(`${hookText(a.hook, "pattern")} ${hookText(a.hook, "techniques")}`));
+        const bTokens = new Set(tokenize(`${hookText(b.hook, "pattern")} ${hookText(b.hook, "techniques")}`));
+        const union = new Set([...aTokens, ...bTokens]);
+        const intersection = [...aTokens].filter((token) => bTokens.has(token)).length;
+        if (union.size === 0) continue;
+        const jaccard = intersection / union.size;
+        if (jaccard >= AUDIT_DUP_JACCARD) {
+          const pairKey = [a.rel, b.rel].sort().join("|");
+          if (seenPairs.has(pairKey)) continue;
+          seenPairs.add(pairKey);
+          duplicates.push({ a, b, jaccard: Number(jaccard.toFixed(2)) });
+        }
+      }
+    }
+  }
+
+  const lines = [];
+  const counts = { cards: cards.length, strong: strong.length, weak: weak.length, unused: unused.length, duplicates: duplicates.length, unverified: unverified.length };
+  if (cards.length > 0) {
+    lines.push(`记忆体检（${today}，共 ${cards.length} 张卡）`);
+    for (const [label, items, formatter] of [
+      ["strong（可 reinforce）", strong.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
+      ["weak（建议改写并重置成功率）", weak.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
+      ["unused（>30 天零使用）", unused.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
+      ["unverified（单一来源 >60 天）", unverified.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`]
+    ]) {
+      if (items.length === 0) continue;
+      lines.push(`- ${label}: ${items.map(formatter).join("、")}`);
+    }
+    if (duplicates.length > 0) {
+      lines.push(`- 疑似重复（同算子、pattern+techniques Jaccard ≥ ${AUDIT_DUP_JACCARD}）: ${duplicates.map(({ a, b }) => `[[${a.rel.replace(/\.md$/, "")}|${a.title}]] ↔ [[${b.rel.replace(/\.md$/, "")}|${b.title}]]`).join("；")}`);
+    }
+  } else {
+    lines.push("（尚无记忆卡，无可体检内容）");
+  }
+
+  return {
+    generatedAt: Date.now(),
+    counts,
+    report: clip(lines.join("\n"), MAX_AUDIT_CHARS)
+  };
+}
+
+function hookText(hook, key) {
+  const value = hook?.[key];
+  if (Array.isArray(value)) return value.join(" ");
+  return typeof value === "string" ? value : "";
+}
+
+function normalizeOperatorText(raw) {
+  return String(raw ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+/**
+ * Pair each user message with the FINAL assistant reply of its turn (the last
+ * assistant message before the next user message; falls back to the first
+ * assistant after it when the turn had no reply).
+ */
+export function pairMessages(messages) {
+  const sorted = [...messages].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+  const threads = [];
+  for (let index = 0; index < sorted.length; index += 1) {
+    const message = sorted[index];
+    if (message.role !== "user") continue;
+    const nextUser = sorted.findIndex((candidate, j) => j > index && candidate.role === "user");
+    const end = nextUser === -1 ? sorted.length : nextUser;
+    const turn = sorted.slice(index + 1, end).filter((candidate) => candidate.role === "assistant");
+    const answer = turn.length > 0 ? turn[turn.length - 1] : sorted.slice(index + 1).find((candidate) => candidate.role === "assistant");
+    threads.push({ time: message.time, user: message, assistant: answer });
+  }
+  return threads;
+}
+
+/** Case/separator-robust prefix containment (win32 lowercases). */
+function pathIsInside(root, child) {
+  if (typeof root !== "string" || typeof child !== "string" || root === "" || child === "") return false;
+  const norm = (value) => {
+    const n = value.replace(/\\/g, "/").replace(/\/+$/, "");
+    return process.platform === "win32" ? n.toLowerCase() : n;
+  };
+  const r = norm(root);
+  const c = norm(child);
+  return c === r || c.startsWith(r + "/");
+}
+
+// ── memory v2: per-request recall injection ────────────────────────────────
+
+/** Last real user message text from the live session, or "" when unavailable. */
+export function latestUserText(agent) {
+  const session = agent?.session;
+  if (session === undefined || session === null) return "";
+  const events = Array.isArray(session.log) ? session.log : Array.isArray(session.messages) ? session.messages : null;
+  if (events === null) return "";
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event?.type === "user/message" && event?.data?.source?.kind === "user") {
+      const text = contentText(event.data.content);
+      if (text !== "") return clip(text, 400);
+    }
+  }
+  return "";
+}
+
+function titleOfMemoryFile(text, fallback) {
+  const meta = parseMemoFrontmatter(text);
+  if (typeof meta.title === "string" && meta.title !== "") return meta.title;
+  const heading = /^#\s+(.+)$/m.exec(text)?.[1]?.trim();
+  return heading ?? fallback;
+}
+
+/**
+ * Build the recall corpus: one lightweight doc per memory card / memo /
+ * topic-index line / recent episode line. Rebuilt only when the memory
+ * directories' mtimes change (see MemoryEngine.#recallCache).
+ */
+export function buildRecallIndex(root, helpers) {
+  const docs = [];
+  const push = (kind, rel, title, text) => {
+    const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+    if (flat === "") return;
+    docs.push({ kind, rel, title, text: flat });
+  };
+  for (const dir of [join(MEMORY_DIR, "memory", "records"), join(MEMORY_DIR, "memory", "templates")]) {
+    let names = [];
+    try {
+      names = readdirSync(join(root, dir), { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".md") && !AUDIT_CARD_SCAFFOLD.has(entry.name) && !entry.name.startsWith("_"))
+        .map((entry) => entry.name);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      let text;
+      try {
+        text = readFileSync(join(root, dir, name), "utf8");
+      } catch {
+        continue;
+      }
+      const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+      const hook = fmMatch === null ? null : (helpers.parseHookFrontmatter?.(fmMatch[1]) ?? null);
+      const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").slice(0, 2000);
+      const hookText = [hook?.operator, hook?.pattern, hook?.techniques, hook?.applications, hook?.heuristics]
+        .filter((part) => Array.isArray(part) ? part.length > 0 : typeof part === "string" && part !== "")
+        .flat()
+        .join(" ");
+      const rel = join(dir, name).replace(/\\/g, "/");
+      push("card", rel, titleOfMemoryFile(text, name.replace(/\.md$/, "")), (name + " " + hookText + " " + body).slice(0, 2600));
+    }
+  }
+  const inboxDir = join(MEMORY_DIR, "inbox");
+  try {
+    for (const entry of readdirSync(join(root, inboxDir), { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md") || MEMO_SCAFFOLD.has(entry.name) || entry.name.startsWith("_")) continue;
+      let text;
+      try {
+        text = readFileSync(join(root, inboxDir, entry.name), "utf8");
+      } catch {
+        continue;
+      }
+      const rel = join(inboxDir, entry.name).replace(/\\/g, "/");
+      push("memo", rel, titleOfMemoryFile(text, entry.name.replace(/\.md$/, "")), text.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").slice(0, 1500));
+    }
+  } catch {
+    // inbox missing: nothing to recall from there
+  }
+  for (const line of readMemoryFile(root, join(MEMORY_DIR, "memory", "topics", "index.md"), 4000).split("\n")) {
+    const clean = line.trim();
+    if (clean.startsWith("-")) push("topic", "topics/index.md", "主题", clean);
+  }
+  for (const line of episodeIndexDigest(root, 1200).split("\n")) {
+    const clean = line.trim();
+    if (clean.startsWith("-")) push("episode", "episodes/index.md", "事件", clean);
+  }
+  return docs;
+}
+
+/** Rank the recall corpus against the query; returns a bounded markdown list. */
+export function rankRecall(docs, queryText, helpers, topK, maxChars) {
+  const queryTokens = helpers.tokenize(queryText);
+  if (queryTokens.length === 0 || docs.length === 0) return "";
+  const tokenized = docs.map((doc) => helpers.tokenize(doc.text));
+  const docFreq = helpers.computeDocFreq(tokenized);
+  const scored = docs.map((doc, i) => ({ doc, score: helpers.weightedOverlap(queryTokens, tokenized[i], docFreq) }));
+  scored.sort((a, b) => b.score - a.score);
+  const lines = [];
+  let used = 0;
+  for (const { doc, score } of scored) {
+    if (score <= 0) continue;
+    const label = doc.kind === "card" ? "记忆卡" : doc.kind === "memo" ? "备忘录" : doc.kind === "topic" ? "主题" : "事件";
+    const stem = doc.rel.replace(/\.md$/, "");
+    const line = `- [[${stem}|${doc.title}]]（${label}，score ${score.toFixed(2)}）· ${clip(doc.text, 150)}`;
+    if (used + line.length + 1 > maxChars) break;
+    if (lines.length >= topK) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return lines.join("\n");
 }
 
 /** Episode timeline: keep the newest lines (list items only) within budget. */
@@ -470,13 +886,13 @@ function templateIndexDigest(root, maxChars) {
  * `context.agent` supplies the current session id so the live conversation is
  * never duplicated into the "past dialogue" index.
  */
-export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs }, currentSessionId, dialogueIndex) {
+export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs }, currentSessionId, dialogueIndex, auditReport, recallText, memoText) {
   const profile = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "profile.md"), MAX_PROFILE_CHARS);
   const topics = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "topics", "index.md"), MAX_TOPIC_INDEX_CHARS);
   const records = recordIndexDigest(vaultRoot, MAX_RECORD_INDEX_CHARS);
   const templates = templateIndexDigest(vaultRoot, MAX_TEMPLATE_INDEX_CHARS);
   const episodes = episodeIndexDigest(vaultRoot, MAX_EPISODE_INDEX_CHARS);
-  const memos = memoDigest(vaultRoot, MAX_INBOX_CHARS);
+  const memos = memoText ?? memoDigest(vaultRoot, MAX_INBOX_CHARS);
 
   const lines = [
     "## 分层长期记忆（由 obsidian-memory 自动注入；导航层在此，证据层在磁盘）",
@@ -499,7 +915,9 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   if (linkBaseUrl !== "") {
     lines.push(
       `- 回复正文中引用笔记时，使用可点击链接：[标题](${linkBaseUrl}/open?path=<vault 相对路径，需 URL 编码>)；`,
-      "  点击即可在 Obsidian 中打开对应笔记。笔记文件内部仍写 [[wikilink]]，两者不要混用。"
+      "  点击即可在 Obsidian 中打开对应笔记。笔记文件内部仍写 [[wikilink]]，两者不要混用。",
+      `- 引用记忆卡时标注验证等级徽标：✅用户确认（hook.verified=user-confirmed）/ ⚖️互证（cross-referenced）/ ❓单源（single-source 或缺失）。`,
+      `- 本回复依据了记忆卡时，在末尾给反馈链接（path 为该卡 vault 相对路径，需 URL 编码）：[✅ 这条对](${linkBaseUrl}/feedback?path=<卡路径>&action=confirm) [❌ 这条错](${linkBaseUrl}/feedback?path=<卡路径>&action=wrong)；用户点击后由 Obsidian 插件直接改写验证等级与成功率，无需你代劳。`
     );
   }
 
@@ -524,6 +942,10 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   if (templates !== "") {
     lines.push("", "### 问题模板索引（.deepseek/memory/templates/index.md，题型/解法 ↔ 定理关联）", "", templates,
       "", "遇到新问题先做“问题蒸馏”（抽象成模板表达）再查这里；命中则读模板卡与关联定理并去重聚合。");
+  }
+
+  if (recallText !== undefined && recallText !== "") {
+    lines.push("", "### 本轮记忆召回（按当前消息相关性 top-k；只是线索，细节仍按路由规则读文件）", "", recallText);
   }
 
   if (episodes !== "") {
@@ -574,6 +996,11 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     }
   }
 
+  if (auditReport?.report !== undefined && auditReport.report !== "") {
+    lines.push("", "### 记忆体检（obsidian-memory 确定性扫描，见 .deepseek/cache/memory-audit.json）", "", auditReport.report,
+      "", "体检清单按 AGENTS.md 处理：weak → 读卡改写内容并清空 success_rate 重估（3 次仍弱则建议归档）；疑似重复 → 合并为一张、旧卡标 superseded（保留证据与 source 链）；unused → 在回复末尾一行向用户建议处置，不自行删除；strong → 相关讨论中把新技巧追加进 techniques；unverified → 保持单源引用，未经用户确认不得提升验证等级。");
+  }
+
   return lines.join("\n");
 }
 
@@ -598,8 +1025,16 @@ function normalizeConfig(config) {
     ? config.maxHistoryChars
     : DEFAULT_MAX_HISTORY_CHARS;
   const cacheTtlMs = Number.isFinite(config.cacheTtlMs) && config.cacheTtlMs >= 0 ? config.cacheTtlMs : 0;
+  const auditEnabled = config.auditEnabled !== false;
+  const auditMaintainHookStats = config.auditMaintainHookStats !== false;
+  const auditIntervalMs = Number.isFinite(config.auditIntervalMs) && config.auditIntervalMs >= 0
+    ? config.auditIntervalMs
+    : DEFAULT_AUDIT_INTERVAL_MS;
+  const recallEnabled = config.recallEnabled !== false;
+  const recallTopK = Number.isInteger(config.recallTopK) && config.recallTopK > 0 ? config.recallTopK : DEFAULT_RECALL_TOP_K;
+  const recallMaxChars = Number.isInteger(config.recallMaxChars) && config.recallMaxChars > 0 ? config.recallMaxChars : DEFAULT_RECALL_MAX_CHARS;
   if (!isAbsolute(sessionsRoot)) throw new TypeError("obsidian-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs };
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, auditMaintainHookStats, auditIntervalMs, recallEnabled, recallTopK, recallMaxChars };
 }
 
 function resolveVaultRoot(config, agent) {
@@ -636,12 +1071,16 @@ function writeCachedIndex(cachePath, index) {
 
 class MemoryEngine {
   #config;
+  #helpers;
   #cachedIndex;
   #fingerprint = "";
   #builtAt = 0;
+  #auditCache = new Map();
+  #recallCache = new Map();
 
-  constructor(config) {
+  constructor(config, helpers = {}) {
     this.#config = normalizeConfig(config);
+    this.#helpers = helpers;
   }
 
   cachePathFor(vaultRoot) {
@@ -674,13 +1113,100 @@ class MemoryEngine {
       config.sessionsRoot,
       config.maxHistoryEntries,
       config.maxHistoryChars,
-      MAX_LOG_FILES
+      MAX_LOG_FILES,
+      vaultRoot
     );
     this.#cachedIndex = index;
     this.#fingerprint = current;
     this.#builtAt = Date.now();
     writeCachedIndex(this.cachePathFor(vaultRoot), index);
     return index;
+  }
+
+  /**
+   * Deterministic memory health report for one vault, at most once per
+   * auditIntervalMs (default 24h). Reuses the on-disk report when fresh.
+   */
+  auditReportFor(vaultRoot) {
+    const config = this.#config;
+    if (!config.auditEnabled) return undefined;
+    const cached = this.#auditCache.get(vaultRoot);
+    if (cached !== undefined && Date.now() - cached.generatedAt < config.auditIntervalMs) return cached;
+    if (cached === undefined) {
+      try {
+        const disk = JSON.parse(readFileSync(join(vaultRoot, AUDIT_FILE), "utf8"));
+        if (Number.isFinite(disk?.generatedAt) && Date.now() - disk.generatedAt < config.auditIntervalMs) {
+          this.#auditCache.set(vaultRoot, disk);
+          return disk;
+        }
+      } catch {
+        // Missing/corrupt report: rebuild below.
+      }
+    }
+    let report;
+    try {
+      report = buildAuditReport(vaultRoot, { ...this.#helpers, maintainHookStats: config.auditMaintainHookStats });
+    } catch {
+      return cached; // a failed audit must never break prompt assembly
+    }
+    try {
+      mkdirSync(join(vaultRoot, CACHE_DIR), { recursive: true });
+      writeFileSync(join(vaultRoot, AUDIT_FILE), JSON.stringify(report, null, 2), "utf8");
+    } catch {
+      // Report persistence is best-effort.
+    }
+    this.#auditCache.set(vaultRoot, report);
+    return report;
+  }
+
+  /** Recall corpus per vault, rebuilt only when the memory dirs' mtimes change. */
+  recallDocsFor(vaultRoot) {
+    const fingerprint = (() => {
+      const parts = [];
+      for (const dir of [join(vaultRoot, MEMORY_DIR, "memory", "records"), join(vaultRoot, MEMORY_DIR, "memory", "templates"), join(vaultRoot, MEMORY_DIR, "inbox")]) {
+        let entries = [];
+        try {
+          entries = readdirSync(dir, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+            .map((entry) => entry.name);
+        } catch {
+          continue;
+        }
+        for (const name of entries) {
+          try {
+            const stats = statSync(join(dir, name));
+            parts.push(`${dir}/${name}|${stats.mtimeMs}|${stats.size}`);
+          } catch {
+            // gone while walking
+          }
+        }
+      }
+      for (const file of [join(vaultRoot, MEMORY_DIR, "memory", "topics", "index.md"), join(vaultRoot, MEMORY_DIR, "memory", "episodes", "index.md")]) {
+        try {
+          const stats = statSync(file);
+          parts.push(`${file}|${stats.mtimeMs}|${stats.size}`);
+        } catch {
+          // index not created yet
+        }
+      }
+      return parts.join("\n");
+    })();
+    const cached = this.#recallCache.get(vaultRoot);
+    if (cached !== undefined && cached.fingerprint === fingerprint) return cached.docs;
+    const docs = buildRecallIndex(vaultRoot, this.#helpers);
+    this.#recallCache.set(vaultRoot, { fingerprint, docs });
+    return docs;
+  }
+
+  recallTextFor(vaultRoot, query) {
+    const config = this.#config;
+    if (query === "" || !config.recallEnabled) return "";
+    try {
+      const docs = this.recallDocsFor(vaultRoot);
+      return rankRecall(docs, query, this.#helpers, config.recallTopK, config.recallMaxChars);
+    } catch {
+      return ""; // a failed recall must never break prompt assembly
+    }
   }
 
   async sectionForAgent(agent) {
@@ -693,7 +1219,11 @@ class MemoryEngine {
       }
       const currentSessionId = agent?.session?.id;
       const dialogueIndex = this.getDialogueIndex(vaultRoot);
-      return buildMemorySection({ ...config, vaultRoot }, currentSessionId, dialogueIndex);
+      const auditReport = this.auditReportFor(vaultRoot);
+      const query = latestUserText(agent);
+      const recallText = this.recallTextFor(vaultRoot, query);
+      const memoText = memoDigest(vaultRoot, MAX_INBOX_CHARS, query, this.#helpers);
+      return buildMemorySection({ ...config, vaultRoot }, currentSessionId, dialogueIndex, auditReport, recallText, memoText);
     } catch (error) {
       return `## 长期记忆（obsidian-memory 暂不可用）\n\n${String(error)}`;
     }
@@ -703,7 +1233,15 @@ class MemoryEngine {
 // ── Cordis plugin entry ─────────────────────────────────────────────────────
 
 export async function apply(ctx, config) {
-  const engine = new MemoryEngine(config ?? {});
+  // Import the sibling first so the audit pass can reuse its hook parser and
+  // tokenizer (memory v2). The note tools are applied on the same context.
+  const notes = await import("./obsidian-notes.mjs");
+  const engine = new MemoryEngine(config ?? {}, {
+    parseHookFrontmatter: notes.parseHookFrontmatter,
+    tokenize: notes.tokenize,
+    weightedOverlap: notes.weightedOverlap,
+    computeDocFreq: notes.computeDocFreq
+  });
   ctx.on("system-prompt/assemble", async (assembly, context, next) => {
     const assembled = await next();
     if (context?.agent === undefined) return assembled;
@@ -715,11 +1253,11 @@ export async function apply(ctx, config) {
     };
   });
 
-  // Apply the dedicated note tools (note_search / note_create / note_links)
-  // on the same context. This file is always refreshed on upgrade, so existing
-  // installations pick the tools up even though agent.cordis.yml preserves
-  // user edits. The sibling module resolves `defineTool` through the harness
-  // loader, so it works from any $DSH_HOME location.
-  const notes = await import("./obsidian-notes.mjs");
+  // Apply the dedicated note tools (note_search / note_create / note_links /
+  // note_retrieve) on the same context — reuse the module imported above.
+  // This file is always refreshed on upgrade, so existing installations pick
+  // the tools up even though agent.cordis.yml preserves user edits. The
+  // sibling module resolves `defineTool` through the harness loader, so it
+  // works from any $DSH_HOME location.
   await notes.apply(ctx, config?.notes ?? {});
 }

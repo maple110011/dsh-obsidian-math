@@ -79,6 +79,19 @@
     maxHistoryEntries: 40
     maxHistoryChars: 8000
     cacheTtlMs: 0
+    # 记忆体检（memory v2，ISM 式确定性维护 pass）：扫描 records/templates 的
+    # frontmatter 与 hook 字段，每日最多一次（auditIntervalMs 毫秒），报告注入
+    # 系统提示；同时把 note_retrieve 的命中统计（cache/retrieval-stats.json）
+    # 回写进卡片的 hook.uses / hook.last_used（可关：auditMaintainHookStats: false）。
+    auditEnabled: true
+    auditIntervalMs: 86400000
+    auditMaintainHookStats: true
+    # 本轮记忆召回（检索式注入）：按最近一条用户消息对卡片/备忘录/主题/事件
+    # 做相关性打分，把 top-k 注入系统提示；静态索引预算已相应瘦身。可整体
+    # 关闭：recallEnabled: false。
+    recallEnabled: true
+    recallTopK: 6
+    recallMaxChars: 2200
     notes:
       # 留空 = 路径无关：vault 自动取会话 cwd 或 DSH_OBSIDIAN_VAULT。
       vaultRoot: ''
