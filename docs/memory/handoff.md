@@ -41,7 +41,7 @@
 **序 2 面板内编辑**：预览弹窗「编辑/保存」+ mtime 冲突防护 + 保存后刷新；策略文件面板内可点开直改。
 **序 3 趋势可视化**：`cache/hook-history.json` 每日快照 + 面板近 5 点 `📈` 迷你趋势；回归 38 → 42。
 **序 4 低危清理**：note_search 排除 .deepseek；归档同步 records source；端口占用一次性提示；DSH_PERMISSION_MODE 措辞。
-**检索 v3（进行中）**：S1 统一 note_recall（笔记+记忆一次 BM25 排序，kind-aware passage，hook 统计迁移，连字符归一 + CJK 字符包含）+ S2 BM25 打分器 + S3 精读挑选协议（AGENTS.md §0/§4/§5 重写，note_retrieve 退役，空结果/重试上限）。回归 56 项全绿；待 S5（按需导航注入）、S6（顺链+审计校验）。
+**检索 v3（进行中）**：S1 统一 note_recall（笔记+记忆一次 BM25 排序，kind-aware passage，hook 统计迁移，连字符归一 + CJK 字符包含）+ S2 BM25 打分器 + S3 精读挑选协议（AGENTS.md §0/§4/§5 重写，note_retrieve 退役，空结果/重试上限）+ S5 导航式注入（移除 2200 字符逐轮召回，索引层即导航）+ S6 审计结构校验（缺 source/断链/未入索引）。检索 v3 主体完成，待用户探针验收。
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 

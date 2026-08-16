@@ -2,6 +2,19 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 检索 v3 S6：审计结构校验
+
+- `buildAuditReport` 新增确定性结构检查（只查 records 卡）：① 缺 `source`；② `source`/`related` 里的 wikilink 目标在 vault 内不存在（断链，候选路径含 episodes/records/topics/templates/inbox）；③ `records/index.md` 存在但缺该卡行（未入索引）。
+- 报告注入「结构校验：缺 source N 张（…）；断链 M 处（…）；未入索引 K 张（…）」行（前三名，有界），返回对象新增 `structural` 计数；AGENTS.md 体检段增兜底规则——三写第 2 步从纯自律变成「自律+体检兜底」。
+- 回归 +4（缺 source/断链/未入索引/报告行），总数 55 → 59。
+
+## 2026-08 · 检索 v3 S5：导航式注入（移除逐轮召回）
+
+- 删除「本轮记忆召回」段（2200 字符/轮）与全部召回语料机制：`buildRecallIndex`/`rankRecall`/`recallDocsFor`/`recallTextFor` 及 `recallEnabled/recallTopK/recallMaxChars` 配置、`#recallCache`；
+- 系统提示只保留导航层（profile/topics/records/templates/episodes/inbox 摘要 + dialogue 线索 + 体检），「相关内容」全部按需用 `note_recall` 拉取——注入语义与工具检索同一套排序，不再有两套打分；
+- memo 相关性提醒（memoDigest 的 relevance 阈值）保留——那是提醒机制而非召回；
+- 回归：召回排序断言退役（被 note_recall 的 BM25 测试取代），新增导航断言 3 项（导航层存在/无召回段/总长有界 ≤9000 字符）。
+
 ## 2026-08 · 检索 v3 第一批（S1 统一入口 + S2 BM25 + S3 精读协议）
 
 ### 背景

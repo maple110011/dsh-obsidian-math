@@ -24,8 +24,6 @@ import {
 } from '../dsh/preset/obsidian-notes.mjs';
 import {
   buildAuditReport,
-  buildRecallIndex,
-  rankRecall,
   memoDigest,
   latestUserText,
   pairMessages,
@@ -200,17 +198,18 @@ check('sync: last_used from stats', recA.includes('last_used: 2026-08-16'));
 const recD = readFileSync(join(recordsDir, 'rec-d.md'), 'utf8');
 check('sync: never-used card gets no invented last_used', !recD.includes('last_used'));
 
-// ── 6. memory v2 recall injection (B) ──────────────────────────────────────
-const recallHelpers = { tokenize, weightedOverlap, computeDocFreq, bm25Score, computeCorpusStats };
-const recallDocs = buildRecallIndex(root, { parseHookFrontmatter, tokenize });
-check('recall: index contains cards', recallDocs.some((doc) => doc.kind === 'card' && doc.rel.includes('rec-a')));
-const recallText = rankRecall(recallDocs, '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli', recallHelpers, 6, 2200);
-check('recall: relevant card ranked', recallText.includes('rec-a'));
-check('recall: bounded by maxChars', recallText.length <= 2200);
-const capped = rankRecall(recallDocs, '证明 a.s. 收敛', recallHelpers, 2, 200);
-check('recall: topK respected', capped.length <= 240);
+// ── 6. navigation-only injection (retrieval v3 S5) ──────────────────────────
+const navSection = buildMemorySection(
+  { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
+  'live-session', { sources: [], entries: [] }, undefined, '');
+check('nav: static navigation layers present',
+  navSection.includes('用户画像与稳定偏好') && navSection.includes('研究主题索引') && navSection.includes('记忆记录摘要') && navSection.includes('近期事件时间线'));
+check('nav: no per-request recall section', !navSection.includes('本轮记忆召回'));
+check('nav: total memory section is bounded', navSection.length <= 9000, `len=${navSection.length}`);
 
-// ── 7. latestUserText / pairMessages (C) ───────────────────────────────────
+const recallHelpers = { tokenize, weightedOverlap, computeDocFreq, bm25Score, computeCorpusStats };
+
+// ── 7. latestUserText / pairMessages (C) ──// ── 7. latestUserText / pairMessages (C) ───────────────────────────────────
 const fakeAgent = { session: { log: [
   { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '第一问' }] } },
   { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '答一' }] } } },
@@ -308,6 +307,20 @@ check('tokenize: unicode dashes normalize to hyphen',
 check('cjk: containment bridges 子列/子序列', cjkCharOverlap('子序列 收敛', '子列选取三步模板 收敛性') === 0.8);
 check('cjk: no overlap → 0', cjkCharOverlap('子序列', '矩阵谱半径') === 0);
 check('cjk: short query returns 0 (noise guard)', cjkCharOverlap('子', '子列') === 0);
+
+// ── 18. audit structural integrity (retrieval v3 S6) ───────────────────────
+mkdirSync(join(root, '.deepseek', 'memory', 'episodes'), { recursive: true });
+writeFileSync(join(root, '.deepseek', 'memory', 'episodes', '2026-08-15-selftest.md'), '# 2026-08-15 事件卡\n\n内容……\n');
+const recAPath = join(recordsDir, 'rec-a.md');
+writeFileSync(recAPath, readFileSync(recAPath, 'utf8').replace('\n---\n', '\nsource: \'[[2026-08-15-selftest]]\'\n---\n'), 'utf8');
+const recBPath = join(recordsDir, 'rec-b.md');
+writeFileSync(recBPath, readFileSync(recBPath, 'utf8').replace('\n---\n', '\nsource: \'[[nonexistent-episode]]\'\n---\n'), 'utf8');
+writeFileSync(join(recordsDir, 'index.md'), '- [[rec-a|子序列证明模式]]\n');
+const s6Report = buildAuditReport(root, { parseHookFrontmatter, tokenize, maintainHookStats: true });
+check('s6: missing source detected', s6Report.structural?.missingSource >= 2, JSON.stringify(s6Report.structural));
+check('s6: broken link detected', s6Report.structural?.brokenLinks >= 1);
+check('s6: not-in-index detected', s6Report.structural?.notInIndex >= 3);
+check('s6: report carries 结构校验 line', s6Report.report.includes('结构校验'));
 
 // ── 11. dialogue-index cache schema gate (pre-filter caches must rebuild) ──
 check('cacheIndexValid: current version accepted', cacheIndexValid({ schemaVersion: 2, generatedAt: 1, sources: [], entries: [] }) === true);

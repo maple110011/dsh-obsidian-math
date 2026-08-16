@@ -49,6 +49,7 @@
 - unused（>30 天零使用）→ 在回复末尾一行向用户建议处置（合并/归档/保留），用户决定，不自行处理。
 - strong → 在相关讨论中把本轮验证有效的新技巧追加进 `hook.techniques`（reinforce）。
 - unverified → 保持 `single-source` 引用不变；用户确认后才能升级验证等级。
+- **结构校验**（缺 `source` / 断链 / 未入索引）→ 补上 `source` 指向 episode、修复断链链接、把缺失的卡片行补进 `records/index.md`——这是三写第 2 步的体检兜底，只在相关讨论出现时顺手做。
 
 ## 3. 笔记工作流
 

@@ -58,9 +58,10 @@ const LOG_SUFFIX = ".jsonl.zstd";
 const MAX_LOG_FILES = 20;
 // Layered injection budget (arXiv:2606.24775): the prompt carries navigation
 // layers only; raw evidence lives on disk and is reached via grep/read.
-// Slimmed static budgets (memory v2 recall injection): indexes are now
-// navigation-only; the per-request recall section carries the top-k relevant
-// content, so static layers no longer need to be exhaustive.
+// Slimmed static budgets (retrieval v3 S5): the injected layers are navigation
+// only — a topic/records/templates/episodes map that tells the agent what
+// exists. Relevant CONTENT is pulled on demand through note_recall instead of
+// being pushed into every prompt.
 const MAX_PROFILE_CHARS = 4000;
 const MAX_TOPIC_INDEX_CHARS = 1800;
 const MAX_RECORD_INDEX_CHARS = 800;
@@ -71,8 +72,6 @@ const MAX_DIALOGUE_PAIRS = 6;
 const MAX_DIALOGUE_CHARS = 3000;
 const DEFAULT_MAX_HISTORY_ENTRIES = 40;
 const DEFAULT_MAX_HISTORY_CHARS = 6000;
-const DEFAULT_RECALL_TOP_K = 6;
-const DEFAULT_RECALL_MAX_CHARS = 2200;
 // Memory-v2 audit pass (arXiv:2606.31191 ISM, localized): deterministic scan of
 // card frontmatter + hook fields, at most once per vault per auditIntervalMs.
 const AUDIT_FILE = join(CACHE_DIR, "memory-audit.json");
@@ -608,7 +607,9 @@ export function buildAuditReport(root, helpers) {
         successRate,
         verified: typeof hook?.verified === "string" ? hook.verified : null,
         days,
-        updated: meta.updated ?? ""
+        updated: meta.updated ?? "",
+        source: meta.source ?? "",
+        related: meta.related ?? ""
       });
     }
   }
@@ -641,6 +642,50 @@ export function buildAuditReport(root, helpers) {
   // Hook usage history (panel trend): one snapshot per day per hook card, with
   // the merged uses — trends must reflect the final post-merge numbers.
   writeHookHistory(root, cards);
+
+  // ── structural integrity checks (retrieval v3 S6) ──────────────────────────
+  // The three-write protocol is model-executed; these deterministic checks give
+  // the daily audit a structural backstop: records without source, provenance
+  // links pointing at nothing, and cards missing from the records index.
+  const structural = { missingSource: [], brokenLinks: [], notInIndex: [] };
+  const extractLinks = (raw) => {
+    const links = [];
+    const expression = /\[\[([^\[\]|#]+)(?:#[^\]\[]*)?(?:\|[^\]\[]*)?\]\]/g;
+    for (const field of [String(raw?.source ?? ""), String(raw?.related ?? "")]) {
+      let match;
+      expression.lastIndex = 0;
+      while ((match = expression.exec(field)) !== null) links.push(match[1].trim().replace(/\.md$/i, ""));
+    }
+    return links;
+  };
+  const linkExists = (target) => {
+    const candidates = [
+      `${target}.md`,
+      join(MEMORY_DIR, "memory", "episodes", `${target}.md`),
+      join(MEMORY_DIR, "memory", "records", `${target}.md`),
+      join(MEMORY_DIR, "memory", "topics", `${target}.md`),
+      join(MEMORY_DIR, "memory", "templates", `${target}.md`),
+      join(MEMORY_DIR, "inbox", `${target}.md`),
+      target
+    ];
+    return candidates.some((candidate) => existsSync(join(root, candidate)));
+  };
+  const recordsIndexText = (() => {
+    try {
+      return readFileSync(join(root, MEMORY_DIR, "memory", "records", "index.md"), "utf8");
+    } catch {
+      return "";
+    }
+  })();
+  for (const card of cards) {
+    if (!card.rel.includes("/records/")) continue; // source discipline applies to record cards
+    if (card.source.trim() === "") structural.missingSource.push(card.title);
+    for (const target of extractLinks(card)) {
+      if (!linkExists(target)) structural.brokenLinks.push(`${card.title}→[[${target}]]`);
+    }
+    const stem = card.rel.split("/").at(-1).replace(/\.md$/, "");
+    if (recordsIndexText !== "" && !recordsIndexText.includes(`[[${stem}`)) structural.notInIndex.push(card.title);
+  }
 
   const strong = cards.filter((card) => card.successRate !== null && card.successRate >= AUDIT_STRONG_RATE && card.uses >= 1);
   const weak = cards.filter((card) => card.successRate !== null && card.successRate <= AUDIT_WEAK_RATE && card.uses >= AUDIT_WEAK_USES);
@@ -687,6 +732,13 @@ export function buildAuditReport(root, helpers) {
   const counts = { cards: cards.length, strong: strong.length, weak: weak.length, unused: unused.length, duplicates: duplicates.length, unverified: unverified.length };
   if (cards.length > 0) {
     lines.push(`记忆体检（${today}，共 ${cards.length} 张卡）`);
+    if (structural.missingSource.length + structural.brokenLinks.length + structural.notInIndex.length > 0) {
+      const structuralParts = [];
+      if (structural.missingSource.length > 0) structuralParts.push(`缺 source: ${structural.missingSource.length} 张（${structural.missingSource.slice(0, 3).join("、")}）`);
+      if (structural.brokenLinks.length > 0) structuralParts.push(`断链: ${structural.brokenLinks.length} 处（${structural.brokenLinks.slice(0, 2).join("；")}）`);
+      if (structural.notInIndex.length > 0) structuralParts.push(`未入索引: ${structural.notInIndex.length} 张（${structural.notInIndex.slice(0, 3).join("、")}）`);
+      lines.push(`- 结构校验：${structuralParts.join("；")}——按 AGENTS.md 补 source、修断链、补索引行。`);
+    }
     for (const [label, items, formatter] of [
       ["strong（可 reinforce）", strong.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
       ["weak（建议改写并重置成功率）", weak.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
@@ -706,6 +758,11 @@ export function buildAuditReport(root, helpers) {
   return {
     generatedAt: Date.now(),
     counts,
+    structural: {
+      missingSource: structural.missingSource.length,
+      brokenLinks: structural.brokenLinks.length,
+      notInIndex: structural.notInIndex.length
+    },
     report: clip(lines.join("\n"), MAX_AUDIT_CHARS)
   };
 }
@@ -828,103 +885,6 @@ function titleOfMemoryFile(text, fallback) {
   return heading ?? fallback;
 }
 
-/**
- * Build the recall corpus: one lightweight doc per memory card / memo /
- * topic-index line / recent episode line. Rebuilt only when the memory
- * directories' mtimes change (see MemoryEngine.#recallCache).
- */
-export function buildRecallIndex(root, helpers) {
-  const docs = [];
-  const push = (kind, rel, title, text) => {
-    const flat = String(text ?? "").replace(/\s+/g, " ").trim();
-    if (flat === "") return;
-    docs.push({ kind, rel, title, text: flat });
-  };
-  for (const dir of [join(MEMORY_DIR, "memory", "records"), join(MEMORY_DIR, "memory", "templates")]) {
-    let names = [];
-    try {
-      names = readdirSync(join(root, dir), { withFileTypes: true })
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".md") && !AUDIT_CARD_SCAFFOLD.has(entry.name) && !entry.name.startsWith("_"))
-        .map((entry) => entry.name);
-    } catch {
-      continue;
-    }
-    for (const name of names) {
-      let text;
-      try {
-        text = readFileSync(join(root, dir, name), "utf8");
-      } catch {
-        continue;
-      }
-      const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-      const hook = fmMatch === null ? null : (helpers.parseHookFrontmatter?.(fmMatch[1]) ?? null);
-      const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").slice(0, 2000);
-      const hookText = [hook?.operator, hook?.pattern, hook?.techniques, hook?.applications, hook?.heuristics]
-        .filter((part) => Array.isArray(part) ? part.length > 0 : typeof part === "string" && part !== "")
-        .flat()
-        .join(" ");
-      const rel = join(dir, name).replace(/\\/g, "/");
-      push("card", rel, titleOfMemoryFile(text, name.replace(/\.md$/, "")), (name + " " + hookText + " " + body).slice(0, 2600));
-    }
-  }
-  const inboxDir = join(MEMORY_DIR, "inbox");
-  try {
-    for (const entry of readdirSync(join(root, inboxDir), { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith(".md") || MEMO_SCAFFOLD.has(entry.name) || entry.name.startsWith("_")) continue;
-      let text;
-      try {
-        text = readFileSync(join(root, inboxDir, entry.name), "utf8");
-      } catch {
-        continue;
-      }
-      const rel = join(inboxDir, entry.name).replace(/\\/g, "/");
-      push("memo", rel, titleOfMemoryFile(text, entry.name.replace(/\.md$/, "")), text.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").slice(0, 1500));
-    }
-  } catch {
-    // inbox missing: nothing to recall from there
-  }
-  for (const line of readMemoryFile(root, join(MEMORY_DIR, "memory", "topics", "index.md"), 4000).split("\n")) {
-    const clean = line.trim();
-    if (clean.startsWith("-")) push("topic", "topics/index.md", "主题", clean);
-  }
-  for (const line of episodeIndexDigest(root, 1200).split("\n")) {
-    const clean = line.trim();
-    if (clean.startsWith("-")) push("episode", "episodes/index.md", "事件", clean);
-  }
-  return docs;
-}
-
-/** Rank the recall corpus against the query; returns a bounded markdown list. */
-export function rankRecall(docs, queryText, helpers, topK, maxChars) {
-  const queryTokens = helpers.tokenize(queryText);
-  if (queryTokens.length === 0 || docs.length === 0) return "";
-  const tokenized = docs.map((doc) => helpers.tokenize(doc.text));
-  // memory v3 S2: BM25 replaces the overlap coefficient for recall ranking.
-  const stats = typeof helpers.computeCorpusStats === "function"
-    ? helpers.computeCorpusStats(tokenized)
-    : null;
-  const scored = docs.map((doc, i) => ({
-    doc,
-    score: stats !== null && typeof helpers.bm25Score === "function"
-      ? helpers.bm25Score(queryTokens, tokenized[i], stats)
-      : helpers.weightedOverlap(queryTokens, tokenized[i], helpers.computeDocFreq(tokenized))
-  }));
-  scored.sort((a, b) => b.score - a.score);
-  const lines = [];
-  let used = 0;
-  for (const { doc, score } of scored) {
-    if (score <= 0) continue;
-    const label = doc.kind === "card" ? "记忆卡" : doc.kind === "memo" ? "备忘录" : doc.kind === "topic" ? "主题" : "事件";
-    const stem = doc.rel.replace(/\.md$/, "");
-    const line = `- [[${stem}|${doc.title}]]（${label}，score ${score.toFixed(2)}）· ${clip(doc.text, 150)}`;
-    if (used + line.length + 1 > maxChars) break;
-    if (lines.length >= topK) break;
-    lines.push(line);
-    used += line.length + 1;
-  }
-  return lines.join("\n");
-}
-
 /** Episode timeline: keep the newest lines (list items only) within budget. */
 function episodeIndexDigest(root, maxChars) {
   const path = join(root, MEMORY_DIR, "memory", "episodes", "index.md");
@@ -990,7 +950,7 @@ function templateIndexDigest(root, maxChars) {
  * `context.agent` supplies the current session id so the live conversation is
  * never duplicated into the "past dialogue" index.
  */
-export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs }, currentSessionId, dialogueIndex, auditReport, recallText, memoText) {
+export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs }, currentSessionId, dialogueIndex, auditReport, memoText) {
   const profile = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "profile.md"), MAX_PROFILE_CHARS);
   const topics = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "topics", "index.md"), MAX_TOPIC_INDEX_CHARS);
   const records = recordIndexDigest(vaultRoot, MAX_RECORD_INDEX_CHARS);
@@ -1067,9 +1027,8 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
       "", "遇到新问题先做“问题蒸馏”（抽象成模板表达）再查这里；命中则读模板卡与关联定理并去重聚合。");
   }
 
-  if (recallText !== undefined && recallText !== "") {
-    lines.push("", "### 本轮记忆召回（按当前消息相关性 top-k；只是线索，细节仍按路由规则读文件）", "", recallText);
-  }
+  // (retrieval v3 S5: no per-request recall section — the static navigation
+  // layers above are the map; relevant content is pulled via note_recall.)
 
   if (episodes !== "") {
     lines.push("", "### 近期事件时间线（.deepseek/memory/episodes/index.md，最新在前）", "", episodes);
@@ -1153,11 +1112,8 @@ function normalizeConfig(config) {
   const auditIntervalMs = Number.isFinite(config.auditIntervalMs) && config.auditIntervalMs >= 0
     ? config.auditIntervalMs
     : DEFAULT_AUDIT_INTERVAL_MS;
-  const recallEnabled = config.recallEnabled !== false;
-  const recallTopK = Number.isInteger(config.recallTopK) && config.recallTopK > 0 ? config.recallTopK : DEFAULT_RECALL_TOP_K;
-  const recallMaxChars = Number.isInteger(config.recallMaxChars) && config.recallMaxChars > 0 ? config.recallMaxChars : DEFAULT_RECALL_MAX_CHARS;
   if (!isAbsolute(sessionsRoot)) throw new TypeError("obsidian-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, auditMaintainHookStats, auditIntervalMs, recallEnabled, recallTopK, recallMaxChars };
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, auditMaintainHookStats, auditIntervalMs };
 }
 
 function resolveVaultRoot(config, agent) {
@@ -1210,7 +1166,6 @@ class MemoryEngine {
   #fingerprint = "";
   #builtAt = 0;
   #auditCache = new Map();
-  #recallCache = new Map();
 
   constructor(config, helpers = {}) {
     this.#config = normalizeConfig(config);
@@ -1293,56 +1248,6 @@ class MemoryEngine {
     return report;
   }
 
-  /** Recall corpus per vault, rebuilt only when the memory dirs' mtimes change. */
-  recallDocsFor(vaultRoot) {
-    const fingerprint = (() => {
-      const parts = [];
-      for (const dir of [join(vaultRoot, MEMORY_DIR, "memory", "records"), join(vaultRoot, MEMORY_DIR, "memory", "templates"), join(vaultRoot, MEMORY_DIR, "inbox")]) {
-        let entries = [];
-        try {
-          entries = readdirSync(dir, { withFileTypes: true })
-            .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-            .map((entry) => entry.name);
-        } catch {
-          continue;
-        }
-        for (const name of entries) {
-          try {
-            const stats = statSync(join(dir, name));
-            parts.push(`${dir}/${name}|${stats.mtimeMs}|${stats.size}`);
-          } catch {
-            // gone while walking
-          }
-        }
-      }
-      for (const file of [join(vaultRoot, MEMORY_DIR, "memory", "topics", "index.md"), join(vaultRoot, MEMORY_DIR, "memory", "episodes", "index.md")]) {
-        try {
-          const stats = statSync(file);
-          parts.push(`${file}|${stats.mtimeMs}|${stats.size}`);
-        } catch {
-          // index not created yet
-        }
-      }
-      return parts.join("\n");
-    })();
-    const cached = this.#recallCache.get(vaultRoot);
-    if (cached !== undefined && cached.fingerprint === fingerprint) return cached.docs;
-    const docs = buildRecallIndex(vaultRoot, this.#helpers);
-    this.#recallCache.set(vaultRoot, { fingerprint, docs });
-    return docs;
-  }
-
-  recallTextFor(vaultRoot, query) {
-    const config = this.#config;
-    if (query === "" || !config.recallEnabled) return "";
-    try {
-      const docs = this.recallDocsFor(vaultRoot);
-      return rankRecall(docs, query, this.#helpers, config.recallTopK, config.recallMaxChars);
-    } catch {
-      return ""; // a failed recall must never break prompt assembly
-    }
-  }
-
   async sectionForAgent(agent) {
     const config = this.#config;
     try {
@@ -1355,9 +1260,8 @@ class MemoryEngine {
       const dialogueIndex = this.getDialogueIndex(vaultRoot);
       const auditReport = this.auditReportFor(vaultRoot);
       const query = latestUserText(agent);
-      const recallText = this.recallTextFor(vaultRoot, query);
       const memoText = memoDigest(vaultRoot, MAX_INBOX_CHARS, query, this.#helpers);
-      return buildMemorySection({ ...config, vaultRoot }, currentSessionId, dialogueIndex, auditReport, recallText, memoText);
+      return buildMemorySection({ ...config, vaultRoot }, currentSessionId, dialogueIndex, auditReport, memoText);
     } catch (error) {
       return `## 长期记忆（obsidian-memory 暂不可用）\n\n${String(error)}`;
     }

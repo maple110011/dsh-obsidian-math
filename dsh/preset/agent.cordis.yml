@@ -87,12 +87,8 @@
     auditEnabled: true
     auditIntervalMs: 86400000
     auditMaintainHookStats: true
-    # 本轮记忆召回（检索式注入）：按最近一条用户消息对卡片/备忘录/主题/事件
-    # 做相关性打分，把 top-k 注入系统提示；静态索引预算已相应瘦身。可整体
-    # 关闭：recallEnabled: false。
-    recallEnabled: true
-    recallTopK: 6
-    recallMaxChars: 2200
+    # 检索 v3（S5）：系统提示只注入导航层（主题/记录/模板/事件索引 = “有什么”），
+    # 相关内容按需用 note_recall 拉取，不再逐轮注入 top-k 召回。
     notes:
       # 留空 = 路径无关：vault 自动取会话 cwd 或 DSH_OBSIDIAN_VAULT。
       vaultRoot: ''

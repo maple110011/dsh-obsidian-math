@@ -55,18 +55,17 @@
 | templates index | 600 字符 |
 | episodes index（尾部最新行） | 1200 字符 |
 | inbox digest（含提醒候选） | 1200 字符 |
-| 本轮记忆召回（v2，按当前消息相关性 top-k） | 2200 字符 / 默认 6 条 |
 | 跨会话问答线索 | 最多 6 组 / 3000 字符 |
 | 记忆体检报告（v2） | 1200 字符 |
 
-静态索引已瘦身为“导航层”，相关内容由每轮召回段携带（对卡片/备忘录/主题/事件行做 IDF 加权相关性打分，取 top-k）；召回语料按记忆目录 mtime 指纹缓存，仅变化时重建。截断策略：`clip()` 从头截断（episodes 保留尾部）。
+静态索引即“导航层”（告诉模型有什么）；相关内容按需用 `note_recall` 拉取（检索 v3 S5，不再逐轮注入召回段）。截断策略：`clip()` 从头截断（episodes 保留尾部）。
 
 ## 4. 检索路由（AGENTS.md §5）
 
 粗到细的路由规则，核心是“注入的是导航，证据在磁盘”：
 
 - 关键词/tag 找笔记 → `note_search`；反链 → `note_links`；
-- v3（检索重构，见 retrieval-v3.md）：统一入口 `note_recall`——BM25 对笔记+全部记忆层一次排序，kind-aware passage，空结果/重试协议；「本轮记忆召回」按当前消息相关性注入 top-k（S5 将改按需导航）；
+- v3（检索重构，见 retrieval-v3.md）：统一入口 `note_recall`——BM25 对笔记+全部记忆层一次排序，kind-aware passage，空结果/重试协议；注入层只保留导航（S5 已移除逐轮召回段）；
 - **隐藏目录限制**：Obsidian 的 vault 索引排除所有点号开头的路径段（已核对 1.13.7 源码），`.deepseek` 文件无法经 openLinkText/TFile 打开——记忆面板点击卡片走插件内预览 Modal。
 - 精确事实/原话/日期 → grep episodes → 读命中文件；
 - 类型化事实 → records/index → grep/读记录 → `source` 回证据；
