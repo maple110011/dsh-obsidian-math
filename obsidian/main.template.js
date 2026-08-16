@@ -286,6 +286,13 @@ class LinkServer {
         finish(404, 'not found');
         return;
       }
+      // Same CSRF guard as /feedback: without the token, a GET from any
+      // webpage could open (or create, via openLinkText on a missing note)
+      // arbitrary vault notes while Obsidian is running.
+      if (this.token !== '' && url.searchParams.get('t') !== this.token) {
+        finish(403, 'bad token');
+        return;
+      }
       const rawPath = url.searchParams.get('path') ?? url.searchParams.get('note') ?? '';
       const notePath = decodeURIComponent(rawPath).trim();
       if (notePath === '' || notePath.length > 2000) {
@@ -559,6 +566,28 @@ class DshService {
 
 // ── embedded configuration bootstrap ────────────────────────────────────────
 
+const SKIN_FALLBACK_START = "# --- skin-disable fallback (auto-added: web profile missing) ---";
+const SKIN_FALLBACK_END = "# --- end skin-disable fallback ---";
+
+/**
+ * Extract the machine-local skin-disable fallback block (if present) so the
+ * plugin-owned refresh below never wipes it. The block is appended by
+ * syncGlobalPackageLinks when the web profile is missing; without this
+ * preservation, the auto-start path overwrites obsidian.patch.yml right
+ * after the fallback is added and the degraded profile dies on boot again.
+ */
+function readSkinFallbackBlock(patchPath) {
+  try {
+    const existing = readFileSync(patchPath, 'utf8');
+    const start = existing.indexOf(SKIN_FALLBACK_START);
+    const end = existing.indexOf(SKIN_FALLBACK_END, start);
+    if (start < 0 || end < 0) return '';
+    return existing.slice(start, end + SKIN_FALLBACK_END.length).trim();
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Plugin-owned profile overlay: always refresh the auto-workspace host plugin
  * and return the `--patch` path handed to the dsh launcher.
@@ -567,7 +596,16 @@ function ensureObsidianPatch(location) {
   const profileRoot = join(location.home, 'profiles', PRESET_NAME);
   ensureFile(join(profileRoot, 'obsidian-workspace.mjs'), EMBEDDED_PRESET['profile-obsidian-workspace.mjs'], true);
   const patchPath = join(profileRoot, 'obsidian.patch.yml');
-  ensureFile(patchPath, EMBEDDED_PRESET['profile-obsidian.patch.yml'], true);
+  // Refresh the embedded content AND re-apply the machine-local fallback in
+  // one write, so a degraded boot never sees a patch file missing its block.
+  const fallback = readSkinFallbackBlock(patchPath);
+  const content = EMBEDDED_PRESET['profile-obsidian.patch.yml'] + (fallback === '' ? '' : '\n\n' + fallback + '\n');
+  try {
+    mkdirSync(dirname(patchPath), { recursive: true });
+    writeFileSync(patchPath, content, 'utf8');
+  } catch {
+    // best-effort; boot will surface the real error if this fails
+  }
   return patchPath;
 }
 
@@ -615,10 +653,10 @@ function syncGlobalPackageLinks(home) {
     try {
       if (existsSync(overlay)) {
         const text = readFileSync(overlay, 'utf8');
-        if (!text.includes('--- skin-disable fallback ---')) {
+        if (!text.includes(SKIN_FALLBACK_START)) {
           const block = [
             '',
-            '# --- skin-disable fallback (auto-added: web profile missing) ---',
+            SKIN_FALLBACK_START,
             '- id: ui-skin-blue-fantasy',
             '  disabled: true',
             '- id: ui-skin-dragon-heir',
@@ -639,7 +677,7 @@ function syncGlobalPackageLinks(home) {
             '  disabled: true',
             '- id: ui-skin-xp',
             '  disabled: true',
-            '# --- end skin-disable fallback ---',
+            SKIN_FALLBACK_END,
             ''
           ].join('\n');
           writeFileSync(overlay, text.replace(/\s+$/, '') + '\n' + block, 'utf8');
@@ -1272,9 +1310,11 @@ class DshObsidianMathPlugin extends Plugin {
     // Obsidian internals catching plugin errors and calling new Notice(...);
     // recording the stack at setMessage time reveals the exact caller.
     const pluginRef = this;
+    this.originalNoticeSetMessage = null;
+    this.noticeWrapper = null;
     if (typeof Notice !== 'undefined' && typeof Notice.prototype?.setMessage === 'function') {
       const originalSetMessage = Notice.prototype.setMessage;
-      Notice.prototype.setMessage = function (message) {
+      const wrapper = function (message) {
         try {
           const text = typeof message === 'string' ? message : String(message ?? '');
           if (text.length > 0 && text.length < 400) {
@@ -1285,6 +1325,9 @@ class DshObsidianMathPlugin extends Plugin {
         }
         return originalSetMessage.call(this, message);
       };
+      Notice.prototype.setMessage = wrapper;
+      this.originalNoticeSetMessage = originalSetMessage;
+      this.noticeWrapper = wrapper;
     }
     this.linkServer = new LinkServer(this);
     this.linkServer.start();
@@ -1332,13 +1375,15 @@ class DshObsidianMathPlugin extends Plugin {
     // an opaque "e.toLowerCase is not a function" toast from outside our own
     // try/catch. Capture every uncaught error/rejection into the plugin log
     // so the exact throwing site (and its origin URL) becomes visible.
-    window.addEventListener('error', (event) => {
+    this.onWindowError = (event) => {
       this.service?.appendLog('[window-error] ' + String(event?.error ?? event?.message) + '\n' + (event?.error?.stack ?? '(no stack)'));
-    });
-    window.addEventListener('unhandledrejection', (event) => {
+    };
+    this.onUnhandledRejection = (event) => {
       const reason = event?.reason;
       this.service?.appendLog('[unhandledrejection] ' + String(reason) + '\n' + (reason?.stack ?? '(no stack)'));
-    });
+    };
+    window.addEventListener('error', this.onWindowError);
+    window.addEventListener('unhandledrejection', this.onUnhandledRejection);
     if (this.settings.autoInit) {
       this.app.workspace.onLayoutReady(() => {
         try {
@@ -1457,6 +1502,13 @@ class DshObsidianMathPlugin extends Plugin {
 
   onunload() {
     this.linkServer?.stop();
+    window.removeEventListener('error', this.onWindowError);
+    window.removeEventListener('unhandledrejection', this.onUnhandledRejection);
+    // Restore the toast instrumentation only if it is still ours (another
+    // plugin may have patched setMessage after us).
+    if (this.noticeWrapper !== null && typeof Notice !== 'undefined' && Notice.prototype?.setMessage === this.noticeWrapper) {
+      Notice.prototype.setMessage = this.originalNoticeSetMessage;
+    }
     if (this.service?.child !== null && !this.settings.keepAliveOnUnload) {
       this.service?.stop();
     }

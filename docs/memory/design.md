@@ -1,4 +1,4 @@
-# 记忆系统当前设计（v0.3.x 实现规格）
+# 记忆系统当前设计（v0.4.x 实现规格）
 
 > 本文档描述**代码里真实存在**的记忆系统，不是愿景。对应文件：
 > - 注入引擎：`dsh/preset/obsidian-memory.mjs`
@@ -34,14 +34,14 @@
 | 层 | 文件 | 内容 | 注入方式 |
 |---|---|---|---|
 | 语义层 | `memory/profile.md` | 现在仍成立的稳定偏好/记号/授权，带修订历史 | 摘要注入（≤4000 字符） |
-| 导航层 | `memory/topics/index.md` + `<topic>.md` | 主题路由索引与细节 | 索引注入（≤4000 字符） |
-| 记录层 | `memory/records/index.md` + `<slug>.md` | 类型化原子卡 fact/event/instruction/preference/artifact，带 id/source/变更历史，冲突 superseded | 索引注入（≤2000 字符） |
-| 证据层 | `memory/episodes/YYYY-MM-DD-*.md` | 每轮对话的原始事件卡，append-only | 时间线尾部注入（≤2500 字符）+ grep 按需读 |
-| 想法层 | `inbox/<slug>.md` | 想法 memo，状态 inbox→polishing→done | 状态摘要注入（≤2200 字符） |
+| 导航层 | `memory/topics/index.md` + `<topic>.md` | 主题路由索引与细节 | 索引注入（≤1800 字符） |
+| 记录层 | `memory/records/index.md` + `<slug>.md` | 类型化原子卡 fact/event/instruction/preference/artifact，带 id/source/变更历史，冲突 superseded | 索引注入（≤800 字符） |
+| 证据层 | `memory/episodes/YYYY-MM-DD-*.md` | 每轮对话的原始事件卡，append-only | 时间线尾部注入（≤1200 字符）+ grep 按需读 |
+| 想法层 | `inbox/<slug>.md` | 想法 memo，状态 inbox→polishing→done | 状态摘要注入（≤1200 字符） |
 
 辅助结构：
 - `memory/theorems/index.md`：个人 Matlas 定理索引（一行一条，领域/关键词/状态）；
-- `memory/templates/<slug>.md`：问题模板卡（题型/解法 ↔ 定理关联图），索引注入 ≤1500 字符；
+- `memory/templates/<slug>.md`：问题模板卡（题型/解法 ↔ 定理关联图），索引注入 ≤600 字符；
 - `cache/`：机器生成的对话索引与记忆体检报告（用户勿动）。
 
 ## 3. 注入预算（`obsidian-memory.mjs` 常量）

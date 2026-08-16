@@ -26,8 +26,10 @@
 
 依据了记忆卡的回复末尾，代理渲染一对反馈链接（当 `DSH_OBSIDIAN_LINK_URL` 可用时）：
 
-`[✅ 这条对](http://127.0.0.1:<port>/feedback?path=<卡路径>&action=confirm)`
-`[❌ 这条错](http://127.0.0.1:<port>/feedback?path=<卡路径>&action=wrong)`
+`[✅ 这条对](http://127.0.0.1:<port>/feedback?path=<卡路径>&action=confirm&t=<token>)`
+`[❌ 这条错](http://127.0.0.1:<port>/feedback?path=<卡路径>&action=wrong&t=<token>)`
+
+> `t=` 为 CSRF 校验参数（`DSH_OBSIDIAN_FEEDBACK_TOKEN`，由系统提示注入进链接模板）；省略会被端点拒绝（403）。`/open` 链接同样带 `t=`。
 
 点击后由 Obsidian 插件的 loopback LinkServer 直接、确定性地改写该卡 frontmatter（不经模型、不经 dsh 沙箱）：
 

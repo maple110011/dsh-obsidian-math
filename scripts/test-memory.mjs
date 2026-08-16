@@ -23,7 +23,9 @@ import {
   rankRecall,
   memoDigest,
   latestUserText,
-  pairMessages
+  pairMessages,
+  cacheIndexValid,
+  buildMemorySection
 } from '../dsh/preset/obsidian-memory.mjs';
 
 const results = [];
@@ -242,6 +244,26 @@ check('B1: stats zeroed after merge', statsAfter['.deepseek/memory/records/rec-a
 
 // ── 10. D: cache freshness helper ───────────────────────────────────────────
 check('cacheEntryFresh', cacheEntryFresh({ mtimeMs: 1, size: 2, raw: 'x' }, 1, 2) === true && cacheEntryFresh({ mtimeMs: 1, size: 2, raw: 'x' }, 1, 3) === false);
+
+// ── 11. dialogue-index cache schema gate (pre-filter caches must rebuild) ──
+check('cacheIndexValid: current version accepted', cacheIndexValid({ schemaVersion: 2, generatedAt: 1, sources: [], entries: [] }) === true);
+check('cacheIndexValid: pre-filter cache (no version) rejected', cacheIndexValid({ generatedAt: 1, sources: [], entries: [] }) === false);
+check('cacheIndexValid: older version rejected', cacheIndexValid({ schemaVersion: 1, generatedAt: 1, sources: [], entries: [] }) === false);
+check('cacheIndexValid: malformed rejected', cacheIndexValid(null) === false && cacheIndexValid({ schemaVersion: 2 }) === false);
+
+// ── 12. loopback link templates carry the CSRF token ───────────────────────
+const prevLinkUrl = process.env.DSH_OBSIDIAN_LINK_URL;
+const prevFeedbackToken = process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN;
+process.env.DSH_OBSIDIAN_LINK_URL = 'http://127.0.0.1:39999';
+process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = 'test-token-42';
+const linkSection = buildMemorySection(
+  { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
+  'live-session', { sources: [], entries: [] }, undefined, '', '');
+check('links: /open template carries t=', linkSection.includes('/open?path=<vault 相对路径，需 URL 编码>&t=test-token-42)'));
+check('links: /feedback confirm carries t=', linkSection.includes('action=confirm&t=test-token-42)'));
+check('links: /feedback wrong carries t=', linkSection.includes('action=wrong&t=test-token-42)'));
+if (prevLinkUrl === undefined) delete process.env.DSH_OBSIDIAN_LINK_URL; else process.env.DSH_OBSIDIAN_LINK_URL = prevLinkUrl;
+if (prevFeedbackToken === undefined) delete process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN; else process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = prevFeedbackToken;
 
 rmSync(root, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok).length;

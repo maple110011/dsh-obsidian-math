@@ -2,6 +2,26 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 推送前修复轮（feedback token 接线 / 缓存 schemaVersion / 皮肤 fallback 时序）
+
+### 背景
+
+上一轮全面评估在本机部署实测后给出三个必修项：feedback 链接断裂（CSRF 修复不完整）、dialogue-index 缓存语义失效、皮肤降级 fallback 时序错误。全部修复并回归：`npm test` 33/33 全绿（新增 7 项断言），安装器 e2e + 漂移检测通过。
+
+### 改动
+
+1. **feedback 链接 token 接线**：A 轮给 `/feedback` 加 CSRF token 时，注入给模型的链接模板没有同步带 `t=`——回复里的 `[✅ 这条对] [❌ 这条错]` 点击必 403，纠错闭环实际断开。`obsidian-memory.mjs` 读取 `DSH_OBSIDIAN_FEEDBACK_TOKEN`，把 `&t=<token>` 拼进 `/open` 与 `/feedback` 链接模板；`/open` 端点同步加 token 校验（此前任意网页 GET 即可触发 openLinkText，包括创建不存在的笔记——vault 污染面）；AGENTS.md §8 更新链接模板与“照抄完整模板，不得省略 t=”纪律。
+2. **dialogue-index 缓存 schemaVersion**：0.4.0 的 vault 过滤修复对“旧代码写出的磁盘缓存”无效（指纹命中直接复用），跨工作区会话内容会继续注入。索引带 `schemaVersion: 2`，导出 `cacheIndexValid` 做版本门控，旧缓存一律重建；本机残留的 08-15 旧缓存（含编码工作区会话源）随部署清理。
+3. **皮肤降级 fallback 时序**：fallback 块追加发生在 autoStart 的 `ensureObsidianPatch`（overwrite）之前，必被擦除。刷新现在提取并重放 fallback 块；两处 marker 收拢为共享常量 `SKIN_FALLBACK_START/END`。
+4. **卸载清理**：全局 error/unhandledrejection 监听与 `Notice.prototype.setMessage` 补丁在 onunload 移除/恢复（补丁仅在仍属本插件时恢复，不覆盖他人补丁）。
+5. **文档漂移修复**：design.md 标题回到 0.4.x，§2 各层预算与 §3/代码对齐（topics 1800 / records 800 / templates 600 / episodes 1200 / inbox 1200 字符）。
+
+### 回归
+
+- `scripts/test-memory.mjs` 新增第 11 节（缓存版本门控 4 断言）与第 12 节（链接模板 token 3 断言），总数 26 → 33，全绿；
+- main.js 重建（207,592 bytes），嵌入内容验证通过；
+- 教训入档：**给端点加防护时，必须同步更新所有渲染该端点的提示词模板**（见 handoff.md §4 新坑）。
+
 ## 2026-08 · A→F 全面修复轮（发布前最后一批）
 
 - **A（必修 bug）**：`hook.uses` 双计（stats 合并后清零）；AGENTS.md weak 规则与 hook 纪律矛盾（success_rate 归插件）；主视图 activateView 补 null-leaf 兜底；/feedback 加 CSRF token（`DSH_OBSIDIAN_FEEDBACK_TOKEN`）；debug.log 1MB 轮转；stats 写入串行队列；安装器漂移检测（11 对文件内容比对）。

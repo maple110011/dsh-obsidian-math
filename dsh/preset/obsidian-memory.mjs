@@ -49,6 +49,11 @@ const ZSTD_MAGIC = 4247762216; // little-endian 28 B5 2F FD
 const MEMORY_DIR = ".deepseek";
 const CACHE_DIR = join(MEMORY_DIR, "cache");
 const CACHE_FILE = join(CACHE_DIR, "dialogue-index.json");
+// Semantic version of the dialogue index. Bump whenever the index builder's
+// semantics change (e.g. the vault-containment filter added in 0.4.0): the
+// on-disk cache is only reused when its version matches, so a stale cache
+// written by older code can never leak cross-workspace content again.
+const DIALOGUE_INDEX_VERSION = 2;
 const LOG_SUFFIX = ".jsonl.zstd";
 const MAX_LOG_FILES = 20;
 // Layered injection budget (arXiv:2606.24775): the prompt carries navigation
@@ -299,6 +304,7 @@ export function buildDialogueIndex(sessionsRoot, maxEntries, maxChars, maxFiles 
     }
   }
   return {
+    schemaVersion: DIALOGUE_INDEX_VERSION,
     generatedAt: Date.now(),
     sources,
     entries
@@ -910,14 +916,19 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
 
   // When the Obsidian plugin provides its loopback link server, tell the
   // agent to render note references in replies as clickable links so the
-  // user can jump straight into Obsidian from the sidebar iframe.
+  // user can jump straight into Obsidian from the sidebar iframe. The same
+  // server's /open and /feedback endpoints are guarded by a CSRF token that
+  // the plugin passes via DSH_OBSIDIAN_FEEDBACK_TOKEN — the rendered link
+  // templates MUST carry it as t= or the click is rejected with 403.
   const linkBaseUrl = process.env.DSH_OBSIDIAN_LINK_URL?.trim() ?? "";
   if (linkBaseUrl !== "") {
+    const linkToken = process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN?.trim() ?? "";
+    const tokenSuffix = linkToken === "" ? "" : `&t=${linkToken}`;
     lines.push(
-      `- 回复正文中引用笔记时，使用可点击链接：[标题](${linkBaseUrl}/open?path=<vault 相对路径，需 URL 编码>)；`,
+      `- 回复正文中引用笔记时，使用可点击链接：[标题](${linkBaseUrl}/open?path=<vault 相对路径，需 URL 编码>${tokenSuffix})；`,
       "  点击即可在 Obsidian 中打开对应笔记。笔记文件内部仍写 [[wikilink]]，两者不要混用。",
       `- 引用记忆卡时标注验证等级徽标：✅用户确认（hook.verified=user-confirmed）/ ⚖️互证（cross-referenced）/ ❓单源（single-source 或缺失）。`,
-      `- 本回复依据了记忆卡时，在末尾给反馈链接（path 为该卡 vault 相对路径，需 URL 编码）：[✅ 这条对](${linkBaseUrl}/feedback?path=<卡路径>&action=confirm) [❌ 这条错](${linkBaseUrl}/feedback?path=<卡路径>&action=wrong)；用户点击后由 Obsidian 插件直接改写验证等级与成功率，无需你代劳。`
+      `- 本回复依据了记忆卡时，在末尾给反馈链接（path 为该卡 vault 相对路径，需 URL 编码）：[✅ 这条对](${linkBaseUrl}/feedback?path=<卡路径>&action=confirm${tokenSuffix}) [❌ 这条错](${linkBaseUrl}/feedback?path=<卡路径>&action=wrong${tokenSuffix})；用户点击后由 Obsidian 插件直接改写验证等级与成功率，无需你代劳。`
     );
   }
 
@@ -1048,10 +1059,21 @@ function fingerprint(logs) {
   return logs.map((log) => `${log.path}|${log.mtimeMs}|${log.size}`).join("\n");
 }
 
+/** True when a parsed dialogue-index cache is structurally valid AND written by
+ * the current index semantics (schemaVersion gate). Exported for the zero-token
+ * regression check. */
+export function cacheIndexValid(cached) {
+  return cached !== null && typeof cached === "object" &&
+    cached.schemaVersion === DIALOGUE_INDEX_VERSION &&
+    Array.isArray(cached.entries) && Array.isArray(cached.sources);
+}
+
 function readCachedIndex(cachePath) {
   try {
     const cached = JSON.parse(readFileSync(cachePath, "utf8"));
-    if (Array.isArray(cached?.entries) && Array.isArray(cached?.sources)) return cached;
+    if (cacheIndexValid(cached)) return cached;
+    // A cache without (or with an older) schemaVersion was written by pre-filter
+    // code: never reuse it, rebuild under the current semantics.
   } catch {
     // Cache missing/corrupt: rebuild.
   }

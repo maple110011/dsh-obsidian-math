@@ -1,7 +1,7 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、已修坑、未做事项与工作约定。
-> 最后更新：2026-08-16（0.4.0 发布前）。
+> 最后更新：2026-08-16（推送前修复轮完成后；feedback token 接线 / 缓存 schemaVersion / 皮肤 fallback 时序）。
 
 ## 1. 项目是什么
 
@@ -36,6 +36,7 @@
 **管**：验证徽标（✅⚖️❓）+ 反馈链接（/feedback，confirm/wrong/stale/forget，CSRF token）+ Obsidian 记忆面板（浏览/搜索/逐卡操作/预览弹窗；入口=设置页按钮+命令面板，brain 标签图标）。
 **质量**：26 项零 token 回归 + 安装器漂移检测 + 被动信号（uses/success_rate）。
 **皮肤**：@linxin666 皮肤在 obsidian profile 直接生效（junction 镜像 + web profile 缺失时自动降级禁用）。
+**修复轮（推送前）**：/open 与 /feedback 链接带 `t=` token（模型模板 + 端点双端接线）；dialogue-index 缓存加 `schemaVersion: 2` 门控；皮肤降级 fallback 在 overlay 刷新时提取重放；卸载清理全局监听与 Notice 补丁；design.md 预算漂移修复。`npm test` 33/33 全绿。
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
@@ -46,10 +47,13 @@
 5. **皮肤管理器全局 patch**（`$DSH_HOME/cordis.patch.yml`）把当前皮肤 insert 进**所有** profile；profile 自己的 cordis.patch.yml 盖不过它（应用顺序：bundle → profile patch → 全局 patch → --patch overlay）。持久解 = junction 镜像（已内置）。
 6. **插件 bootstrap 每次加载强制刷新** `obsidian-memory.mjs/obsidian-notes.mjs/cordis.yml/obsidian-workspace.mjs/obsidian.patch.yml`（overwrite=true）——机器本地手改这些文件会被冲掉，改动必须进仓库。
 7. 历史 bug 已修：readdirSync 未导入（归档静默失败）、uses 双计、AGENTS.md success_rate 矛盾、主视图 null-leaf 兜底缺失。
+8. **防护必须双端接线**：给 loopback 端点加 CSRF/权限校验时，必须同步更新注入给模型的链接模板（`t=`）；只改端点不改模板 = 点击闭环静默断裂（0.4.0 的 /feedback 正是如此，修复前所有反馈链接 403）。
+9. **缓存语义变更必须带版本**：`cache/dialogue-index.json` 按 path|mtime|size 指纹复用；任何过滤/配对语义变化都要 bump `schemaVersion`（现为 2），否则旧代码写出的缓存继续生效——跨工作区会话泄漏的根因。
+10. **fallback 写入必须抵抗刷新**：插件自有的 `obsidian.patch.yml` 每次加载 overwrite 刷新；任何运行时追加的机器本地块都要在刷新路径（`ensureObsidianPatch`）里提取重放，否则追加即被擦除。
 
 ## 5. 用户决策记录（不要推翻）
 
-- **版本策略**：本地调试可滚动小版本，**对外发布统一 0.4.0**（仓库已复位）。
+- **版本策略**：0.4.0 已发布（含 A-F 轮）；推送前修复轮对外发布为 **0.4.1**（bugfix release，不重写已发布的 0.4.0 标签）。
 - **不做 benchmark**（烧 token + 无对口公开基准）：零 token 回归 + 被动信号 + 可选一次性手动探针。
 - **记忆面板入口**：设置页按钮 + 命令面板，不设独立 ribbon；brain 图标仅作视图标签。
 - **皮肤**：让 obsidian profile **直接应用**主 web 所选皮肤（不维护禁用清单）。
@@ -68,15 +72,20 @@ dsh --profile obsidian --patch <home>/profiles/obsidian/obsidian.patch.yml --dum
 
 ## 7. 未做/下一步候选（供挑选）
 
-| 方向 | 说明 | 预估 |
-|---|---|---|
-| embedding 后端 | 召回/检索的 lexical 项可换本地 bge-small-zh；接口已预留 | 1-2 天 |
-| 面板内编辑记忆 | 预览 Modal 目前只读；加编辑+保存（node fs 直写 + mtime 冲突检查） | 1 天 |
-| 捕获策略分级（1c） | 偏好/事实/想法 × auto/ask/off，写入 profile | 半天 |
-| 皮肤切换自愈 | 新皮肤 id 出现时无需任何维护（junction 已保证解析）；仅 web profile 缺失时需补降级清单 | 已覆盖 |
-| 统计可视化 | 面板展示 uses/success_rate 趋势（数据已齐） | 半天 |
-| 多 vault 支持 | 当前单 vault 假设（DSH_OBSIDIAN_VAULT） | 2-3 天 |
-| 指标面板 | recall@k / 幻觉率 / 首 token 延迟 / 每会话成本 的轻量采集 | 1 天 |
+**下一轮安排（按优先级；序 0 是本轮修复的验收，先行）**：
+
+| 序 | 方向 | 说明 | 预估 |
+|---|---|---|---|
+| 0 | 修复验收（用户实测） | 重载 Obsidian → 服务重启 → 验证：反馈链接带 `t=` 且点击生效；体检报告首次生成（`cache/memory-audit.json`）；dialogue-index 重建后不含非 vault 会话源；皮肤照常加载 | 半小时 |
+| 1 | 捕获策略分级（1c） | 偏好/事实/想法 × auto/ask/off，写入 profile；与面板联动 | 半天 |
+| 2 | 面板内编辑记忆 | 预览 Modal 加编辑+保存（node fs 直写 + mtime 冲突检查），补上控制面闭环的“编辑”一环 | 1 天 |
+| 3 | 统计可视化 | 面板展示 uses/success_rate 趋势（数据已齐） | 半天 |
+| 4 | 低危清单清理 | note_search 排除 .deepseek（按工具维度）；episode 归档同步 records 的 source 链接；probeService 端口占用提示；DSH_PERMISSION_MODE 文档措辞 | 半天~1 天 |
+| 5 | embedding 后端（可选） | 召回/检索的 lexical 项换本地 bge-small-zh；接口已预留 | 1-2 天 |
+| 6 | 多 vault 支持 | 解除单 vault 假设（DSH_OBSIDIAN_VAULT） | 2-3 天 |
+| 7 | 指标面板 | recall@k / 幻觉率 / 首 token 延迟 / 每会话成本 的轻量采集 | 1 天 |
+
+顺序理由：0 先确认本轮闭环恢复；1-2 把“管”的最后两块补完（策略分级是 control-panel.md 阶段 1c 的既定件，编辑是面板只读缺口的自然补全）；3 零成本可视；4 清债；5-7 属架构级，等 1-4 稳定后再动。皮肤切换自愈已由 junction 机制覆盖，无需维护。
 
 ## 8. 与用户协作约定
 
