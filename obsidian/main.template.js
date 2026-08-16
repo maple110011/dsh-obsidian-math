@@ -943,6 +943,20 @@ function collectMemoryState(vaultPath, filter) {
       return [];
     }
   };
+  const hookHistory = (() => {
+    const map = new Map();
+    try {
+      const parsed = JSON.parse(readFileSync(join(vaultPath, '.deepseek', 'cache', 'hook-history.json'), 'utf8'));
+      if (parsed !== null && typeof parsed === 'object' && parsed.snapshots !== null && typeof parsed.snapshots === 'object') {
+        for (const [rel, points] of Object.entries(parsed.snapshots)) {
+          if (Array.isArray(points)) map.set(rel, points);
+        }
+      }
+    } catch {
+      // no history yet
+    }
+    return map;
+  })();
   const cardEntries = (dir) => listDir(dir)
     .filter((name) => name !== 'index.md' && !name.startsWith('_'))
     .map((name) => {
@@ -967,7 +981,8 @@ function collectMemoryState(vaultPath, filter) {
         successRate: Number.isFinite(Number(hook?.success_rate)) ? Number(hook.success_rate) : null,
         lastUsed: typeof hook?.last_used === 'string' ? hook.last_used : '',
         verified: typeof hook?.verified === 'string' ? hook.verified : null,
-        operator: typeof hook?.operator === 'string' ? hook.operator : ''
+        operator: typeof hook?.operator === 'string' ? hook.operator : '',
+        history: hookHistory.get(`${dir}/${name}`) ?? []
       };
     })
     .filter((entry) => entry !== null);
@@ -1320,6 +1335,11 @@ class MemoryView extends ItemView {
     if (badge !== '') parts.push(badge);
     parts.push(`uses ${card.uses}`);
     if (card.successRate !== null) parts.push(`成功率 ${card.successRate}`);
+    const points = Array.isArray(card.history) ? card.history.filter((p) => p !== null && typeof p === 'object') : [];
+    if (points.length >= 2) {
+      const trend = points.slice(-5).map((p) => `${typeof p.uses === 'number' ? p.uses : 0}${typeof p.successRate === 'number' ? '@' + p.successRate : ''}`).join('→');
+      parts.push(`📈 ${trend}`);
+    }
     if (card.lastUsed !== '') parts.push(`上次 ${card.lastUsed}`);
     if (card.updated !== '') parts.push(daysSinceText(card.updated));
     row.createDiv({ cls: 'dsh-memory-meta', text: parts.join(' · ') });

@@ -39,6 +39,7 @@
 **修复轮（推送前）**：/open 与 /feedback 链接带 `t=` token（模型模板 + 端点双端接线）；dialogue-index 缓存加 `schemaVersion: 2` 门控；皮肤降级 fallback 在 overlay 刷新时提取重放；卸载清理全局监听与 Notice 补丁；design.md 预算漂移修复。`npm test` 33/33 全绿。
 **1c 捕获策略分级**：`capture-policy.md`（idea/fact/preference × auto/ask/off，默认 ask/auto/auto）+ 系统提示注入 + 面板摘要 + 三路模板安装；回归 33 → 38。
 **序 2 面板内编辑**：预览弹窗「编辑/保存」+ mtime 冲突防护 + 保存后刷新；策略文件面板内可点开直改。
+**序 3 趋势可视化**：`cache/hook-history.json` 每日快照 + 面板近 5 点 `📈` 迷你趋势；回归 38 → 42。
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
@@ -81,7 +82,7 @@ dsh --profile obsidian --patch <home>/profiles/obsidian/obsidian.patch.yml --dum
 | 0 | 修复验收（用户实测） | 重载 Obsidian → 服务重启 → 验证：反馈链接带 `t=` 且点击生效；体检报告首次生成（`cache/memory-audit.json`）；dialogue-index 重建后不含非 vault 会话源；皮肤照常加载 | 半小时 |
 | 1 | 捕获策略分级（1c） | 偏好/事实/想法 × auto/ask/off，写入 profile；与面板联动 | ✅ 已实现（`capture-policy.md`；面板内编辑随序 2） |
 | 2 | 面板内编辑记忆 | 预览 Modal 加编辑+保存（node fs 直写 + mtime 冲突检查），补上控制面闭环的“编辑”一环 | ✅ 已实现（含策略文件快捷编辑入口） |
-| 3 | 统计可视化 | 面板展示 uses/success_rate 趋势（数据已齐） | 半天 |
+| 3 | 统计可视化 | 面板展示 uses/success_rate 趋势（数据已齐） | ✅ 已实现（hook-history.json 快照 + 📈 迷你趋势） |
 | 4 | 低危清单清理 | note_search 排除 .deepseek（按工具维度）；episode 归档同步 records 的 source 链接；probeService 端口占用提示；DSH_PERMISSION_MODE 文档措辞 | 半天~1 天 |
 | 5 | embedding 后端（可选） | 召回/检索的 lexical 项换本地 bge-small-zh；接口已预留 | 1-2 天 |
 | 6 | 多 vault 支持 | 解除单 vault 假设（DSH_OBSIDIAN_VAULT） | 2-3 天 |

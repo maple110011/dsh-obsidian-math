@@ -26,7 +26,8 @@ import {
   pairMessages,
   cacheIndexValid,
   buildMemorySection,
-  parseCapturePolicy
+  parseCapturePolicy,
+  buildHookHistory
 } from '../dsh/preset/obsidian-memory.mjs';
 
 const results = [];
@@ -287,6 +288,21 @@ const policySection = buildMemorySection(
 check('policy: section injected with modes',
   policySection.includes('想法 idea: ask') && policySection.includes('事实 fact（事实/事件/指令）: ask') && policySection.includes('偏好 preference: off'));
 check('policy: file present → no missing-file hint', !policySection.includes('策略文件缺失'));
+
+// ── 14. hook usage history (panel trend, handoff item 3) ───────────────────
+const hookCards = [
+  { rel: '.deepseek/memory/records/rec-a.md', hook: { uses: '1' }, uses: 4, successRate: 0.8 },
+  { rel: '.deepseek/memory/records/rec-b.md', hook: { uses: '5' }, uses: 6, successRate: 0.9 },
+  { rel: '.deepseek/memory/records/no-hook.md', hook: null, uses: 1, successRate: null }
+];
+const h1 = buildHookHistory({}, hookCards, '2026-08-15');
+check('history: appends one point per hook card', h1.snapshots['.deepseek/memory/records/rec-a.md']?.length === 1 && h1.snapshots['.deepseek/memory/records/no-hook.md'] === undefined);
+const h2 = buildHookHistory(h1, hookCards, '2026-08-16');
+check('history: new day appends', h2.snapshots['.deepseek/memory/records/rec-a.md']?.length === 2);
+const h3 = buildHookHistory(h2, hookCards, '2026-08-16');
+check('history: same day updates in place', h3.snapshots['.deepseek/memory/records/rec-a.md']?.length === 2 && h3.snapshots['.deepseek/memory/records/rec-a.md'][1].date === '2026-08-16');
+const h4 = buildHookHistory(h3, hookCards, '2026-08-17', 3);
+check('history: per-card cap respected', h4.snapshots['.deepseek/memory/records/rec-a.md']?.length <= 3);
 
 rmSync(root, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok).length;

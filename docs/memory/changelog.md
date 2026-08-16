@@ -2,6 +2,12 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · hook 趋势可视化（handoff 序 3）
+
+- **历史记录**：`buildAuditReport` 在每日体检末尾调用 `writeHookHistory`——纯函数 `buildHookHistory`（导出，可测）按“同日更新原位、新日追加”把 `{date, uses, successRate}` 写入 `cache/hook-history.json`；每卡 30 点、全局 500 卡有界；只记带 block-style hook 的卡。
+- **面板渲染**：`collectMemoryState` 读历史并挂到卡片条目；`cardRow` 有 ≥2 点历史时在 meta 行渲染近 5 点迷你趋势 `📈 4@0.8→6@0.9`（uses@成功率）。
+- **回归**：第 14 节新增 4 断言（追加/新日追加/同日原位/容量上限），总数 38 → 42，全绿。
+
 ## 2026-08 · 捕获策略分级（控制面 1c）落地
 
 ### 背景

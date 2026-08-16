@@ -638,6 +638,10 @@ export function buildAuditReport(root, helpers) {
     }
   }
 
+  // Hook usage history (panel trend): one snapshot per day per hook card, with
+  // the merged uses — trends must reflect the final post-merge numbers.
+  writeHookHistory(root, cards);
+
   const strong = cards.filter((card) => card.successRate !== null && card.successRate >= AUDIT_STRONG_RATE && card.uses >= 1);
   const weak = cards.filter((card) => card.successRate !== null && card.successRate <= AUDIT_WEAK_RATE && card.uses >= AUDIT_WEAK_USES);
   const unused = cards.filter((card) => card.uses === 0 && card.status === "active" && (card.days === null || card.days > AUDIT_UNUSED_DAYS));
@@ -704,6 +708,57 @@ export function buildAuditReport(root, helpers) {
     counts,
     report: clip(lines.join("\n"), MAX_AUDIT_CHARS)
   };
+}
+
+// ── hook usage history (panel trend visualization, handoff item 3) ───────
+
+const HOOK_HISTORY_FILE = join(CACHE_DIR, "hook-history.json");
+const HOOK_HISTORY_MAX_POINTS = 30;
+const HOOK_HISTORY_MAX_CARDS = 500;
+
+/**
+ * Pure daily-snapshot builder for the panel trend view: one point per card
+ * per day ({date, uses, successRate}); same-day audits update the last point
+ * in place instead of appending. Per-card and global bounds keep the file
+ * small. Cards without a block-style hook are skipped (nothing to trend).
+ */
+export function buildHookHistory(existing, cards, today, maxPoints = HOOK_HISTORY_MAX_POINTS, maxCards = HOOK_HISTORY_MAX_CARDS) {
+  const prev = existing !== null && typeof existing === "object" && existing.snapshots !== null && typeof existing.snapshots === "object"
+    ? existing.snapshots
+    : {};
+  const snapshots = {};
+  for (const card of cards) {
+    if (card.hook === null) continue;
+    const list = Array.isArray(prev[card.rel]) ? prev[card.rel].slice(0, Math.max(0, maxPoints - 1)) : [];
+    const point = { date: today, uses: card.uses, successRate: card.successRate };
+    const last = list[list.length - 1];
+    if (last !== undefined && last.date === today) list[list.length - 1] = point;
+    else list.push(point);
+    snapshots[card.rel] = list;
+  }
+  const keys = Object.keys(snapshots);
+  if (keys.length > maxCards) {
+    keys.sort((a, b) => (snapshots[b].at(-1)?.date ?? "").localeCompare(snapshots[a].at(-1)?.date ?? ""));
+    for (const key of keys.slice(maxCards)) delete snapshots[key];
+  }
+  return { generatedAt: Date.now(), maxPoints, snapshots };
+}
+
+function writeHookHistory(root, cards) {
+  let existing = {};
+  try {
+    const raw = JSON.parse(readFileSync(join(root, HOOK_HISTORY_FILE), "utf8"));
+    if (raw !== null && typeof raw === "object") existing = raw;
+  } catch {
+    // missing/corrupt history: start fresh
+  }
+  try {
+    const next = buildHookHistory(existing, cards, localDateString());
+    mkdirSync(join(root, CACHE_DIR), { recursive: true });
+    writeFileSync(join(root, HOOK_HISTORY_FILE), JSON.stringify(next, null, 2), "utf8");
+  } catch {
+    // history is advisory; a failed write must never break the audit
+  }
 }
 
 function hookText(hook, key) {

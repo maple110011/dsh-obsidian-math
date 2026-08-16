@@ -119,7 +119,7 @@ vault/
     memory/episodes/                 证据层（index + 日期文件 + archive/）
     inbox/                           想法层（index + <slug>.md）
     capture-policy.md                捕获策略（idea/fact/preference × auto/ask/off，用户维护）
-    cache/                           机器生成的对话索引（勿动）
+    cache/                           机器生成缓存：对话索引/体检报告/hook 历史（勿动）
 ```
 
 ## 8. 回复与信息组织规范

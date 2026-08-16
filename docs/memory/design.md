@@ -43,7 +43,7 @@
 - `memory/theorems/index.md`：个人 Matlas 定理索引（一行一条，领域/关键词/状态）；
 - `memory/templates/<slug>.md`：问题模板卡（题型/解法 ↔ 定理关联图），索引注入 ≤600 字符；
 - `capture-policy.md`：捕获策略（idea/fact/preference × auto/ask/off，frontmatter，用户维护；随系统提示注入，默认 ask/auto/auto 与既有行为一致）；
-- `cache/`：机器生成的对话索引与记忆体检报告（用户勿动）。
+- `cache/`：机器生成的对话索引、记忆体检报告与 hook 历史快照（用户勿动）。
 
 ## 3. 注入预算（`obsidian-memory.mjs` 常量）
 
