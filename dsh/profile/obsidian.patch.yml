@@ -20,5 +20,6 @@
 # same skin the user picked for the main web profile. No id lists to keep.
 #
 # The profile also mounts the skin center (ui-skin-center in cordis.patch.yml)
-# for the background-opacity control — aesthetics only, no agent tools; the
-# rest of the dsh-web-ui family stays unmounted to keep the minimal surface.
+# plus its card host ui-web-ui-settings — aesthetics only, no agent tools;
+# the rest of the dsh-web-ui family stays unmounted to keep the minimal
+# surface.

@@ -2,6 +2,13 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 皮肤中心在 obsidian 界面不可见（挂载宿主补齐）
+
+- 症状：用户实测 obsidian 内嵌 dsh 界面找不到皮肤中心与透明度调节；boot manifest 里 `ui-skin-center` 正常加载。
+- 根因：皮肤卡片向 `web-ui.plugin.item` 槽注入，而渲染该槽的「Web UI 插件」分组卡由 `ui-web-ui-settings` 提供——profile 只挂了 `ui-skin-center`，卡片注入了槽却无人渲染（主 web 界面能见是因为 web-ui-all 全家桶带着宿主）。
+- 修复：`cordis.patch.yml` 补挂 `ui-web-ui-settings`（纯 UI：设置页分组卡 + loopback 设置桥，无 agent 工具）；无 web profile 可镜像时，降级 fallback 块同步禁用该条目保证可启动。入口：设置 → 插件 → Web UI 插件 → 皮肤中心。
+- 教训：dsh-web-ui 家族插件卡片不自我渲染——挂卡片前先确认「渲染该槽的宿主」也在 profile 里。
+
 ## 2026-08 · 记号体系（notation system）：收集 → 统一 → 维护
 
 - 背景：此前记号只被「被动保留」（§0 一句），profile 的记号节长期空置；用户指出「用户一开始未必有统一习惯，需要 agent 协助打磨」。

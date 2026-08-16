@@ -44,13 +44,19 @@
 
 # UI aesthetics only (no agent tools added): the dsh-web-ui skin center
 # brings the skin picker and the background-opacity control
-# (skin-background settings namespace). The rest of the dsh-web-ui family
-# (task-board / ssh / aionui-panel / git-graph / pet / live-stats /
-# remote-web-ui / web-ui-settings) is deliberately NOT mounted here — the
-# obsidian mode keeps the minimal tool surface and only keeps the skin
-# capability for looks. The skin choice is shared with the main web profile
-# (both write the same $DSH_HOME/cordis.patch.yml managed section).
+# (skin-background settings namespace). The skin center card renders inside
+# the "Web UI plugins" group card on the settings page, and that group card
+# is provided by ui-web-ui-settings — so the group entry is mounted too.
+# Both entries are pure UI (a settings-page card and a loopback-only
+# settings bridge); neither adds an agent tool. The rest of the dsh-web-ui
+# family (task-board / ssh / aionui-panel / git-graph / pet / live-stats /
+# remote-web-ui) is deliberately NOT mounted here — the obsidian mode keeps
+# the minimal tool surface and only keeps the skin capability for looks.
+# The skin choice is shared with the main web profile (both write the same
+# $DSH_HOME/cordis.patch.yml managed section).
 - insert:
+    - id: ui-web-ui-settings
+      name: '@linxin666/dsh-client-ui-web-ui-settings'
     - id: ui-skin-center
       name: '@linxin666/dsh-client-ui-skin-center'
 

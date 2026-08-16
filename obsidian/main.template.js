@@ -695,6 +695,11 @@ function syncGlobalPackageLinks(home) {
           const block = [
             '',
             SKIN_FALLBACK_START,
+            // The skin-center card host (ui-web-ui-settings) is mounted by
+            // cordis.patch.yml too; without a web profile to mirror the
+            // package from, disable it alongside the skins so boot survives.
+            '- id: ui-web-ui-settings',
+            '  disabled: true',
             '- id: ui-skin-blue-fantasy',
             '  disabled: true',
             '- id: ui-skin-dragon-heir',
