@@ -383,6 +383,8 @@ const OVERWRITE_REFUSAL = (rel) => `note_create: note already exists (${rel}); r
 
 const RETRIEVE_DEFAULT_MAX_RESULTS = 10;
 const RETRIEVE_HARD_MAX_RESULTS = 20;
+const RECALL_DEFAULT_MAX_RESULTS = 15;
+const RECALL_HARD_MAX_RESULTS = 50;
 
 /** Known operator vocabulary (hard-filter key, stage 1). */
 const HOOK_OPERATORS = new Set([
@@ -398,7 +400,10 @@ function normalizeOperator(raw) {
 export function tokenize(text) {
   const tokens = [];
   if (typeof text !== "string") return tokens;
-  const normalized = text.toLowerCase();
+  // Unicode dash normalization: Borel–Cantelli / Borel—Cantelli / a-b must
+  // all tokenize identically to borel-cantelli, otherwise hyphen/en-dash
+  // variants of the same named technique never match each other.
+  const normalized = text.toLowerCase().replace(/[\u2013\u2014\u2212]/g, "-");
   for (const token of normalized.match(/[a-z0-9][a-z0-9_-]*/g) ?? []) tokens.push(token);
   for (const run of normalized.match(/[\u4e00-\u9fff]+/g) ?? []) {
     if (run.length === 1) { tokens.push(run); continue; }
@@ -498,6 +503,114 @@ export function rankBm25(queryTokens, tokenizedDocs, stats) {
   return scored;
 }
 
+/**
+ * CJK character containment in [0,1]: how many DISTINCT Chinese characters of
+ * the query appear in the doc. Bridges short-vs-long word mismatch (子列 vs
+ * 子序列) that bigram tokenization cannot see; zero for non-CJK queries.
+ */
+export function cjkCharOverlap(queryText, docText) {
+  const chars = (value) => {
+    const set = new Set();
+    for (const ch of String(value ?? "")) if (/[\u4e00-\u9fff]/.test(ch)) set.add(ch);
+    return set;
+  };
+  const q = chars(queryText);
+  if (q.size < 2) return 0; // single char is noise; require a real CJK query
+  const d = chars(docText);
+  let hit = 0;
+  for (const ch of q) if (d.has(ch)) hit += 1;
+  return hit / q.size;
+}
+
+// ── memory v3 S1: unified recall corpus (retrieval-v3.md) ───────────────────
+
+const MEMORY_SCAFFOLD_FILES = new Set(["index.md", "_README.md"]);
+
+/**
+ * Classify a vault-relative path into the unified corpus kinds. Scaffold and
+ * machine files return "skip"; raw episode bodies are skipped too (evidence
+ * is reached via grep/read — only their index lines join the corpus).
+ */
+export function classifyVaultDoc(rel) {
+  if (rel === "AGENTS.md") return "skip";
+  if (rel === ".deepseek/capture-policy.md" || rel === ".deepseek/memory/profile.md") return "skip";
+  if (rel.startsWith(".deepseek/cache")) return "skip";
+  if (rel.startsWith(".deepseek/memory/episodes/")) {
+    return rel.endsWith("/index.md") ? "episode-index" : "skip";
+  }
+  const memoryDir = (dir) => {
+    const stem = rel.slice(dir.length);
+    if (stem === "index.md" || stem.startsWith("_")) return "skip";
+    return rel.endsWith(".md") ? "ok" : "skip";
+  };
+  if (rel.startsWith(".deepseek/memory/records/")) return memoryDir(".deepseek/memory/records/") === "ok" ? "record" : "skip";
+  if (rel.startsWith(".deepseek/memory/templates/")) return memoryDir(".deepseek/memory/templates/") === "ok" ? "template" : "skip";
+  if (rel.startsWith(".deepseek/inbox/")) return memoryDir(".deepseek/inbox/") === "ok" ? "memo" : "skip";
+  if (rel.startsWith(".deepseek/memory/topics/")) return memoryDir(".deepseek/memory/topics/") === "ok" ? "topic" : "skip";
+  if (rel === ".deepseek/memory/theorems/index.md") return "theorem-index";
+  return "note";
+}
+
+/**
+ * Kind-aware retrieval passage (LeanSearch kind-aware passages, localized):
+ * hook cards emphasize hook fields, memos/notes emphasize body heads, index
+ * kinds keep their line-based content. Frontmatter is excluded.
+ */
+export function composePassage(kind, doc) {
+  const hookText = [doc.hook?.operator, doc.hook?.pattern, doc.hook?.techniques, doc.hook?.applications, doc.hook?.heuristics, doc.hook?.quantity]
+    .filter((part) => Array.isArray(part) ? part.length > 0 : typeof part === "string" && part !== "")
+    .flat()
+    .join(" ");
+  const body = String(doc.body ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---/, "").trim();
+  const title = String(doc.title ?? "");
+  const topic = String(doc.topic ?? "");
+  const join = (...parts) => parts.filter((part) => part !== "").join(" ");
+  switch (kind) {
+    case "record":
+    case "template":
+      return join(title, hookText, topic, body.slice(0, 800));
+    case "memo":
+      return join(title, topic, body.slice(0, 1500));
+    case "topic":
+      return join(title, body.slice(0, 2000));
+    case "episode-index":
+    case "theorem-index":
+      return join(title, body.slice(0, 2000));
+    default:
+      return join(title, (doc.tags ?? []).join(" "), body.slice(0, 1500));
+  }
+}
+
+/** Extract a scalar from YAML-ish frontmatter text (no dependency on the memory module). */
+function metaScalar(frontmatter, key) {
+  if (frontmatter === null) return undefined;
+  const match = new RegExp("^" + key + ":\\s*(.*)$", "m").exec(frontmatter);
+  if (match === null) return undefined;
+  const value = match[1].trim().replace(/^['\"]|['\"]$/g, "");
+  return value === "" ? undefined : value;
+}
+
+/** Title for a corpus doc: frontmatter title → first heading → filename stem. */
+function titleFromDoc(frontmatter, body, fallback) {
+  const meta = metaScalar(frontmatter, "title");
+  if (meta !== undefined) return meta;
+  const heading = /^#\s+(.+)$/m.exec(body)?.[1]?.trim();
+  return heading ?? fallback.replace(/\.md$/i, "");
+}
+
+/** One-line snippet around the first query-token occurrence (or passage head). */
+function snippetForPassage(passage, queryTokens, maxLen = 140) {
+  const lower = passage.toLowerCase();
+  let index = -1;
+  for (const token of queryTokens) {
+    if (token.length < 2) continue;
+    const at = lower.indexOf(token.toLowerCase());
+    if (at >= 0) { index = at; break; }
+  }
+  if (index < 0) return passage.slice(0, maxLen);
+  return makeSnippet(passage, index, 2);
+}
+
 function hookList(hook, key) {
   const value = hook?.[key];
   if (Array.isArray(value)) return value.join(" ");
@@ -574,9 +687,11 @@ export async function apply(ctx, config) {
     name: "tool:obsidian-notes",
     order: 103,
     text:
-      "Use the dedicated Obsidian note tools for note-level operations: note_search (text and/or tag filter, better than raw grep for \"find my notes\"), " +
+      "Use the dedicated Obsidian note tools for note-level operations: " +
+      "note_recall (PRIMARY entry — unified relevance-ranked search over user notes AND all memory layers with BM25 + hook signals; use it whenever you need to find relevant content, then read the top 2-3 matches in full before using them; an empty result is a signal to reformulate the query), " +
+      "note_search (text and/or tag filter over user notes only), " +
       "note_create (new note only — it refuses to overwrite an existing note), note_links (which notes link to a note), and " +
-      "note_retrieve (memory-v2 strategy retrieval: hard operator filter + weighted scoring over cards with a hook: frontmatter block — prefer it for proving/constructing/solving tasks, after distilling the problem into a challenge description plus candidate technique keywords). " +
+      "note_retrieve (memory-v2 strategy retrieval over hook cards — kept for compatibility; prefer note_recall). " +
       "For ordinary file read/write/edit/glob/grep inside the vault keep using the generic file tools."
   });
 
@@ -974,5 +1089,150 @@ export async function apply(ctx, config) {
       };
     },
     presentCall: (args) => ({ card: "generic", title: "Retrieve memory cards", kind: "search", rawInput: args.query })
+  }));
+
+  // ── note_recall (memory v3 S1: unified entry) ─────────────────────────────
+  ctx.tools.register(defineTool({
+    name: "note_recall",
+    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry — prefer it over grep and over per-layer routes whenever you need to find relevant content; it answers in one call what previously took several. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate and score. Then READ the top 2-3 matches in full before using them. An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards.`,
+    parameters: {
+      query: { type: "string", required: true, description: "Distilled search query: the reasoning challenge plus candidate technique keywords, e.g. '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli'." },
+      operator: { type: "string", description: `Optional stage-1 hard filter, one of ${[...HOOK_OPERATORS].join("/")}. Only hook cards with a matching operator are scored; when none matches, all docs are scored and mode reports the fallback.` },
+      tag: { type: "string", description: "Optional tag filter (user notes only), without leading '#'." },
+      maxResults: { type: "integer", description: `Optional cap on matches; defaults to ${RECALL_DEFAULT_MAX_RESULTS}, maximum ${RECALL_HARD_MAX_RESULTS}.` }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          query: { type: "string", required: true },
+          mode: { type: "string", required: true, enum: ["unified", "fallback"] },
+          operator: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
+          matches: {
+            type: "array",
+            required: true,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                path: { type: "string", required: true },
+                kind: { type: "string", required: true },
+                title: { type: "string", required: true },
+                snippet: { type: "string", required: true },
+                verified: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
+                hookOperator: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
+                uses: { type: "integer", required: true },
+                successRate: { oneOf: [{ type: "number" }, { type: "null" }], required: true },
+                score: { type: "number", required: true }
+              }
+            }
+          }
+        }
+      },
+      render: (_args, value) => {
+        if (value.matches.length === 0) return [{ type: "text", text: "No relevant content found — treat this as a signal to reformulate the query or change approach." }];
+        const kindLabel = { note: "笔记", record: "记忆卡", template: "模板", memo: "备忘录", topic: "主题", "episode-index": "事件", "theorem-index": "定理" };
+        const lines = value.matches.map((match) => {
+          const extra = [
+            match.verified === null ? "" : { "user-confirmed": "✅", "cross-referenced": "⚖️", "single-source": "❓" }[match.verified] ?? match.verified,
+            match.hookOperator === null ? "" : `算子:${match.hookOperator}`,
+            `uses:${match.uses}`,
+            match.successRate === null ? "" : `成功率:${match.successRate}`
+          ].filter((part) => part !== "").join(" · ");
+          return `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path}) score ${match.score.toFixed(3)}${extra === "" ? "" : " · " + extra}\n  ${match.snippet}`;
+        });
+        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实后再使用）:\n${lines.join("\n")}` }];
+      }
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const { rootPath, rootTarget } = await resolveVault(ctx, exec, cfg);
+      const query = String(args.query ?? "").trim();
+      const tag = normalizeTagFilter(args.tag);
+      if (query === "" && tag === "") {
+        throw new Error("note_recall: provide query, tag, or both");
+      }
+      const operator = args.operator === undefined || args.operator === null || String(args.operator).trim() === ""
+        ? null
+        : normalizeOperator(args.operator);
+      const requested = Number(args.maxResults ?? RECALL_DEFAULT_MAX_RESULTS);
+      if (!Number.isInteger(requested) || requested < 1) {
+        throw new Error(`note_recall: maxResults must be a positive integer`);
+      }
+      const limit = Math.min(requested, RECALL_HARD_MAX_RESULTS);
+      const queryTokens = tokenize(query);
+
+      // One walk covers notes AND memory (no .deepseek exclusion here).
+      const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns);
+      const docs = [];
+      for (const note of notes) {
+        const kind = classifyVaultDoc(note.path);
+        if (kind === "skip") continue;
+        const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
+        if (raw === null) continue;
+        const { frontmatter, body } = splitFrontmatter(raw);
+        const doc = {
+          kind,
+          rel: note.path,
+          title: titleFromDoc(frontmatter, body, note.name),
+          tags: kind === "note" ? noteTags({ frontmatter, body }) : [],
+          topic: metaScalar(frontmatter, "topic") ?? "",
+          hook: frontmatter === null ? null : parseHookFrontmatter(frontmatter),
+          body
+        };
+        if (tag !== "" && !matchesTagFilter(doc.tags, tag)) continue;
+        docs.push(doc);
+      }
+
+      const passages = docs.map((doc) => composePassage(doc.kind, doc));
+      const corpusStats = computeCorpusStats(passages.map((passage) => tokenize(passage)));
+      const rawScores = docs.map((doc, i) => bm25Score(queryTokens, tokenize(passages[i]), corpusStats));
+      const maxScore = Math.max(1e-9, ...rawScores);
+      const priorOf = (doc) => doc.hook === null
+        ? 0.5
+        : 0.5 * hookNumber(doc.hook, "success_rate", 0.5) + 0.5 * Math.min(hookNumber(doc.hook, "uses", 0) / 10, 1);
+      const operatorMatch = (doc) => operator === null || (doc.hook !== null && normalizeOperator(doc.hook.operator) === operator);
+      // 0.85 BM25 + 0.10 CJK char containment (bridges 子列/子序列-class
+      // word-form gaps) + 0.05 success/uses prior.
+      const cjkBonus = docs.map((doc, i) => cjkCharOverlap(query, passages[i]));
+      const scored = docs.map((doc, i) => ({
+        doc,
+        i,
+        score: 0.85 * (rawScores[i] / maxScore) + 0.10 * cjkBonus[i] + 0.05 * priorOf(doc),
+        operatorMatch: operatorMatch(doc)
+      }));
+
+      let pool = scored;
+      let operatorFallback = false;
+      if (operator !== null) {
+        if (scored.some((entry) => entry.operatorMatch)) pool = scored.filter((entry) => entry.operatorMatch);
+        else operatorFallback = true;
+      }
+      pool.sort((a, b) => b.score - a.score);
+      const top = pool.slice(0, limit);
+
+      // Hook stats migration (memory v3): the unified entry records hits for
+      // hook cards; the daily audit merges them back into uses/last_used.
+      recordRetrievalStats(rootPath, top.filter((entry) => entry.doc.hook !== null).map((entry) => entry.doc.rel));
+
+      return {
+        query,
+        mode: operatorFallback ? "fallback" : "unified",
+        operator,
+        matches: top.map(({ doc, score, i }) => ({
+          path: doc.rel,
+          kind: doc.kind,
+          title: doc.title,
+          snippet: snippetForPassage(passages[i], queryTokens),
+          verified: typeof doc.hook?.verified === "string" ? doc.hook.verified : null,
+          hookOperator: typeof doc.hook?.operator === "string" ? doc.hook.operator : null,
+          uses: Math.max(0, Math.trunc(hookNumber(doc.hook, "uses", 0))),
+          successRate: Number.isFinite(Number(doc.hook?.success_rate)) ? Number(doc.hook.success_rate) : null,
+          score: Number(score.toFixed(4))
+        }))
+      };
+    },
+    presentCall: (args) => ({ card: "generic", title: "Recall vault content", kind: "search", rawInput: args.query })
   }));
 }

@@ -17,7 +17,10 @@ import {
   weightedOverlap,
   cacheEntryFresh,
   bm25Score,
-  computeCorpusStats
+  computeCorpusStats,
+  classifyVaultDoc,
+  composePassage,
+  cjkCharOverlap
 } from '../dsh/preset/obsidian-notes.mjs';
 import {
   buildAuditReport,
@@ -273,6 +276,38 @@ check('bm25: length norm penalizes long docs at equal tf', (() => {
   return bm25Score(tokenize('a'), tokenize('a b'), stats) > bm25Score(tokenize('a'), tokenize('a b c d e f'), stats);
 })());
 check('bm25: unseen term contributes zero', bm25Score(tokenize('nope'), tokenize('a b'), bmStats) === 0);
+
+// ── 16. unified recall corpus (memory v3 S1) ───────────────────────────────
+check('classify: memory kinds',
+  classifyVaultDoc('.deepseek/memory/records/rec-a.md') === 'record' &&
+  classifyVaultDoc('.deepseek/memory/templates/tpl.md') === 'template' &&
+  classifyVaultDoc('.deepseek/inbox/memo.md') === 'memo' &&
+  classifyVaultDoc('.deepseek/memory/topics/ot.md') === 'topic' &&
+  classifyVaultDoc('.deepseek/memory/theorems/index.md') === 'theorem-index' &&
+  classifyVaultDoc('.deepseek/memory/episodes/index.md') === 'episode-index' &&
+  classifyVaultDoc('数学/实分析.md') === 'note');
+check('classify: skip scaffolding and machine files',
+  classifyVaultDoc('AGENTS.md') === 'skip' &&
+  classifyVaultDoc('.deepseek/cache/dialogue-index.json') === 'skip' &&
+  classifyVaultDoc('.deepseek/memory/records/index.md') === 'skip' &&
+  classifyVaultDoc('.deepseek/memory/records/_README.md') === 'skip' &&
+  classifyVaultDoc('.deepseek/memory/episodes/2026-08-15-selftest.md') === 'skip' &&
+  classifyVaultDoc('.deepseek/capture-policy.md') === 'skip');
+check('passage: hook card emphasizes hook fields and strips frontmatter',
+  (() => { const passage = composePassage('record', { title: '子序列卡', hook: { operator: 'probability', techniques: ['borel-cantelli'] }, body: '---\ntitle: x\n---\n正文……' });
+    return passage.includes('borel-cantelli') && passage.includes('probability') && !passage.includes('title: x') && passage.includes('正文……'); })());
+check('passage: note includes tags and body head',
+  (() => { const passage = composePassage('note', { title: '某笔记', tags: ['analysis'], body: '这是正文' + '长'.repeat(100) });
+    return passage.includes('analysis') && passage.includes('这是正文'); })());
+check('passage: index kinds keep line content',
+  composePassage('theorem-index', { title: 't', body: '- [[A|定理A]] · 关键词:x' }).includes('定理A'));
+
+// ── 17. dash normalization + CJK char containment (probe-driven) ───────────
+check('tokenize: unicode dashes normalize to hyphen',
+  JSON.stringify(tokenize('Borel–Cantelli a.s.')).includes('borel-cantelli') && JSON.stringify(tokenize('X—Y − Z')).includes('x-y') && JSON.stringify(tokenize('x−z')).includes('x-z'));
+check('cjk: containment bridges 子列/子序列', cjkCharOverlap('子序列 收敛', '子列选取三步模板 收敛性') === 0.8);
+check('cjk: no overlap → 0', cjkCharOverlap('子序列', '矩阵谱半径') === 0);
+check('cjk: short query returns 0 (noise guard)', cjkCharOverlap('子', '子列') === 0);
 
 // ── 11. dialogue-index cache schema gate (pre-filter caches must rebuild) ──
 check('cacheIndexValid: current version accepted', cacheIndexValid({ schemaVersion: 2, generatedAt: 1, sources: [], entries: [] }) === true);
