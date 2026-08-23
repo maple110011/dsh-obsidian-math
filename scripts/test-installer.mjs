@@ -14,16 +14,17 @@ console.log('installer exit:', run.status, run.error ? String(run.error) : '');
 if (run.error) process.exit(1);
 
 const checks = [
-  join(home, '.agent-presets', 'obsidian', 'preset.yml'),
-  join(home, '.agent-presets', 'obsidian', 'agent.cordis.yml'),
-  join(home, '.agent-presets', 'obsidian', 'obsidian-memory.mjs'),
-  join(home, '.agent-presets', 'obsidian', 'obsidian-notes.mjs'),
-  join(home, 'profiles', 'obsidian', 'package.json'),
-  join(home, 'profiles', 'obsidian', 'cordis.yml'),
-  join(home, 'profiles', 'obsidian', 'cordis.patch.yml'),
-  join(home, 'profiles', 'obsidian', 'pnpm-workspace.yaml'),
-  join(home, 'profiles', 'obsidian', 'obsidian-workspace.mjs'),
-  join(home, 'profiles', 'obsidian', 'obsidian.patch.yml'),
+  join(home, '.agent-presets', 'notes-assistant', 'preset.yml'),
+  join(home, '.agent-presets', 'notes-assistant', 'agent.cordis.yml'),
+  join(home, '.agent-presets', 'notes-assistant', 'math-memory.mjs'),
+  join(home, '.agent-presets', 'notes-assistant', 'note-tools.mjs'),
+  join(home, '.agent-presets', 'notes-assistant', 'hook-frontmatter.mjs'),
+  join(home, 'profiles', 'notes-assistant', 'package.json'),
+  join(home, 'profiles', 'notes-assistant', 'cordis.yml'),
+  join(home, 'profiles', 'notes-assistant', 'cordis.patch.yml'),
+  join(home, 'profiles', 'notes-assistant', 'pnpm-workspace.yaml'),
+  join(home, 'profiles', 'notes-assistant', 'math-memory-workspace.mjs'),
+  join(home, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml'),
   join(vault, 'AGENTS.md'),
   join(vault, '.deepseek', 'memory', 'profile.md'),
   join(vault, '.deepseek', 'memory', 'topics', 'index.md'),
@@ -41,22 +42,23 @@ for (const path of checks) {
   console.log(ok ? '[ok]' : '[MISSING]', path);
   if (!ok) failed += 1;
 }
-const cordis = readFileSync(join(home, 'profiles', 'obsidian', 'cordis.patch.yml'), 'utf8');
+const cordis = readFileSync(join(home, 'profiles', 'notes-assistant', 'cordis.patch.yml'), 'utf8');
 console.log('patch portable:', cordis.includes('process.env.DSH_OBSIDIAN_VAULT') && cordis.includes('process.cwd()'));
 // Drift detection: the always-refresh files written on the first run must be
 // byte-identical to the repo sources — a stale embedded copy in install.mjs
 // or main.js would otherwise ship silently.
 const driftPairs = [
-  [join(home, '.agent-presets', 'obsidian', 'obsidian-memory.mjs'), join(repo, 'dsh', 'preset', 'obsidian-memory.mjs')],
-  [join(home, '.agent-presets', 'obsidian', 'obsidian-notes.mjs'), join(repo, 'dsh', 'preset', 'obsidian-notes.mjs')],
-  [join(home, '.agent-presets', 'obsidian', 'preset.yml'), join(repo, 'dsh', 'preset', 'preset.yml')],
-  [join(home, '.agent-presets', 'obsidian', 'agent.cordis.yml'), join(repo, 'dsh', 'preset', 'agent.cordis.yml')],
-  [join(home, 'profiles', 'obsidian', 'package.json'), join(repo, 'dsh', 'profile', 'package.json')],
-  [join(home, 'profiles', 'obsidian', 'cordis.yml'), join(repo, 'dsh', 'profile', 'cordis.yml')],
-  [join(home, 'profiles', 'obsidian', 'cordis.patch.yml'), join(repo, 'dsh', 'profile', 'cordis.patch.yml')],
-  [join(home, 'profiles', 'obsidian', 'pnpm-workspace.yaml'), join(repo, 'dsh', 'profile', 'pnpm-workspace.yaml')],
-  [join(home, 'profiles', 'obsidian', 'obsidian-workspace.mjs'), join(repo, 'dsh', 'profile', 'obsidian-workspace.mjs')],
-  [join(home, 'profiles', 'obsidian', 'obsidian.patch.yml'), join(repo, 'dsh', 'profile', 'obsidian.patch.yml')],
+  [join(home, '.agent-presets', 'notes-assistant', 'math-memory.mjs'), join(repo, 'dsh', 'preset', 'math-memory.mjs')],
+  [join(home, '.agent-presets', 'notes-assistant', 'note-tools.mjs'), join(repo, 'dsh', 'preset', 'note-tools.mjs')],
+  [join(home, '.agent-presets', 'notes-assistant', 'hook-frontmatter.mjs'), join(repo, 'dsh', 'preset', 'hook-frontmatter.mjs')],
+  [join(home, '.agent-presets', 'notes-assistant', 'preset.yml'), join(repo, 'dsh', 'preset', 'preset.yml')],
+  [join(home, '.agent-presets', 'notes-assistant', 'agent.cordis.yml'), join(repo, 'dsh', 'preset', 'agent.cordis.yml')],
+  [join(home, 'profiles', 'notes-assistant', 'package.json'), join(repo, 'dsh', 'profile', 'package.json')],
+  [join(home, 'profiles', 'notes-assistant', 'cordis.yml'), join(repo, 'dsh', 'profile', 'cordis.yml')],
+  [join(home, 'profiles', 'notes-assistant', 'cordis.patch.yml'), join(repo, 'dsh', 'profile', 'cordis.patch.yml')],
+  [join(home, 'profiles', 'notes-assistant', 'pnpm-workspace.yaml'), join(repo, 'dsh', 'profile', 'pnpm-workspace.yaml')],
+  [join(home, 'profiles', 'notes-assistant', 'math-memory-workspace.mjs'), join(repo, 'dsh', 'profile', 'math-memory-workspace.mjs')],
+  [join(home, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml'), join(repo, 'dsh', 'profile', 'notes-assistant.patch.yml')],
   [join(vault, 'AGENTS.md'), join(repo, 'dsh', 'templates', 'AGENTS.md')]
 ];
 for (const [installed, source] of driftPairs) {

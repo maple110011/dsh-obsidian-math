@@ -1,4 +1,4 @@
-# DSH Math Notes Assistant (dsh-obsidian-math)
+# DSH Math Notes Assistant (dsh-math-memory)
 
 [English](README.md) · [简体中文](README.zh.md)
 
@@ -7,7 +7,7 @@
 A **two-component** repository:
 
 1. **Obsidian community plugin** (id `dsh-math-assistant`, repo-root `manifest.json` + `main.js`): embeds the dsh web UI in the right sidebar, detects and starts the dsh service, bootstraps the dsh-side configuration and vault templates on first run, and hosts the memory panel, capture-policy settings, and deterministic maintenance.
-2. **dsh plugin** (npm package `dsh-obsidian-math`, `dsh/`): installs the same `obsidian` agent preset / profile and vault templates into `$DSH_HOME`.
+2. **dsh plugin** (npm package `dsh-math-memory`, `dsh/`): installs the same `obsidian` agent preset / profile and vault templates into `$DSH_HOME`.
 
 Both write identical, idempotent configuration. **Installing the Obsidian plugin alone is enough**; `dsh/install.mjs` covers the pure-CLI workflow.
 
@@ -20,7 +20,7 @@ Mathematics learning is long-horizon accumulation: notation habits, theoretical 
 ### Retrieval (v3: unified entry, coarse-filter + careful-read)
 - **`note_recall` unified search**: one BM25-ranked pass over user notes AND all memory layers (hook-weighted cards, memos, topics, theorem/episode indexes); unicode-dash normalization and CJK char containment bridge word-form gaps; hits carry a **coverage** indicator (query-token coverage; <0.35 marks a lexical-coincidence weak signal).
 - **Read-verify protocol**: distilled query (challenge + candidate techniques) → read the top 2-3 hits in full and judge each → on empty/weak results reformulate once → then admit "not in the vault" instead of fabricating; bounded at 2 recalls and 3 full reads per turn.
-- **Navigation-only injection**: the system prompt carries only the navigation layers (profile/notation/topics/records/templates/episodes); content is pulled on demand; the injected section is bounded (≤9000 chars).
+- **Navigation-only injection**: the system prompt carries only the navigation layers (profile/notation/topics/records/templates/episodes); content is pulled on demand; the injected section has a hard total cap (≤18000 chars; per-layer budgets in [docs/memory/design.md](docs/memory/design.md) §3).
 - Supporting tools: `note_search` (user-note tag filter), `note_links` (backlinks / link-following), `note_create` (refuses to overwrite).
 
 ### Memory (five layers + maintenance loop)
@@ -35,10 +35,10 @@ Mathematics learning is long-horizon accumulation: notation habits, theoretical 
 - **Memory panel**: browse all five layers, search, hook stats with 📈 usage trends, per-card ✅/❌/supersede/archive, audit report; **edit-and-save in the panel** (mtime conflict guard); capture policy editable on the settings page with effect descriptions.
 - **Feedback loop**: `[✅ 这条对] [❌ 这条错]` links in replies deterministically rewrite cards through the loopback `/feedback` endpoint (CSRF-token protected); note references are clickable and jump into Obsidian (`/open`).
 - **Reply-quality protocol**: intuition before formalism, anchoring new material to your existing notes, difficulty adaptation, Socratic correction, low-frequency check questions.
-- **Skins & background opacity (aesthetics only, no agent tools added)**: the obsidian profile mounts the dsh-web-ui **skin center** (skin picker + background-opacity control) together with its card host **web-ui-settings** (the "Web UI plugins" group card on the settings page — pure UI, no tools); **every other dsh-web-ui family feature stays unmounted** (task board / SSH / aionui panel / git-graph / pet / live-stats, etc.) to keep the minimal tool surface. Entry point: settings → Plugins → **Web UI plugins** → **Skins** in the embedded UI. The skin choice is shared with the main web profile (one global setting).
+- **No dsh-web-ui plugins mounted (independence)**: the profile bundles `dsh-web-app` for the embedded chat UI, but mounts **none** of the dsh-web-ui plugin family (skin center / task board / SSH / aionui panel / git-graph / pet / live-stats, etc.) — so it has no `@linxin666` UI packages to resolve and boots cleanly with or without a `web` profile.
 
 ### Safety (fail-closed)
-- Tool surface: file read/write/search + four note tools + ask_user; no shell, no web, no subagents, no delete tools. Of the dsh-web-ui ecosystem only the **skin center and its card host web-ui-settings** are kept (both add no agent tools; aesthetics); every functional plugin is dropped.
+- Tool surface: file read/write/search + four note tools + ask_user; no shell, no web, no subagents, no delete tools. **No dsh-web-ui plugins are mounted** — the profile keeps the minimal agent tool surface.
 - Writes confined to the vault (workspace-write); interactive escalation prompts disabled (`approval: never`); `DSH_PERMISSION_MODE=danger-full-access` only re-enables escalation prompts, the sandbox itself stays workspace-write.
 - All memory lives as markdown inside the vault; archiving instead of deleting; the model may not edit policy or statistics fields.
 
@@ -52,9 +52,9 @@ Mathematics learning is long-horizon accumulation: notation habits, theoretical 
 
 **B (CLI)**:
 ```bash
-npm install -g dsh-obsidian-math
-dsh-obsidian-math install --vault "D:\\Obsidian笔记数据库"
-dsh --profile obsidian --port 3180 --patch "$DSH_HOME/profiles/obsidian/obsidian.patch.yml"
+npm install -g dsh-math-memory
+dsh-math-memory install --vault "D:\\Obsidian笔记数据库"
+dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assistant/notes-assistant.patch.yml"
 ```
 
 Plugin settings: port, dsh install dir, DSH_HOME, auto-start, auto-init, auto-archive (>90-day episodes), ribbon button, keep-alive on close, and the **capture-policy dropdowns**.

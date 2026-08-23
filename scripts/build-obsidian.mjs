@@ -5,7 +5,7 @@
  * Run after changing any shared file:
  *   node scripts/build-obsidian.mjs
  */
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,43 +19,45 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const readNormalized = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const template = readNormalized(join(root, "obsidian", "main.template.js"));
 
+// Single source of truth for the vault template set: source filename → vault-
+// relative target. build / install / plugin bootstrap all derive from this.
+const templatesManifest = JSON.parse(readNormalized(join(root, "dsh", "templates-manifest.json")));
+
 const preset = {
   "preset.yml": readNormalized(join(root, "dsh", "preset", "preset.yml")),
   "agent.cordis.yml": readNormalized(join(root, "dsh", "preset", "agent.cordis.yml")),
-  "obsidian-memory.mjs": readNormalized(join(root, "dsh", "preset", "obsidian-memory.mjs")),
-  "obsidian-notes.mjs": readNormalized(join(root, "dsh", "preset", "obsidian-notes.mjs")),
+  "math-memory.mjs": readNormalized(join(root, "dsh", "preset", "math-memory.mjs")),
+  "note-tools.mjs": readNormalized(join(root, "dsh", "preset", "note-tools.mjs")),
+  "hook-frontmatter.mjs": readNormalized(join(root, "dsh", "preset", "hook-frontmatter.mjs")),
   "profile-package.json": readNormalized(join(root, "dsh", "profile", "package.json")),
   "profile-cordis.yml": readNormalized(join(root, "dsh", "profile", "cordis.yml")),
   "profile-cordis.patch.yml": readNormalized(join(root, "dsh", "profile", "cordis.patch.yml")),
   "profile-pnpm-workspace.yaml": readNormalized(join(root, "dsh", "profile", "pnpm-workspace.yaml")),
-  "profile-obsidian-workspace.mjs": readNormalized(join(root, "dsh", "profile", "obsidian-workspace.mjs")),
-  "profile-obsidian.patch.yml": readNormalized(join(root, "dsh", "profile", "obsidian.patch.yml"))
+  "profile-math-memory-workspace.mjs": readNormalized(join(root, "dsh", "profile", "math-memory-workspace.mjs")),
+  "profile-notes-assistant.patch.yml": readNormalized(join(root, "dsh", "profile", "notes-assistant.patch.yml"))
 };
 
-const templates = {
-  "AGENTS.md": readNormalized(join(root, "dsh", "templates", "AGENTS.md")),
-  "profile.md": readNormalized(join(root, "dsh", "templates", "profile.md")),
-  "topics-index.md": readNormalized(join(root, "dsh", "templates", "topics-index.md")),
-  "records-readme.md": readNormalized(join(root, "dsh", "templates", "records-readme.md")),
-  "records-index.md": readNormalized(join(root, "dsh", "templates", "records-index.md")),
-  "theorems-readme.md": readNormalized(join(root, "dsh", "templates", "theorems-readme.md")),
-  "theorems-index.md": readNormalized(join(root, "dsh", "templates", "theorems-index.md")),
-  "templates-readme.md": readNormalized(join(root, "dsh", "templates", "templates-readme.md")),
-  "templates-index.md": readNormalized(join(root, "dsh", "templates", "templates-index.md")),
-  "episodes-readme.md": readNormalized(join(root, "dsh", "templates", "episodes-readme.md")),
-  "episodes-index.md": readNormalized(join(root, "dsh", "templates", "episodes-index.md")),
-  "inbox-readme.md": readNormalized(join(root, "dsh", "templates", "inbox-readme.md")),
-  "inbox-index.md": readNormalized(join(root, "dsh", "templates", "inbox-index.md")),
-  "capture-policy.md": readNormalized(join(root, "dsh", "templates", "capture-policy.md")),
-  "notation.md": readNormalized(join(root, "dsh", "templates", "notation.md"))
-};
+const templates = {};
+for (const source of Object.keys(templatesManifest)) {
+  templates[source] = readNormalized(join(root, "dsh", "templates", source));
+}
+
+// Completeness gate: every .md under dsh/templates/ must be listed in the
+// manifest, otherwise a newly added template would silently never be embedded
+// or installed (the drift the CI rebuild-gate cannot catch on its own).
+for (const entry of readdirSync(join(root, "dsh", "templates"))) {
+  if (entry.endsWith(".md") && !(entry in templatesManifest)) {
+    throw new Error(`dsh/templates/${entry} is missing from dsh/templates-manifest.json`);
+  }
+}
 
 const main = template
   // Use replacement functions, not replacement strings: the embedded files
   // contain sequences like `$&` / `` $` `` that String.replace would otherwise
   // interpret as match-substitution patterns and corrupt the bundle.
   .replace('"__PRESET_JSON__"', () => JSON.stringify(JSON.stringify(preset)))
-  .replace('"__TEMPLATE_JSON__"', () => JSON.stringify(JSON.stringify(templates)));
+  .replace('"__TEMPLATE_JSON__"', () => JSON.stringify(JSON.stringify(templates)))
+  .replace('"__TEMPLATE_MANIFEST_JSON__"', () => JSON.stringify(JSON.stringify(templatesManifest)));
 
 const target = join(root, "main.js");
 writeFileSync(target, main, "utf8");

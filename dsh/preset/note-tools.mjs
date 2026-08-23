@@ -1,5 +1,5 @@
 /**
- * obsidian-notes — dedicated Obsidian note tools for the `obsidian` dsh agent
+ * note-tools — dedicated Obsidian note tools for the `obsidian` dsh agent
  * preset:
  *   - note_recall    unified BM25-ranked recall over notes + memory layers
  *                    (retrieval v3 primary entry; hook-field weighting, CJK
@@ -14,17 +14,18 @@
  * a USER NOTE goes through the harness `ctx.fs` service so the profile's
  * workspace-write sandbox and fail-closed approval stay authoritative. The
  * only raw Node fs usage below is the plugin-owned retrieval-stats cache
- * under .deepseek/cache/ (the same convention as obsidian-memory.mjs).
+ * under .deepseek/cache/ (the same convention as math-memory.mjs).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parseHookFrontmatter } from "./hook-frontmatter.mjs";
 
-export const name = "obsidian-notes";
+export const name = "note-tools";
 export const inject = ["tools", "fs", "systemPrompt", "loader"];
 
 /**
  * Load `defineTool` without a static bare import. A local agent-preset plugin
- * lives under `$DSH_HOME/.agent-presets/obsidian/`, where Node's ordinary ESM
+ * lives under `$DSH_HOME/.agent-presets/notes-assistant/`, where Node's ordinary ESM
  * resolution cannot see the harness's `node_modules`; static
  * `import "@deepseek-ai/dsh-tools"` would fail for almost every user. The
  * harness loader resolves bare specifiers from the host composition instead
@@ -40,18 +41,18 @@ async function loadDefineTool(ctx) {
     // `@deepseek-ai/dsh-tools`.
     const base = ctx.root?.baseUrl ?? ctx.loader?.ctx?.baseUrl ?? ctx.baseUrl;
     if (base === undefined) {
-      throw new Error("obsidian-notes: cannot resolve the harness module base (ctx.root.baseUrl is unset)");
+      throw new Error("note-tools: cannot resolve the harness module base (ctx.root.baseUrl is unset)");
     }
     const module = await internal.import("@deepseek-ai/dsh-tools", base, {});
     if (typeof module.defineTool !== "function") {
-      throw new Error("obsidian-notes: @deepseek-ai/dsh-tools did not export defineTool");
+      throw new Error("note-tools: @deepseek-ai/dsh-tools did not export defineTool");
     }
     return module.defineTool;
   }
   // Bare-Node fallback (smoke tests): normal resolution from this file.
   const module = await import("@deepseek-ai/dsh-tools");
   if (typeof module.defineTool !== "function") {
-    throw new Error("obsidian-notes: @deepseek-ai/dsh-tools did not export defineTool");
+    throw new Error("note-tools: @deepseek-ai/dsh-tools did not export defineTool");
   }
   return module.defineTool;
 }
@@ -64,7 +65,7 @@ const DEFAULT_EXCLUDE_PATTERNS = [".obsidian", ".trash", ".git", "node_modules"]
 function positiveInteger(value, fallback, label) {
   const number = Number(value ?? fallback);
   if (!Number.isInteger(number) || number < 1) {
-    throw new Error(`obsidian-notes: ${label} must be a positive integer`);
+    throw new Error(`note-tools: ${label} must be a positive integer`);
   }
   return number;
 }
@@ -83,36 +84,45 @@ function normalizeConfig(config) {
 
 // ── vault resolution ────────────────────────────────────────────────────────
 
-/** Resolve the vault the tools act on: preset config, DSH_OBSIDIAN_VAULT, session cwd. */
+/**
+ * Single source of truth for resolving the workspace/vault root that both the
+ * memory engine (math-memory.mjs) and these note tools act on. Priority
+ * (most explicit wins): preset config vaultRoot → DSH_OBSIDIAN_VAULT env →
+ * session cwd. Empty means "not determinable" (the caller decides whether that
+ * is an error); a relative path is treated as unusable (must be absolute).
+ */
+export function resolveWorkspaceRoot(configVaultRoot, envVault, sessionCwd) {
+  const pick = (value) => (typeof value === "string" && value.trim() !== "" ? value.trim() : "");
+  const raw = pick(configVaultRoot) || pick(envVault) || pick(sessionCwd);
+  if (raw === "" || !isAbsolute(raw)) return "";
+  return resolve(raw);
+}
+
+/** Resolve the vault the tools act on via resolveWorkspaceRoot. */
 function vaultRootFor(exec, config) {
-  const fromConfig = config.vaultRoot;
-  const fromEnv = (process.env.DSH_OBSIDIAN_VAULT ?? "").trim();
   const session = exec?.agent?.session;
   const cwd = typeof session?.header?.cwd === "string"
     ? session.header.cwd
     : typeof session?.cwd === "string" ? session.cwd : "";
-  const raw = fromConfig || fromEnv || cwd;
-  if (raw === "") {
-    throw new Error("obsidian-notes: cannot determine the vault directory; set DSH_OBSIDIAN_VAULT or configure vaultRoot in the preset.");
+  const root = resolveWorkspaceRoot(config.vaultRoot, process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT, cwd);
+  if (root === "") {
+    throw new Error("note-tools: cannot determine the vault directory; set DSH_OBSIDIAN_VAULT or configure vaultRoot in the preset.");
   }
-  if (!isAbsolute(raw)) {
-    throw new Error(`obsidian-notes: vaultRoot must be an absolute path, got ${JSON.stringify(raw)}`);
-  }
-  return resolve(raw);
+  return root;
 }
 
 async function resolveVault(ctx, exec, config) {
   const rootPath = vaultRootFor(exec, config);
   const rootTarget = await ctx.fs.resolve(rootPath, { signal: exec?.signal });
   const info = await ctx.fs.stat(rootTarget, exec?.signal);
-  if (info === undefined) throw new Error(`obsidian-notes: vault root not found: ${rootPath}`);
-  if (info.type !== "directory") throw new Error(`obsidian-notes: vault root is not a directory: ${rootPath}`);
+  if (info === undefined) throw new Error(`note-tools: vault root not found: ${rootPath}`);
+  if (info.type !== "directory") throw new Error(`note-tools: vault root is not a directory: ${rootPath}`);
   return { rootPath, rootTarget };
 }
 
 function requireInsideVault(ctx, rootTarget, target) {
   if (!ctx.fs.contains(rootTarget, target)) {
-    throw new Error(`obsidian-notes: path escapes the vault: ${target.displayPath}`);
+    throw new Error(`note-tools: path escapes the vault: ${target.displayPath}`);
   }
 }
 
@@ -173,59 +183,9 @@ function splitFrontmatter(raw) {
 
 // ── memory v2: feature-hook parsing (informed by arXiv:2606.31191, ISM) ─────
 
-/**
- * Parse a card's optional `hook:` frontmatter block into retrieval features.
- * Block style only (flow-style `hook: { ... }` is ignored; the audit pass in
- * obsidian-memory.mjs writes uses/last_used back in block style).
- *
- *   hook:
- *     operator: number-theory
- *     pattern: subsequence_argument
- *     heuristics:
- *       - decompose
- *     quantity: sum-of-independent-rvs
- *     techniques:
- *       - borel-cantelli
- *     applications: 证明 a.s. 收敛类问题
- *     uses: 7
- *     success_rate: 0.86
- *     last_used: 2026-08-16
- *     verified: user-confirmed
- */
-export function parseHookFrontmatter(text) {
-  if (typeof text !== "string" || text === "") return null;
-  const lines = text.split(/\r?\n/);
-  const hook = {};
-  let inHook = false;
-  let lastListKey = null;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!inHook) {
-      if (/^hook:\s*$/.test(trimmed)) { inHook = true; lastListKey = null; }
-      continue;
-    }
-    if (line !== "" && !/^\s/.test(line)) break; // left the hook block
-    if (trimmed === "") continue;
-    const pair = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(trimmed);
-    if (pair !== null) {
-      const key = pair[1];
-      const value = pair[2].trim();
-      if (value === "") { hook[key] = []; lastListKey = key; }
-      else if (value.startsWith("[") && value.endsWith("]")) {
-        hook[key] = value.slice(1, -1).split(",").map((part) => stripQuotes(part.trim())).filter((part) => part !== "");
-        lastListKey = null;
-      } else { hook[key] = stripQuotes(value); lastListKey = null; }
-    } else if (trimmed.startsWith("- ") && lastListKey !== null) {
-      if (!Array.isArray(hook[lastListKey])) hook[lastListKey] = [];
-      hook[lastListKey].push(stripQuotes(trimmed.slice(2).trim()));
-    }
-  }
-  return Object.keys(hook).length === 0 ? null : hook;
-}
-
-function stripQuotes(value) {
-  return value.replace(/^['"]|['"]$/g, "");
-}
+// The hook-block parser lives in hook-frontmatter.mjs (single source of truth,
+// shared with the Obsidian plugin through the embedded-source loader).
+export { parseHookFrontmatter };
 
 // ── incremental note-text cache (memory v2 perf, D) ─────────────────────────
 // note_search / note_links previously read every .md on every call. This cache
@@ -359,18 +319,18 @@ function extractWikiLinks(raw) {
 
 function normalizeNoteRelPath(input) {
   const rawInput = String(input).trim();
-  if (rawInput.includes("\u0000")) throw new Error("obsidian-notes: note path contains a NUL byte");
+  if (rawInput.includes("\u0000")) throw new Error("note-tools: note path contains a NUL byte");
   if (isAbsolute(rawInput) || /^[A-Za-z]:[\\/]/.test(rawInput)) {
-    throw new Error(`obsidian-notes: note path must be vault-relative, got ${JSON.stringify(rawInput)}`);
+    throw new Error(`note-tools: note path must be vault-relative, got ${JSON.stringify(rawInput)}`);
   }
   let rel = rawInput.replace(/\\/g, "/").replace(/^\.\/+/, "");
   if (rel.startsWith("/")) rel = rel.replace(/^\/+/, "");
   if (rel === "" || rel === "." || rel.endsWith("/")) {
-    throw new Error(`obsidian-notes: invalid note path ${JSON.stringify(rawInput)}`);
+    throw new Error(`note-tools: invalid note path ${JSON.stringify(rawInput)}`);
   }
   const parts = rel.split("/");
   if (parts.some((part) => part === "" || part === "." || part === ".." || part.includes(":"))) {
-    throw new Error(`obsidian-notes: note path escapes the vault or is invalid: ${JSON.stringify(rawInput)}`);
+    throw new Error(`note-tools: note path escapes the vault or is invalid: ${JSON.stringify(rawInput)}`);
   }
   if (!rel.toLowerCase().endsWith(".md")) rel += ".md";
   return rel;
@@ -666,7 +626,7 @@ function recordRetrievalStatsNow(vaultPath, cardPaths) {
 /**
  * Best-effort hit accounting into the plugin-owned stats cache
  * (.deepseek/cache/retrieval-stats.json). The audit pass in
- * obsidian-memory.mjs merges this into the cards' hook.uses / last_used and
+ * math-memory.mjs merges this into the cards' hook.uses / last_used and
  * then zeroes the entries (no double counting). Never throws: a stats write
  * failure must not fail the retrieval itself.
  */
@@ -684,7 +644,7 @@ export async function apply(ctx, config) {
   const defineTool = await loadDefineTool(ctx);
 
   ctx.systemPrompt.section({
-    name: "tool:obsidian-notes",
+    name: "tool:note-tools",
     order: 103,
     text:
       "Use the dedicated Obsidian note tools for note-level operations: " +

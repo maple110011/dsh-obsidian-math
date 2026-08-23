@@ -8,7 +8,7 @@
 # cross-session memory plugin.
 - id: agent-presets
   config:
-    default: obsidian
+    default: notes-assistant
     includeUserRoot: true
 
 # Confine every model write to the Obsidian vault (reads stay unrestricted,
@@ -17,12 +17,12 @@
 - id: sandbox-policy
   config:
     mode: workspace-write
-    workspaceRoot: !!js process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()
+    workspaceRoot: !!js process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()
 
 # Default relative-path root for the filesystem backend.
 - id: fs-sandbox
   config:
-    cwd: !!js process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()
+    cwd: !!js process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()
 
 # Fail-closed approval: the Obsidian mode never pops an "escalate to
 # danger-full-access?" prompt, so an accidental click cannot widen the write
@@ -42,27 +42,14 @@
 # (workspace-write sandbox + never approval), otherwise boot fails with
 # "composed sandbox and approval defaults match no preset".
 
-# UI aesthetics only (no agent tools added): the dsh-web-ui skin center
-# brings the skin picker and the background-opacity control
-# (skin-background settings namespace). The skin center card renders inside
-# the "Web UI plugins" group card on the settings page, and that group card
-# is provided by ui-web-ui-settings — so the group entry is mounted too.
-# Both entries are pure UI (a settings-page card and a loopback-only
-# settings bridge); neither adds an agent tool. The rest of the dsh-web-ui
-# family (task-board / ssh / aionui-panel / git-graph / pet / live-stats /
-# remote-web-ui) is deliberately NOT mounted here — the obsidian mode keeps
-# the minimal tool surface and only keeps the skin capability for looks.
-# The skin choice is shared with the main web profile (both write the same
-# $DSH_HOME/cordis.patch.yml managed section).
-- insert:
-    - id: ui-web-ui-settings
-      name: '@linxin666/dsh-client-ui-web-ui-settings'
-    - id: ui-skin-center
-      name: '@linxin666/dsh-client-ui-skin-center'
+# UI aesthetics: the dsh-web-ui skin center (ui-skin-center) and its card host
+# (ui-web-ui-settings) are deliberately NOT mounted — the memory profile stays
+# independent of the dsh-web-ui plugin family, so it has no @linxin666 packages
+# to resolve and boots even without a `web` profile.
 
 - id: permission
   config:
-    defaultPreset: obsidian-locked
+    defaultPreset: math-memory-locked
     presets:
       read-only:
         sandbox: read-only
@@ -70,7 +57,7 @@
       workspace-write:
         sandbox: workspace-write
         approval: ask
-      obsidian-locked:
+      math-memory-locked:
         sandbox: workspace-write
         approval: never
       danger-full-access:

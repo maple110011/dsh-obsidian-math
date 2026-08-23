@@ -8,7 +8,7 @@
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   parseHookFrontmatter,
@@ -21,8 +21,10 @@ import {
   classifyVaultDoc,
   composePassage,
   cjkCharOverlap,
-  queryCoverage
-} from '../dsh/preset/obsidian-notes.mjs';
+  queryCoverage,
+  resolveWorkspaceRoot
+} from '../dsh/preset/note-tools.mjs';
+import { HOOK_SCHEMA_VERSION } from '../dsh/preset/hook-frontmatter.mjs';
 import {
   buildAuditReport,
   memoDigest,
@@ -31,8 +33,11 @@ import {
   cacheIndexValid,
   buildMemorySection,
   parseCapturePolicy,
-  buildHookHistory
-} from '../dsh/preset/obsidian-memory.mjs';
+  parseMemoryConfig,
+  memoryConfigText,
+  buildHookHistory,
+  MAX_TOTAL_MEMORY_CHARS
+} from '../dsh/preset/math-memory.mjs';
 
 const results = [];
 function check(name, condition, detail = '') {
@@ -217,7 +222,26 @@ check('nav: static navigation layers present',
   navSection.includes('用户画像与稳定偏好') && navSection.includes('研究主题索引') && navSection.includes('记忆记录摘要') && navSection.includes('近期事件时间线'));
 check('nav: notation system injected', navSection.includes('记号体系') && navSection.includes('Wasserstein 距离'));
 check('nav: no per-request recall section', !navSection.includes('本轮记忆召回'));
-check('nav: total memory section is bounded', navSection.length <= 9000, `len=${navSection.length}`);
+check('nav: total memory section is bounded', navSection.length <= MAX_TOTAL_MEMORY_CHARS, `len=${navSection.length}`);
+
+// ── 6b. resolveWorkspaceRoot priority (config > env > cwd) ─────────────────
+check('workspace: config wins over env and cwd', resolveWorkspaceRoot('/cfg', '/env', '/cwd') === resolve('/cfg'));
+check('workspace: env wins over cwd', resolveWorkspaceRoot('', '/env', '/cwd') === resolve('/env'));
+check('workspace: cwd fallback', resolveWorkspaceRoot('', '', '/cwd') === resolve('/cwd'));
+check('workspace: empty when nothing set', resolveWorkspaceRoot('', '', '') === '');
+check('workspace: relative config rejected', resolveWorkspaceRoot('relative/path', '/env', '/cwd') === '');
+
+// ── 6c. hook-frontmatter dual-load parity (ESM import vs embedded loader) ──
+// The Obsidian plugin loads hook-frontmatter.mjs by evaluating its source after
+// stripping the trailing `export {…}` — verify that path yields the identical
+// parser the preset uses via ESM import.
+const hfSource = readFileSync(new URL('../dsh/preset/hook-frontmatter.mjs', import.meta.url), 'utf8');
+const hfBody = hfSource.replace(/export\s*\{[^}]*\};?\s*$/, '') + '\nreturn { parseHookFrontmatter, stripQuotes };';
+const hfLoaded = new Function(hfBody)();
+const hfFixture = 'hook:\n  techniques:\n    - borel-cantelli\n  verified: single-source\n  uses: 3';
+check('hook: embedded loader matches ESM import', JSON.stringify(hfLoaded.parseHookFrontmatter(hfFixture)) === JSON.stringify(parseHookFrontmatter(hfFixture)));
+check('hook: embedded loader parses scalar', hfLoaded.parseHookFrontmatter('hook:\n  operator: number-theory').operator === 'number-theory');
+check('hook: schema version is a positive integer', Number.isInteger(HOOK_SCHEMA_VERSION) && HOOK_SCHEMA_VERSION > 0);
 
 const recallHelpers = { tokenize, weightedOverlap, computeDocFreq, bm25Score, computeCorpusStats };
 
@@ -255,6 +279,7 @@ writeFileSync(join(inboxDir, 'optimal-transport.md'), [
 ].join('\n'));
 const digest = memoDigest(root, 2200, '最优传输 Sinkhorn 熵正则', recallHelpers);
 check('memo: fresh-but-relevant memo surfaces', digest.includes('最优传输想法') && digest.includes('提醒候选'));
+check('memo: reminders off hides reminder candidates', !memoDigest(root, 2200, '最优传输 Sinkhorn 熵正则', recallHelpers, false).includes('提醒候选'));
 
 // ── 9. B1: stats zeroed after merge ─────────────────────────────────────────
 const statsAfter = JSON.parse(readFileSync(join(cacheDir, 'retrieval-stats.json'), 'utf8'));
@@ -366,6 +391,10 @@ check('policy: parses valid modes',
   (() => { const pol = parseCapturePolicy('---\nidea: ask\nfact: ask\npreference: off\n---'); return pol.fact === 'ask' && pol.preference === 'off'; })());
 check('policy: invalid values keep defaults',
   (() => { const pol = parseCapturePolicy('---\nidea: auto\nfact: maybe\npreference: off\n---'); return pol.idea === 'auto' && pol.fact === 'auto' && pol.preference === 'off'; })());
+check('config: parses standalone settings', (() => { const c = parseMemoryConfig('---\nenabled: false\ndialogueIndex: false\n---'); return c.enabled === false && c.dialogueIndex === false; })());
+check('config: missing/empty → null', parseMemoryConfig('') === null && parseMemoryConfig('no frontmatter') === null);
+writeFileSync(join(root, '.deepseek', 'config.md'), '---\nenabled: false\nreminders: false\n---\n# 说明\n');
+check('config: reads workspace config.md and disables', (() => { const c = parseMemoryConfig(memoryConfigText(root)); return c !== null && c.enabled === false && c.reminders === false; })());
 writeFileSync(join(root, '.deepseek', 'capture-policy.md'), card([
   '---',
   'idea: ask',

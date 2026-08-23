@@ -7,10 +7,10 @@
 # workspace picker immediately and never forces a directory-selection flow
 # inside the Obsidian iframe.
 - insert:
-    - id: obsidian-workspace
-      name: ./obsidian-workspace.mjs
+    - id: math-memory-workspace
+      name: ./math-memory-workspace.mjs
       config:
-        vaultPath: !!js process.env.DSH_OBSIDIAN_VAULT
+        vaultPath: !!js process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT
 
 # The skin manager writes a global patch ($DSH_HOME/cordis.patch.yml) that
 # inserts the ACTIVE web skin into EVERY profile. The obsidian profile

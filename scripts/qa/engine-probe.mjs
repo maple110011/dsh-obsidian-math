@@ -1,16 +1,17 @@
-// scripts/probe-vault.mjs — 检索 v3 验收探针（本机 vault，零 token）。
-// 用法: node scripts/probe-vault.mjs
+// scripts/qa/engine-probe.mjs — 检索 v3 验收探针（本机 vault，零 token）。
+// 用法: node scripts/qa/engine-probe.mjs
 // 12 组 ground-truth 断言: 换说法/连字符变体/读取半径/无答案弱信号。
 // ground truth 与本机 vault 绑定（vault 路径见下）；vault 内容变化时需同步维护此文件。
-// 不提交 git（机器特定，与 deploy-local 同类）。
+// 已提交仓库；ground truth 绑定本机 vault（DSH_OBSIDIAN_VAULT 可覆盖），CI 用合成 fixture（见 testing.md）。
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   tokenize, bm25Score, computeCorpusStats, cjkCharOverlap, queryCoverage,
   classifyVaultDoc, composePassage, parseHookFrontmatter
-} from "../../dsh/preset/obsidian-notes.mjs";
+} from "../../dsh/preset/note-tools.mjs";
 
-const vault = process.env.DSH_OBSIDIAN_VAULT || "D:/Obsidian笔记数据库";
+const vault = process.env.DSH_OBSIDIAN_VAULT || process.env.DSH_WORKSPACE_ROOT || "";
+if (!vault) { console.error("engine-probe: 需要 DSH_OBSIDIAN_VAULT 或 DSH_WORKSPACE_ROOT 指定 vault 路径"); process.exit(2); }
 const splitFrontmatter = (raw) => {
   if (!raw.startsWith("---")) return { frontmatter: null, body: raw };
   const close = raw.indexOf("\n---", 3);
@@ -65,7 +66,7 @@ let pass = 0, fail = 0;
 for (const [label, query, expected, minRank] of cases) {
   const top = rank(query);
   if (expected === "__WEAK__") {
-    const weak = top.length === 0 || top[0].coverage < 0.4;
+    const weak = top.length === 0 || top[0].coverage < 0.35;
     console.log(weak ? "[PASS]" : "[FAIL]", label, "→ top1:", top.length > 0 ? top[0].d.title.slice(0, 24) + " score " + top[0].score.toFixed(2) + " coverage " + top[0].coverage.toFixed(2) : "empty");
     weak ? pass++ : fail++;
     continue;

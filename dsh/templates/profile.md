@@ -27,7 +27,7 @@ updated: 2026-08-15
 
 ## 工具与工作流
 
-- 笔记工具：Obsidian（vault: `D:\Obsidian笔记数据库`）
+- 笔记工具：Obsidian（vault: `<你的笔记 vault 路径>`，首次使用请改成你的实际路径）
 - 数学排版：LaTeX
 - （可补充：R / Stata / MATLAB 等）
 

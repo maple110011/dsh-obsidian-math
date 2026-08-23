@@ -1,0 +1,18 @@
+{
+  "AGENTS.md": "AGENTS.md",
+  "profile.md": ".deepseek/memory/profile.md",
+  "topics-index.md": ".deepseek/memory/topics/index.md",
+  "records-readme.md": ".deepseek/memory/records/_README.md",
+  "records-index.md": ".deepseek/memory/records/index.md",
+  "theorems-readme.md": ".deepseek/memory/theorems/_README.md",
+  "theorems-index.md": ".deepseek/memory/theorems/index.md",
+  "templates-readme.md": ".deepseek/memory/templates/_README.md",
+  "templates-index.md": ".deepseek/memory/templates/index.md",
+  "episodes-readme.md": ".deepseek/memory/episodes/_README.md",
+  "episodes-index.md": ".deepseek/memory/episodes/index.md",
+  "inbox-readme.md": ".deepseek/inbox/_README.md",
+  "inbox-index.md": ".deepseek/inbox/index.md",
+  "capture-policy.md": ".deepseek/capture-policy.md",
+  "config.md": ".deepseek/config.md",
+  "notation.md": ".deepseek/memory/notation.md"
+}

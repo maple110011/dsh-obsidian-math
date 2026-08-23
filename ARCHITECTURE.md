@@ -10,8 +10,8 @@
 └──────────────┬──────────────────────────────────────────────────────────┘
                │ 启动/停止 dsh 服务；/open /feedback loopback；
                │ bootstrap 写入 preset/profile/模板；归档维护
-┌──────────────▼──────────────────────────── dsh 服务（obsidian profile）─┐
-│  agent preset `obsidian`：最小工具面 + obsidian-memory + obsidian-notes  │
+┌──────────────▼──────────────────────────── dsh 服务（notes-assistant profile）─┐
+│  agent preset `notes-assistant`：最小工具面 + math-memory + note-tools  │
 │  fail-closed 沙箱（workspace-write，approval never）                     │
 └──────────────┬──────────────────────────────────────────────────────────┘
                │ 读/写
@@ -29,11 +29,11 @@
 | 路径 | 职责 |
 |---|---|
 | `manifest.json` / `main.js` / `styles.css` | Obsidian 社区插件发布物（`main.js` 由构建生成，勿手改） |
-| `obsidian/main.template.js` | 插件源码：服务管理、LinkServer（/open + /feedback）、记忆面板、预览编辑、皮肤 junction 同步、设置页（含捕获策略下拉框）、bootstrap |
-| `dsh/preset/` | **agent preset `obsidian`**：`preset.yml`（元信息）、`agent.cordis.yml`（装配：最小工具 + 记忆插件配置）、`obsidian-memory.mjs`（记忆注入引擎 + 体检 + 对话索引 + 记号/捕获策略注入）、`obsidian-notes.mjs`（笔记工具：note_recall/note_search/note_create/note_links + BM25 检索引擎） |
-| `dsh/profile/` | **profile `obsidian`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset + **挂皮肤中心 ui-skin-center 与其卡片宿主 ui-web-ui-settings**：皮肤选择与背景透明度，均无 agent 工具，美观需求；其余 web-ui 生态一律不装）、`obsidian.patch.yml`（workspace 自动注册，插件刷新）、`obsidian-workspace.mjs` |
+| `obsidian/main.template.js` | 插件源码：服务管理、LinkServer（/open + /feedback）、记忆面板、预览编辑、全局皮肤 patch 兜底（junction 镜像/降级）、设置页（含捕获策略下拉框）、bootstrap |
+| `dsh/preset/` | **agent preset `notes-assistant`**：`preset.yml`（元信息）、`agent.cordis.yml`（装配：最小工具 + 记忆插件配置）、`math-memory.mjs`（记忆注入引擎 + 体检 + 对话索引 + 记号/捕获策略注入）、`note-tools.mjs`（笔记工具：note_recall/note_search/note_create/note_links + BM25 检索引擎） |
+| `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 dsh-web-ui 插件**，保持独立）、`notes-assistant.patch.yml`（workspace 自动注册，插件刷新）、`math-memory-workspace.mjs` |
 | `dsh/templates/` | **vault 模板**：`AGENTS.md`（工作协议，自动加载）、`profile.md`、`notation.md`（记号体系）、`topics-index.md`、`records-{readme,index}.md`、`theorems-*.md`、`templates-*.md`、`episodes-*.md`、`inbox-*.md`、`capture-policy.md` |
-| `dsh/install.mjs` | npm CLI 安装器（`dsh-obsidian-math install --vault …`），幂等、保留用户编辑 |
+| `dsh/install.mjs` | npm CLI 安装器（`dsh-math-memory install --vault …`），幂等、保留用户编辑 |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignore，机器特定路径；备份 + 三路安装 + 验证） |
 | `scripts/qa/` | **QA 工具链**：`engine-probe.mjs`（零 token 召回断言）、`e2e.mjs`（真实会话验收，含 API 级 token 计量）、`cases.json`、`run.mjs`；方法论见 `docs/memory/testing.md` |
@@ -67,7 +67,7 @@ npm run qa                      # 引擎探针（零 token，12 组召回断言�
 npm run qa:e2e                  # 引擎探针 + 真实会话端到端（烧真实 tokens，含 API 级计量）
 node scripts/build-obsidian.mjs # 重建 main.js（改 dsh/ 或模板后必跑）
 node scripts/deploy-local.mjs   # 本机部署（vault + DSH_HOME + 插件目录）
-dsh --profile obsidian --port 3180 --patch <home>/profiles/obsidian/obsidian.patch.yml  # 纯 CLI 启动
+dsh --profile notes-assistant --port 3180 --patch <home>/profiles/notes-assistant/notes-assistant.patch.yml  # 纯 CLI 启动
 ```
 
 ## 5. 新功能落地清单（改代码时对照）

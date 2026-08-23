@@ -17,9 +17,13 @@ const opt = (name, fallback) => {
 const CASES_PATH = opt("--cases", new URL("./cases.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const PORT = Number(opt("--port", "3191"));
 const BASE = `http://127.0.0.1:${PORT}`;
-const HOME = process.env.DSH_HOME || "E:/software/deepseek-harness/.dsh";
-const VAULT = process.env.DSH_OBSIDIAN_VAULT || "D:/Obsidian笔记数据库";
-const DSH_BIN = process.env.DSH_BIN || "E:/software/deepseek-harness/dsh/lib/bin.js";
+const HOME = process.env.DSH_HOME;
+const VAULT = process.env.DSH_OBSIDIAN_VAULT || process.env.DSH_WORKSPACE_ROOT;
+const DSH_BIN = process.env.DSH_BIN;
+if (!HOME || !VAULT || !DSH_BIN) {
+  console.error("e2e: 需要 DSH_HOME、DSH_OBSIDIAN_VAULT（或 DSH_WORKSPACE_ROOT）、DSH_BIN 三个环境变量");
+  process.exit(2);
+}
 const cases = JSON.parse(readFileSync(CASES_PATH, "utf8"));
 const tmpDir = mkdtempSync(join(tmpdir(), "dsh-qa-"));
 
@@ -88,7 +92,7 @@ function estimateTokens(events) {
 async function runCase(index, testCase, serviceLog) {
   const expect = testCase.expect ?? {};
   const timeoutMs = expect.timeoutMs ?? 420000;
-  const created = await rpc("session.create", { cwd: VAULT, agentPreset: "obsidian" });
+  const created = await rpc("session.create", { cwd: VAULT, agentPreset: "notes-assistant" });
   if (!created?.result?.ok) return { ok: false, note: "session.create failed: " + JSON.stringify(created).slice(0, 200), tokens: 0 };
   const sessionId = created.result.value.sessionId;
   await rpc("session.prompt", { sessionId, mode: "queue", content: [{ type: "text", text: testCase.question }] });
@@ -155,7 +159,7 @@ async function runCase(index, testCase, serviceLog) {
 const serviceLog = join(tmpDir, "service.log");
 const logFd = openSync(serviceLog, "w");
 const env = { ...process.env, DSH_HOME: HOME, DSH_OBSIDIAN_VAULT: VAULT, DSH_SESSIONS_ROOT: join(HOME, "sessions") };
-const child = spawn(process.execPath, [DSH_BIN, "--profile", "obsidian", "--patch", join(HOME, "profiles", "obsidian", "obsidian.patch.yml"), "--port", String(PORT)], {
+const child = spawn(process.execPath, [DSH_BIN, "--profile", "notes-assistant", "--patch", join(HOME, "profiles", "notes-assistant", "notes-assistant.patch.yml"), "--port", String(PORT)], {
   cwd: VAULT, stdio: ["ignore", logFd, logFd], env, windowsHide: true
 });
 

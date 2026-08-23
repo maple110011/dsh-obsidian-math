@@ -1,5 +1,36 @@
 # Changelog
 
+## [Unreleased]
+
+> 单仓身份解耦 + 记忆系统开关 + 独立设置面板 + 皮肤中心移除。版本号未动（后续还有记忆系统与仓库文档大改）。
+
+### Changed（破坏性更名）
+
+- **文件更名**：`obsidian-memory.mjs`→`math-memory.mjs`、`obsidian-notes.mjs`→`note-tools.mjs`、`obsidian-workspace.mjs`→`math-memory-workspace.mjs`、`obsidian.patch.yml`→`notes-assistant.patch.yml`。
+- **npm 包更名**：`dsh-obsidian-math` → `dsh-math-memory`（CLI 命令同步更名）。
+- **profile/preset id 更名**：`obsidian` → `notes-assistant`（`--profile notes-assistant`）；权限预设 `obsidian-locked` → `math-memory-locked`。
+- **环境变量别名**（旧名仍兼容）：`DSH_WORKSPACE_ROOT`（旧 `DSH_OBSIDIAN_VAULT`）、`DSH_MATH_MEMORY_LINK_URL`（旧 `DSH_OBSIDIAN_LINK_URL`）、`DSH_MATH_MEMORY_FEEDBACK_TOKEN`（旧 `DSH_OBSIDIAN_FEEDBACK_TOKEN`）。
+- 决定：**保持单仓**（不拆双 git 仓库），两个产物独立分发（npm 包 `dsh-math-memory` + Obsidian 插件 id `dsh-math-assistant`）。
+
+### Added
+
+- **统一 vault 解析** `resolveWorkspaceRoot`（config > env > cwd），memory 与 notes 两模块共用。
+- **共享 hook 解析器** `hook-frontmatter.mjs`（+ `HOOK_SCHEMA_VERSION` 版本化），Obsidian 插件经嵌入 loader 复用同一份。
+- **templates-manifest.json** 单一事实源，build/install/bootstrap 三处派生 + 构建漏模板门禁。
+- **记忆系统开关**：总开关 `enabled` + 粒度开关 `dialogueIndex`/`reminders`/`audit`。
+- **独立设置面板**：工作区级 `.deepseek/config.md`（host-agnostic，与 Obsidian/dsh web ui 无关）。
+- **`--preset-only`** 安装标志：只装 agent preset 进任意 DSH_HOME（主 dsh 里也能用「数学笔记助手」）。
+- **守卫脚本**：`check-rename.mjs`（profile 名一致性）、`check-skin-fallback.mjs`（皮肤降级一致性）、`check-plugin-id.mjs`（插件 id 与目录名一致性），均接入 `npm test`。
+
+### Removed
+
+- **皮肤中心挂载**：`ui-skin-center` / `ui-web-ui-settings` 从 `cordis.patch.yml` 移除——记忆 profile 不再依赖任何 `@linxin666` UI 包，有/无 `web` profile 都能干净启动（消除 `ERR_MODULE_NOT_FOUND`）。
+
+### Fixed
+
+- 文档漂移（Critical/High/Medium/Low 全清）：`retrieval-v3.md` 状态头、`v2-proposal.md` 退役标注、`handoff.md` 滞后两版、`design.md` 旧局限、`三个→四个`笔记工具等。
+- coverage 阈值统一为 0.35；注入加真实总上限（≤18000 字符）；E2E 端口/probe 路径与脚本对齐。
+
 ## [0.5.1] - 2026-08-16
 
 ### Added

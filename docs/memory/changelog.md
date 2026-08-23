@@ -24,7 +24,7 @@
 
 ## 2026-08 · 检索 v3 自动探针与真实会话端到端验收
 
-- 零 token 引擎探针 `scripts/probe-vault.mjs`（本机脚本，12 组 ground-truth）：发现并修复「无答案查询仍得 0.9+ 自信分」缺陷——`note_recall` 命中新增 `coverage`（查询词覆盖率，<0.35 判弱信号），AGENTS.md 同步；修复后 12/12 PASS。
+- 零 token 引擎探针 `scripts/qa/engine-probe.mjs`（本机脚本，12 组 ground-truth）：发现并修复「无答案查询仍得 0.9+ 自信分」缺陷——`note_recall` 命中新增 `coverage`（查询词覆盖率，<0.35 判弱信号），AGENTS.md 同步；修复后 12/12 PASS。
 - 真实会话 E2E（真实 web 服务 + obsidian preset，4 题）：note_recall 均为首选入口；蒸馏查询格式正确；「读前 2-3 篇核实」执行；「改写重试一次」在无答案题真实发生；模型自行引用 coverage 阈值判弱命中并**明说没有、不编造**。4/4 通过（证据详见 retrieval-v3.md 验收节）。
 - 教训：dsh-headless 不装配 agent preset，不能作为本插件的验收路径。
 
@@ -39,7 +39,7 @@
 - 删除「本轮记忆召回」段（2200 字符/轮）与全部召回语料机制：`buildRecallIndex`/`rankRecall`/`recallDocsFor`/`recallTextFor` 及 `recallEnabled/recallTopK/recallMaxChars` 配置、`#recallCache`；
 - 系统提示只保留导航层（profile/topics/records/templates/episodes/inbox 摘要 + dialogue 线索 + 体检），「相关内容」全部按需用 `note_recall` 拉取——注入语义与工具检索同一套排序，不再有两套打分；
 - memo 相关性提醒（memoDigest 的 relevance 阈值）保留——那是提醒机制而非召回；
-- 回归：召回排序断言退役（被 note_recall 的 BM25 测试取代），新增导航断言 3 项（导航层存在/无召回段/总长有界 ≤9000 字符）。
+- 回归：召回排序断言退役（被 note_recall 的 BM25 测试取代），新增导航断言 3 项（导航层存在/无召回段/总长有界 ≤18000 字符）。
 
 ## 2026-08 · 检索 v3 第一批（S1 统一入口 + S2 BM25 + S3 精读协议）
 

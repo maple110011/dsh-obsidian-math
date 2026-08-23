@@ -1,13 +1,13 @@
-# The `obsidian` agent preset: a deliberately minimal knowledge-base agent.
+# The `notes-assistant` agent preset: a deliberately minimal knowledge-base agent.
 #
 # Tools kept to the bare essentials the user asked for:
 #   - tool-fs          read/write/edit files inside the Obsidian vault
 #   - tool-fs-search   search/glob inside the vault
 #   - tool-ask-user    ask before capturing key ideas, big edits, etc.
-#   - obsidian-notes   dedicated note tools: note_recall (unified ranked search
+#   - note-tools   dedicated note tools: note_recall (unified ranked search
 #                      over notes + memory), note_search (tag filtering),
 #                      note_create (refuses overwrite), note_links (backlinks)
-#                      (applied by obsidian-memory below, which always updates)
+#                      (applied by math-memory below, which always updates)
 # Everything else (shell, web, subagents, workflows, goals, todo, ...) is
 # deliberately NOT mounted in this preset.
 #
@@ -17,7 +17,7 @@
 # ── identity ────────────────────────────────────────────────────────────────
 
 # The deployment persona is shadowed for this agent. We do NOT use
-# `complete: true` because the obsidian-memory plugin below appends its
+# `complete: true` because the math-memory plugin below appends its
 # per-request memory section during system-prompt assembly, and a complete
 # persona would discard every other section.
 - id: persona
@@ -68,13 +68,21 @@
 # plus a cached index distilled from this machine's past dsh sessions, and
 # appends one bounded memory section to every system prompt of this agent.
 #
-# It also applies ./obsidian-notes.mjs on the same context. Because this
+# It also applies ./note-tools.mjs on the same context. Because this
 # plugin's code is always refreshed on upgrade (while this YAML preserves user
 # edits), composing the note tools from here is what lets existing 0.2.0
 # installations pick up note_search / note_create / note_links automatically.
-- id: obsidian-memory
-  name: ./obsidian-memory.mjs
+- id: math-memory
+  name: ./math-memory.mjs
   config:
+    # 记忆系统总开关：false = 完全停用（不注入 / 不体检 / 不扫对话索引；文件与缓存原样保留）。
+    # 只想在学数学时才开记忆时设为 false；笔记工具（note_recall 等）不受影响、始终可用。
+    enabled: true
+    # 行为粒度开关（enabled 为 true 时生效）：
+    #   dialogueIndex: false = 不扫描历史会话生成跨会话问答线索（隐私/性能）
+    #   reminders: false     = 不在回复里注入 🔔 备忘录提醒候选
+    dialogueIndex: true
+    reminders: true
     # 留空 = 路径无关：vault 自动取会话 cwd，sessions 自动取 $DSH_HOME/sessions。
     # 也可用 DSH_OBSIDIAN_VAULT / DSH_SESSIONS_ROOT 环境变量覆盖。
     vaultRoot: ''
@@ -84,7 +92,7 @@
     cacheTtlMs: 0
     # 记忆体检（memory v2，ISM 式确定性维护 pass）：扫描 records/templates 的
     # frontmatter 与 hook 字段，每日最多一次（auditIntervalMs 毫秒），报告注入
-    # 系统提示；同时把 note_retrieve 的命中统计（cache/retrieval-stats.json）
+    # 系统提示；同时把 note_recall 的命中统计（cache/retrieval-stats.json）
     # 回写进卡片的 hook.uses / hook.last_used（可关：auditMaintainHookStats: false）。
     auditEnabled: true
     auditIntervalMs: 86400000

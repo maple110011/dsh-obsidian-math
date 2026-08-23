@@ -42,7 +42,7 @@
   3. 上下文增强：对每块文档预生成“已知定理的可能应用场景 + 证明中使用的关键技术”，使查询的挑战描述与文档的技术标注在嵌入空间对齐；
   4. 稠密检索 + zero-shot 重排序。
 - 结果：检索性能最高提升 34.19%；专家评估确认检索提升直接转化为证明质量提升；接 arXiv API 后能证明理论机器学习方向研究级定理。
-- 映射：hook.techniques / hook.applications（上下文增强）、问题蒸馏作为查询（查询增强）、note_retrieve 的 top-k + 重排（读文件核实）、“不只读定理陈述还要读证明”的协议条款。
+- 映射：hook.techniques / hook.applications（上下文增强）、问题蒸馏作为查询（查询增强）、note_recall 的统一检索 + 精读挑选（读文件核实）、“不只读定理陈述还要读证明”的协议条款。
 - 不适用的部分：其密集检索依赖 embedding 后端——我们先用 token 加权替代；其评测对象是纯证明任务，不覆盖笔记结构/偏好类场景。
 
 ## 6. ISM: Self-Improving Strategy Memory for Continual Mathematical Reasoning（arXiv:2606.31191）
@@ -56,7 +56,7 @@
   4. **对称学习**：成功与失败都作为结构化可检索知识（对照 Reflexion 只存失败反思、STaR/Voyager 只存成功）。
   5. **验证门控**：每次记忆更新（含合并/改写/强化）都过符号验证，防止错误泛化入记忆。
 - 结果：300 集持续学习流上超越 vanilla/retrieval/reflection/static/passive 五基线；记忆规模比最强被动基线少 64%/86%、比 retrieval 类少最多 23 倍；领域漂移更鲁棒、记忆库严格有界。
-- 映射：hook 块 = feature hook；note_retrieve 两级检索与打分权重照搬；体检报告 = Audit；merge/reinforce/demote 协议 = 其余机制的模型执行版；verified 三级 = 验证门控的本土化。
+- 映射：hook 块 = feature hook；note_recall 的 hook 字段加权与 BM25 打分（两级检索打分权重照搬，算子硬过滤已降级为可选参数）；体检报告 = Audit；merge/reinforce/demote 协议 = 其余机制的模型执行版；verified 三级 = 验证门控的本土化。
 - 不适用的部分：其符号验证器依赖可验证答案，笔记自由文本无等价物（用三级验证等级 + provenance 替代）；其全自动 promote/merge 依赖 ground truth，我们必须把用户确认纳入闭环；其“压到几百 schema”是为了精简，我们有完整 vault 当证据层，精简只作用于注入摘要与索引。
 
 ---
@@ -69,7 +69,7 @@
   - **历史不是资产**：把 prior queries / prior reasonings 拼进查询会引入大量冗余与错误假设（Forgetting as a Feature）——当前推理对已确认结论的**摘要**是最干净的检索信号，旧假设（如错猜的人名）是噪声。
   - **原子线索（Atomic Clues）**：把推理分解成短的、互相独立的陈述再用于检索，比整段推理更干净——即“结构化挑战描述”。
   - 查询扩展类（HyDE）是次优信号。
-- 映射：note_retrieve 的查询 = 当前轮「挑战描述 + 候选技巧」（原子线索式），**绝不拼接历史对话**；recall 注入已用最新用户消息（= 当前上下文），与“遗忘是特性”一致。
+- 映射：note_recall 的查询 = 当前轮「挑战描述 + 候选技巧」（原子线索式），**绝不拼接历史对话**——与“遗忘是特性”一致（导航式注入只带静态导航层，不再注入最新用户消息）。
 - 不适用：其训练与 4B embedding 部署成本不符合本项目约束；只取其查询侧洞察。
 
 ## 8. RaDeR: Reasoning-aware Dense Retrieval Models（arXiv:2505.18405）
@@ -89,7 +89,7 @@
 - 映射：
   - 结构化 passage = 我们的 hook 块 + cardRetrievalText（v3 按 card.type 分组组装）；
   - 空结果是信号 → 协议条款“检索不到就明说/改查询/换路线”，不硬凑；
-  - 分步 sketch → 我们的零 token 版本：模型在自身生成里先给证明草图，对每个外部结果步骤分别 note_retrieve（已有「子目标分解计划」原语的强化）；
+  - 分步 sketch → 我们的零 token 版本：模型在自身生成里先给证明草图，对每个外部结果步骤分别 note_recall（已有「子目标分解计划」原语的强化）；
   - 检索质量传播到证明成功率（20% vs 16% vs 4%）→ 支持优先投检索而非其它。
 - 不适用：其每轮 sketch/filter/judge 的多 LLM 调用与 8B embedder/reranker 均超本项目 token/部署预算。
 ## 待读清单（后续追加）

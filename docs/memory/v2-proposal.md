@@ -51,9 +51,9 @@ hook:
 | uses / success_rate / last_used | 使用统计（ISM 的 prior 项与审计信号） | **插件维护 pass 确定性更新**，模型不得手改 |
 | verified | 验证等级（§5） | 用户确认/维护 pass 升级，模型只能写最低级 |
 
-## 3. 两级检索：note_retrieve（已实现）
+## 3. 两级检索：note_retrieve（⚠️ 已退役：0.5.0 起被 note_recall 统一入口取代，见 retrieval-v3.md）
 
-`dsh/preset/obsidian-notes.mjs` 新增 `note_retrieve` 工具：
+`dsh/preset/note-tools.mjs` 新增 `note_retrieve` 工具：
 
 ```text
 Stage 0  查询增强（协议层，AGENTS.md §4 已有）：先做问题蒸馏，
@@ -80,18 +80,18 @@ Fallback 无任何 hook 卡片时，退化为对全库标题/正文的 token 加
 
 ## 4. 确定性维护 pass：记忆体检（已实现）
 
-`dsh/preset/obsidian-memory.mjs` 新增审计器（ISM 七机制的本土化第一层）：
+`dsh/preset/math-memory.mjs` 新增审计器（ISM 七机制的本土化第一层）：
 
 - **确定性扫描**（不调模型）：扫描 records/templates/inbox 的 frontmatter 与 hook 字段，产出体检报告 `cache/memory-audit.json`；
 - **节流**：每个 vault 每天最多重扫一次（可配置 `auditIntervalMs`，默认 86400000），报告随系统提示注入（预算 1200 字符）；
 - **报告内容**：
   - unused：uses=0 且 >30 天未更新的卡片（建议合并/降级/删除钩子但保留证据）；
-  - weak：success_rate ≤ 0.4 且 uses ≥ 3（建议模型改写内容并把 success_rate 归零重估，ISM Self-Correct）；
+  - weak：success_rate ≤ 0.4 且 uses ≥ 3（建议模型改写内容或适用边界；success_rate 由插件自动重估、模型勿动，ISM Self-Correct）；
   - duplicate candidates：同 operator 且 pattern+techniques Jaccard ≥ 0.7 的卡片对（建议合并，ISM Self-Merge）；
   - strong：success_rate ≥ 0.8（建议 reinforce：把最近成功案例的技巧追加进 techniques）；
   - unverified：verified 缺失或 single-source 超过 60 天（提醒升级或降级为 episode 引用）。
 - **模型执行层（AGENTS.md 协议）**：模型按报告行动——merge/reinforce/demote 都是模型读文件执行的，插件只提供确定性清单；
-- **正反馈闭环**：每次 note_retrieve 命中 → 更新 uses/last_used；用户反馈（future）→ 更新 success_rate。
+- **正反馈闭环**：每次 note_recall 命中 → 更新 uses/last_used；用户反馈 → 更新 success_rate。
 
 与 ISM 七机制的映射：
 
@@ -129,12 +129,12 @@ Fallback 无任何 hook 卡片时，退化为对全库标题/正文的 token 加
 **替代方案（已落地）**：
 
 - **零 token 确定性回归检查**：`scripts/test-memory.mjs`（已接入 `npm test`），在临时 vault 上断言 hook 解析、token 化、相关卡得分 > 无关卡、体检五类分类、hook 统计回写语义（含“从未使用的卡不得伪造 last_used”）。每次改检索/体检代码必跑，成本为零。
-- **被动信号采集（已内置）**：`note_retrieve` 命中计数与 `hook.uses/success_rate/last_used`、体检报告、注入字符数（report 长度有界）。这些是真实使用产生的免费信号。
+- **被动信号采集（已内置）**：`note_recall` 命中计数与 `hook.uses/success_rate/last_used`、体检报告、注入字符数（report 长度有界）。这些是真实使用产生的免费信号。
 - **未来可选的一次性手动探针**：某次大改检索层后，由用户挑 5~10 个自己知道答案的问题问一轮，看命中与溯源是否合理——一次性的、手动的、用完即弃，不做成常驻套件。
 
 如果将来社区出现公认的个人知识库记忆基准（评测目标是“跨会话找回个人知识”而非解题），再回来评估是否值得接。
 
-## 7. 记忆控制面（规划中）
+## 7. 记忆控制面（部分已实现：阶段 1a / 1b / 1c）
 
 - 面板：分层浏览/搜索/编辑/删除任意记忆，每条显示来源与引用次数（复用 /open 跳转）——规划为 Obsidian 侧 ItemView（阶段 1b，评估见 control-panel.md）；
 - 溯源：答案底部标注依据文件 + 验证等级徽标；
@@ -146,10 +146,10 @@ Fallback 无任何 hook 卡片时，退化为对全库标题/正文的 token 加
 
 | 项目 | 状态 | 位置 |
 |---|---|---|
-| hook frontmatter 解析 | ✅ | `obsidian-notes.mjs` parseHookFrontmatter |
-| note_retrieve 两级检索 | ✅ | `obsidian-notes.mjs`（register note_retrieve） |
-| 记忆体检（audit） | ✅ | `obsidian-memory.mjs`（buildAuditReport + 注入段） |
-| uses/success_rate 正反馈 | ✅ | note_retrieve 命中写 stats → 每日体检合并回卡片并**清零 stats**（无双计）；feedback 调 success_rate |
+| hook frontmatter 解析 | ✅ | `note-tools.mjs` parseHookFrontmatter |
+| note_retrieve 两级检索 | ⬜ 已退役 | 0.5.0 起被 note_recall 统一入口取代（见 retrieval-v3.md） |
+| 记忆体检（audit） | ✅ | `math-memory.mjs`（buildAuditReport + 注入段） |
+| uses/success_rate 正反馈 | ✅ | note_recall 命中写 stats → 每日体检合并回卡片并**清零 stats**（无双计）；feedback 调 success_rate |
 | 模型执行的 merge/reinforce/demote 协议 | ✅ | `AGENTS.md` §2/§4/§6 + records/templates README |
 | 验证等级字段与报告 | ✅ | hook.verified + 审计报告 unverified 清单 |
 | embedding 后端 | ⬜ | lexical 项可替换 |
@@ -157,7 +157,7 @@ Fallback 无任何 hook 卡片时，退化为对全库标题/正文的 token 加
 | BM25/embedding 后端 | ⬜ | 当前 token 加权 + hook 快路径，embedding 仍可选 |
 | 验证徽标 + 反馈链接（1a） | ✅ | `main.template.js` /feedback 端点 + AGENTS.md §8 渲染规则 |
 | 记忆视图（1b，Obsidian ItemView） | ✅ | `main.template.js` MemoryView：五层浏览 + hook 统计 + 搜索 + 逐卡反馈按钮 + 预览弹窗（隐藏目录限制） |
-| 检索式注入（P0-1 落地） | ✅ | 静态预算瘦身 + 每轮按当前消息召回 top-k（`buildRecallIndex`/`rankRecall`，mtime 指纹缓存） |
+| 检索式注入（P0-1 落地） | ⬜ 已移除 | 0.5.0 起改为导航式注入（S5）：召回段与 `buildRecallIndex`/`rankRecall` 已移除（见 retrieval-v3.md） |
 | dialogue index 修复 | ✅ | 按 vault 过滤 + 问答配对取轮次最后一条 assistant 回复 |
 | 备忘录相关性提醒 | ✅ | relevance(0.7) × recency(0.3) 双分数 |
 | 安全/质量加固 | ✅ | /feedback CSRF token、皮肤缺失自动降级、stats 串行队列、安装器漂移检测、debug.log 轮转 |

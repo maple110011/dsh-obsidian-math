@@ -1,6 +1,6 @@
 # 检索 v3 提案（第二版：端到端审视 + 「统一入口、粗筛-精读」架构）
 
-> 状态：**提案定稿 v2，待用户抉择后实施**。背景：用户明确「现状不必维持、完全推倒重来可接受，优先保证 AI 正确且快速检索到相关信息，愿意花 tokens 保效果」。
+> 状态：**已实现并两层验收**（引擎探针 12/12 + 真实会话 E2E 4/4，见 §6 与 docs/memory/testing.md）。背景：用户明确「现状不必维持、完全推倒重来可接受，优先保证 AI 正确且快速检索到相关信息，愿意花 tokens 保效果」。
 > 依据：AgentIR（2603.04384）、RaDeR（2505.18405）、LeanSearch v2（2605.13137）论文笔记见 references.md §7-9；对检索/关联/提取/整理四层代码与真实 vault 状态的逐行审视。
 
 ## 1. 检索的本质（决策者速读）
@@ -122,19 +122,19 @@
 
 1. S1+S2：统一索引 + note_recall 工具 + BM25（回归断言：相关>无关、词频饱和、长度归一、kind-aware 组装）→ **✅ 已实现**（真实 vault 探针验证，连字符归一 + CJK 字符包含修复两处词法缺口）；
 2. S3：精读协议（AGENTS.md 重写检索/证明章节 + 空结果语义 + 重试上限）→ **✅ 已实现**（note_retrieve 退役，精读纪律：≤2 次 note_recall、每次读全文 ≤3 篇）；
-3. S5：按需导航注入（删 2200 字符无条件召回，补导航摘要）→ **✅ 已实现**（召回段与全部召回机制移除，注入层=导航层，≤9000 字符）；
+3. S5：按需导航注入（删 2200 字符无条件召回，补导航摘要）→ **✅ 已实现**（召回段与全部召回机制移除，注入层=导航层；整段硬上限 18000 字符，各层预算见 design.md §3）；
 4. S6：顺链协议 + 审计结构校验项 → **✅ 已实现**（顺链已在 S3 入协议；审计新增缺 source/断链/未入索引三项结构校验）；
 5. 部署 → 用户手动探针（5-10 题，含换说法策略题）→ 不过关则 S4（embedding/LLM 重排）。
 
 ### 自动验收探针（已落地，零 token）
 
-- `scripts/probe-vault.mjs`（本机脚本，gitignore，类 deploy-local）：12 组 ground-truth 断言（换说法/连字符变体/读取半径/无答案弱信号），对真实 vault 用部署同款打分器断言 recall；本轮运行 **12/12 PASS**。
+- `scripts/qa/engine-probe.mjs`（已提交仓库，本机运行；ground truth 绑定本机 vault）：12 组 ground-truth 断言（换说法/连字符变体/读取半径/无答案弱信号），对真实 vault 用部署同款打分器断言 recall；本轮运行 **12/12 PASS**。
 - 探针发现并修复一个真实缺陷：max 归一化让「无答案」查询也产出 0.9+ 自信高分 → 新增 `coverage`（查询词覆盖率）弱信号指示，<0.35 视为词面巧合；AGENTS.md 精读纪律同步。
 - ground truth 与 vault 绑定，vault 内容变化时需同步维护该脚本。
 
 ### 真实会话端到端验收（已执行，2026-08-16，经真实 web 服务 + obsidian preset）
 
-- 方法：临时 web 实例（--profile obsidian --port 3181）→ typert 协议 session.create（cwd=vault, agentPreset=obsidian）→ session.prompt → session.history 检查工具轨迹。
+- 方法：临时 web 实例（--profile notes-assistant --port 3191）→ typert 协议 session.create（cwd=vault, agentPreset=notes-assistant）→ session.prompt → session.history 检查工具轨迹。
 - 结果 4/4 通过：
   - Q1 换说法策略题：note_recall 蒸馏查询「依测度收敛 加强到 几乎处处收敛 子列 Riesz定理 Borel-Cantelli 快速子列」→ 读子列备忘录+episode → 答案正确且以用户记忆为准；
   - Q2 无答案题：note_recall 两次调用（改写重试协议真实执行），模型自行引用「coverage < 0.35 属词面巧合」判定弱命中，grep 交叉核实后**明说库里没有、不编造**——coverage 弱信号端到端生效；

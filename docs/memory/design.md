@@ -1,8 +1,8 @@
 # 记忆系统当前设计（v0.5.x 实现规格）
 
 > 本文档描述**代码里真实存在**的记忆系统，不是愿景。对应文件：
-> - 注入引擎：`dsh/preset/obsidian-memory.mjs`
-> - 笔记工具：`dsh/preset/obsidian-notes.mjs`
+> - 注入引擎：`dsh/preset/math-memory.mjs`
+> - 笔记工具：`dsh/preset/note-tools.mjs`
 > - 工作协议：`dsh/templates/AGENTS.md`（安装进 vault 根目录）
 > - 记忆模板：`dsh/templates/*.md`（安装进 `<vault>/.deepseek/**`）
 > - 生命周期维护：`obsidian/main.template.js` 的 `archiveOldEpisodes`
@@ -46,7 +46,7 @@
 - `capture-policy.md`：捕获策略（idea/fact/preference × auto/ask/off，frontmatter，用户维护；随系统提示注入，默认 ask/auto/auto 与既有行为一致）；
 - `cache/`：机器生成的对话索引、记忆体检报告与 hook 历史快照（用户勿动）。
 
-## 3. 注入预算（`obsidian-memory.mjs` 常量）
+## 3. 注入预算（`math-memory.mjs` 常量）
 
 | 段 | 预算 |
 |---|---|
@@ -100,14 +100,14 @@
 ## 8. 生命周期维护（宿主插件）
 
 - agent 无删除/移动工具；>90 天 episode 由 Obsidian 插件启动时移入 `episodes/archive/` 并更新 index（可配置关闭/手动触发）；
-- v2 新增：记忆体检报告由 obsidian-memory 插件确定性扫描生成（≤每天一次），见 v2-proposal §3。
+- v2 新增：记忆体检报告由 math-memory 插件确定性扫描生成（≤每天一次），见 v2-proposal §3。
 
 ## 9. 安全边界（fail-closed）
 
-- 工具面：文件读写/搜索 + 三个笔记工具 + ask_user；无 shell/web/subagent；
+- 工具面：文件读写/搜索 + 四个笔记工具（note_recall / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；
 - 写操作被 workspace-write 沙箱限制在 vault 内，交互提权默认禁用（`approval: never`）；
 - 插件自身唯一写的文件在 `cache/`；一切记忆变更走 ctx.fs，无裸 fs 旁路。
 
 ## 10. 已知局限（详见 assessment.md）
 
-全量注入成本高、无相关性过滤；对话索引质量与范围问题（未按 vault 过滤）；写回依赖模型自律；检索无索引（全库线性扫描）；用户对记忆零透明零控制。
+检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板目前仅在 Obsidian 侧（dsh web ui 面板待重构 Phase 4）；hook frontmatter schema 无版本常量（重构 Phase 2 补）。

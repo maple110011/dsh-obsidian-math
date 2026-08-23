@@ -25,7 +25,7 @@ updated: YYYY-MM-DD
 source: '[[YYYY-MM-DD-episode-slug]]'
 topic: <相关主题或“未归类”>
 related: []
-hook:                 # 可选：检索特征块（记忆 v2，供 note_retrieve 两级检索）
+hook:                 # 可选：检索特征块（记忆 v2，供 note_recall 统一检索加权）
   operator: probability      # 算子类型：algebra/number-theory/geometry/combinatorics/probability/analysis/statistics/calculus/linear-algebra/topology/logic
   pattern: subsequence_argument   # 结构模式（下划线分词）
   heuristics:           # 启发式签名

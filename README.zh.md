@@ -1,4 +1,4 @@
-# DSH 数学笔记助手（dsh-obsidian-math）
+# DSH 数学笔记助手（dsh-math-memory）
 
 [English](README.md) · [简体中文](README.zh.md)
 
@@ -7,7 +7,7 @@
 一个**双组件**仓库：
 
 1. **Obsidian 社区插件**（id `dsh-math-assistant`，仓库根 `manifest.json` + `main.js`）：右侧栏嵌入 dsh Web UI、自动检测并启动 dsh 服务、首次运行自动初始化 dsh 侧配置与 vault 模板；另有记忆面板、捕获策略设置与确定性维护。
-2. **dsh 插件**（npm 包 `dsh-obsidian-math`，`dsh/`）：把同一套 `obsidian` agent preset / profile 与 vault 模板安装进 `$DSH_HOME`。
+2. **dsh 插件**（npm 包 `dsh-math-memory`，`dsh/`）：把同一套 `obsidian` agent preset / profile 与 vault 模板安装进 `$DSH_HOME`。
 
 两者写入的 dsh 配置完全相同、幂等。**只装 Obsidian 插件即可使用**；`dsh/install.mjs` 供纯 CLI 场景。
 
@@ -20,7 +20,7 @@
 ### 检索（v3：统一入口、粗筛-精读）
 - **`note_recall` 统一检索**：一次 BM25 排序覆盖用户笔记 + 全部记忆层（记忆卡带 hook 字段加权、备忘录、主题、定理/事件索引）；Unicode 连字符归一 + 中文字符包含桥接词形差异；命中带 **coverage**（查询词覆盖率，<0.35 视为词面巧合弱信号）。
 - **精读挑选协议**：蒸馏查询（挑战描述 + 候选技巧）→ 读前 2-3 篇全文逐条判适用 → 空结果改写重试一次 → 仍无则明说「库里没有」，不编造；同一轮 ≤2 次检索、≤3 篇全文。
-- **导航式注入**：系统提示只注入导航层（画像/记号/主题/记录/模板/事件索引），相关内容按需拉取——每轮注入有界（≤9000 字符）。
+- **导航式注入**：系统提示只注入导航层（画像/记号/主题/记录/模板/事件索引），相关内容按需拉取——每轮注入有硬上限（≤18000 字符；各层预算见 docs/memory/design.md §3）。
 - `note_search`（用户笔记 tag 过滤）、`note_links`（反链/顺链扩读）、`note_create`（拒绝覆盖）配合使用。
 
 ### 记忆（五层 + 维护闭环）
@@ -35,10 +35,10 @@
 - **记忆面板**：五层浏览、搜索、hook 统计与 📈 使用趋势、逐卡 ✅/❌/过期/归档、体检报告展示；**面板内直接编辑保存**（mtime 冲突防护）；捕获策略与策略说明在设置页可见可改。
 - **反馈闭环**：回复内 `[✅ 这条对] [❌ 这条错]` 链接经 loopback `/feedback` 端点确定性改写卡片（CSRF token 保护）；笔记引用可点击跳转 Obsidian（`/open`）。
 - **回复质量协议**：直觉先行、认知锚定（新内容挂钩你的笔记）、难度自适应、苏格拉底式纠错、低频检查性收尾。
-- **皮肤与背景透明度（仅美观，不加任何 agent 工具）**：obsidian profile 挂载 dsh-web-ui 的**皮肤中心**（皮肤选择 + 背景透明度调节）及其卡片宿主 **web-ui-settings**（设置页「Web UI 插件」分组卡，纯 UI 无工具）；**其余 dsh-web-ui 生态功能一律不装**（任务看板/SSH/aionui 面板/git-graph/宠物/统计等），以保持最小工具面。入口：内嵌界面的设置 → 插件 → **Web UI 插件** → **皮肤中心**。皮肤选择与主 web profile 共享（同一全局设置）。
+- **不挂载任何 dsh-web-ui 插件（独立性）**：profile 只 bundle `dsh-web-app` 以嵌入聊天 UI，但**不挂载** dsh-web-ui 插件家族（皮肤中心/任务看板/SSH/aionui 面板/git-graph/宠物/统计等）——因此没有 `@linxin666` UI 包需要解析，有/无 `web` profile 都能干净启动。
 
 ### 安全（fail-closed）
-- 工具面：文件读写/搜索 + 四个笔记工具 + ask_user；无 shell/web/子代理/删除工具。dsh-web-ui 生态只保留**皮肤中心及其卡片宿主 web-ui-settings**（均无 agent 工具，纯美观），功能类插件全部舍去。
+- 工具面：文件读写/搜索 + 四个笔记工具 + ask_user；无 shell/web/子代理/删除工具。**不挂载任何 dsh-web-ui 插件**——保持最小 agent 工具面。
 - 写操作限定 vault（workspace-write）；交互式提权默认禁用（`approval: never`）；`DSH_PERMISSION_MODE=danger-full-access` 仅重开提权询问、沙箱不变。
 - 记忆全部是 vault 内 markdown；归档代替删除；模型不得修改策略/统计字段。
 
@@ -52,9 +52,9 @@
 
 **方式 B（CLI）**：
 ```bash
-npm install -g dsh-obsidian-math
-dsh-obsidian-math install --vault "D:\\Obsidian笔记数据库"
-dsh --profile obsidian --port 3180 --patch "$DSH_HOME/profiles/obsidian/obsidian.patch.yml"
+npm install -g dsh-math-memory
+dsh-math-memory install --vault "D:\\Obsidian笔记数据库"
+dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assistant/notes-assistant.patch.yml"
 ```
 
 插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**捕获策略三档下拉框**。

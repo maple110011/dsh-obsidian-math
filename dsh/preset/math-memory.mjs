@@ -1,7 +1,7 @@
 /**
- * obsidian-memory — cross-session memory injection for the `obsidian` dsh
- * agent preset. It also applies the sibling obsidian-notes.mjs plugin on the
- * same context, which registers note_search / note_create / note_links.
+ * math-memory — cross-session memory injection for the `obsidian` dsh
+ * agent preset. It also applies the sibling note-tools.mjs plugin on the
+ * same context, which registers note_recall / note_search / note_create / note_links.
  *
  * What it does, on every system-prompt assembly for this agent:
  *   1. Reads the vault's durable memory files (`.deepseek/memory/*` and a
@@ -17,7 +17,7 @@
  *      `<vault>/.deepseek/cache/memory-audit.json`, syncs usage statistics
  *      back into the cards' hook.uses / hook.last_used (block-style hook
  *      blocks only), and injects a bounded audit section into the prompt.
- *   4. Appends one bounded "obsidian:memory" section to the assembled system
+ *   4. Appends one bounded "dsh-math:memory" section to the assembled system
  *      prompt.
  *
  * It never calls the model. Its only user-file mutation is the deterministic
@@ -42,7 +42,7 @@ import {
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
-export const name = "obsidian-memory";
+export const name = "math-memory";
 export const inject = ["tools", "fs", "systemPrompt", "loader"];
 
 const ZSTD_MAGIC = 4247762216; // little-endian 28 B5 2F FD
@@ -78,6 +78,11 @@ const AUDIT_FILE = join(CACHE_DIR, "memory-audit.json");
 const RETRIEVAL_STATS_FILE = join(CACHE_DIR, "retrieval-stats.json");
 const DEFAULT_AUDIT_INTERVAL_MS = 86400000; // 24h
 const MAX_AUDIT_CHARS = 1200;
+// Hard total cap for the assembled memory section — a final safety bound on
+// top of the per-layer budgets above (which sum to ~14.6K content chars plus
+// fixed headers/instructions). Keeps the injected section bounded even when
+// every layer is full; the per-layer budgets still govern normal sizing.
+export const MAX_TOTAL_MEMORY_CHARS = 18000;
 const AUDIT_CARD_DIRS = [join(MEMORY_DIR, "memory", "records"), join(MEMORY_DIR, "memory", "templates")];
 const AUDIT_UNUSED_DAYS = 30;
 const AUDIT_UNVERIFIED_DAYS = 60;
@@ -97,13 +102,13 @@ export function scanZstdFrames(buffer) {
     const start = offset;
     if (buffer.length - offset < 4) return frames;
     if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) {
-      throw new Error(`obsidian-memory: bad zstd frame magic at byte ${offset}`);
+      throw new Error(`math-memory: bad zstd frame magic at byte ${offset}`);
     }
     offset += 4;
     if (offset === buffer.length) return frames; // torn header after magic
     const descriptor = buffer.readUInt8(offset);
     offset += 1;
-    if ((descriptor & 24) !== 0) throw new Error(`obsidian-memory: reserved zstd frame-header bit at byte ${offset - 1}`);
+    if ((descriptor & 24) !== 0) throw new Error(`math-memory: reserved zstd frame-header bit at byte ${offset - 1}`);
     const contentSizeFlag = descriptor >>> 6;
     const singleSegment = (descriptor & 32) !== 0;
     const hasChecksum = (descriptor & 4) !== 0;
@@ -120,7 +125,7 @@ export function scanZstdFrames(buffer) {
       const lastBlock = (blockHeader & 1) !== 0;
       const blockType = (blockHeader >>> 1) & 3;
       const blockSize = blockHeader >>> 3;
-      if (blockType === 3) throw new Error(`obsidian-memory: reserved zstd block type at byte ${offset - 3}`);
+      if (blockType === 3) throw new Error(`math-memory: reserved zstd block type at byte ${offset - 3}`);
       const payloadBytes = blockType === 1 ? 1 : blockSize;
       if (buffer.length - offset < payloadBytes) return frames; // torn payload
       offset += payloadBytes;
@@ -378,6 +383,39 @@ function capturePolicyText(root) {
   }
 }
 
+// ── standalone memory settings (host-agnostic config file) ─────────────────
+
+const MEMORY_CONFIG_FILE = join(MEMORY_DIR, "config.md");
+
+/**
+ * Parse the workspace's standalone memory settings (.deepseek/config.md
+ * frontmatter): enabled / dialogueIndex / reminders / audit. Host-agnostic
+ * settings surface — editable without Obsidian or the dsh web UI, and each
+ * workspace (vault/folder) can carry its own overrides. A missing file/field
+ * returns null so the preset config (agent.cordis.yml) applies.
+ */
+export function parseMemoryConfig(text) {
+  if (typeof text !== "string" || text === "") return null;
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (match === null) return null;
+  const config = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    const pair = /^(enabled|dialogueIndex|reminders|audit):\s*(true|false)\s*$/i.exec(line.trim());
+    if (pair !== null) config[pair[1]] = pair[2].toLowerCase() === "true";
+  }
+  return Object.keys(config).length === 0 ? null : config;
+}
+
+export function memoryConfigText(root) {
+  const path = join(root, MEMORY_CONFIG_FILE);
+  if (!existsSync(path)) return "";
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
 function parseLocalDay(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
   if (match === null) return null;
@@ -402,7 +440,7 @@ function localDateString() {
  * message — a memo being actively discussed surfaces even before it goes
  * stale. Ranking: 0.7 × relevance + 0.3 × recency (days/30, capped at 1).
  */
-export function memoDigest(root, maxChars, query = "", helpers = undefined) {
+export function memoDigest(root, maxChars, query = "", helpers = undefined, includeReminders = true) {
   const memoDir = join(root, MEMORY_DIR, "inbox");
   if (!existsSync(memoDir)) return "";
   let files = [];
@@ -472,19 +510,21 @@ export function memoDigest(root, maxChars, query = "", helpers = undefined) {
     }
   }
 
-  const candidates = [...groups.inbox, ...groups.polishing]
-    .filter((memo) => !memo.alreadyReminded && (memo.stale || memo.relevance >= 0.15))
-    .map((memo) => ({
-      ...memo,
-      rank: 0.7 * memo.relevance + 0.3 * Math.min(1, (memo.days ?? 0) / 30)
-    }))
-    .sort((a, b) => b.rank - a.rank)
-    .slice(0, 3);
-  if (candidates.length > 0) {
-    lines.push("- 🔔 提醒候选（陈旧或与当前讨论相关，按相关性×新鲜度排序）");
-    for (const memo of candidates) {
-      const reason = memo.stale ? `${memo.days} 天未更新` : "与当前讨论相关";
-      lines.push(`  - [[${memo.slug}|${memo.title}]]：${reason}（相关度 ${memo.relevance.toFixed(2)}），可在相关讨论时建议打磨`);
+  if (includeReminders) {
+    const candidates = [...groups.inbox, ...groups.polishing]
+      .filter((memo) => !memo.alreadyReminded && (memo.stale || memo.relevance >= 0.15))
+      .map((memo) => ({
+        ...memo,
+        rank: 0.7 * memo.relevance + 0.3 * Math.min(1, (memo.days ?? 0) / 30)
+      }))
+      .sort((a, b) => b.rank - a.rank)
+      .slice(0, 3);
+    if (candidates.length > 0) {
+      lines.push("- 🔔 提醒候选（陈旧或与当前讨论相关，按相关性×新鲜度排序）");
+      for (const memo of candidates) {
+        const reason = memo.stale ? `${memo.days} 天未更新` : "与当前讨论相关";
+        lines.push(`  - [[${memo.slug}|${memo.title}]]：${reason}（相关度 ${memo.relevance.toFixed(2)}），可在相关讨论时建议打磨`);
+      }
     }
   }
 
@@ -959,7 +999,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   const memos = memoText ?? memoDigest(vaultRoot, MAX_INBOX_CHARS);
 
   const lines = [
-    "## 分层长期记忆（由 obsidian-memory 自动注入；导航层在此，证据层在磁盘）",
+    "## 分层长期记忆（由 math-memory 自动注入；导航层在此，证据层在磁盘）",
     "",
     "记忆按 arXiv:2606.24775 与 arXiv:2607.05794 的原则组织为五层：profile=语义层，topics=导航层，" +
     "records=类型化原子记录层，episodes=原始证据层，inbox=想法层。以下内容用于“知道去哪找”，不要当作完整证据。" +
@@ -978,9 +1018,9 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   // server's /open and /feedback endpoints are guarded by a CSRF token that
   // the plugin passes via DSH_OBSIDIAN_FEEDBACK_TOKEN — the rendered link
   // templates MUST carry it as t= or the click is rejected with 403.
-  const linkBaseUrl = process.env.DSH_OBSIDIAN_LINK_URL?.trim() ?? "";
+  const linkBaseUrl = (process.env.DSH_MATH_MEMORY_LINK_URL ?? process.env.DSH_OBSIDIAN_LINK_URL)?.trim() ?? "";
   if (linkBaseUrl !== "") {
-    const linkToken = process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN?.trim() ?? "";
+    const linkToken = (process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN ?? process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN)?.trim() ?? "";
     const tokenSuffix = linkToken === "" ? "" : `&t=${linkToken}`;
     lines.push(
       `- 回复正文中引用笔记时，使用可点击链接：[标题](${linkBaseUrl}/open?path=<vault 相对路径，需 URL 编码>${tokenSuffix})；`,
@@ -1087,11 +1127,11 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   }
 
   if (auditReport?.report !== undefined && auditReport.report !== "") {
-    lines.push("", "### 记忆体检（obsidian-memory 确定性扫描，见 .deepseek/cache/memory-audit.json）", "", auditReport.report,
-      "", "体检清单按 AGENTS.md 处理：weak → 读卡改写内容并清空 success_rate 重估（3 次仍弱则建议归档）；疑似重复 → 合并为一张、旧卡标 superseded（保留证据与 source 链）；unused → 在回复末尾一行向用户建议处置，不自行删除；strong → 相关讨论中把新技巧追加进 techniques；unverified → 保持单源引用，未经用户确认不得提升验证等级。");
+    lines.push("", "### 记忆体检（math-memory 确定性扫描，见 .deepseek/cache/memory-audit.json）", "", auditReport.report,
+      "", "体检清单按 AGENTS.md 处理：weak → 读卡改写内容或适用边界（success_rate 由插件自动重估，不要动它；同一张卡改 3 次仍弱则建议归档）；疑似重复 → 合并为一张、旧卡标 superseded（保留证据与 source 链）；unused → 在回复末尾一行向用户建议处置，不自行删除；strong → 相关讨论中把新技巧追加进 techniques；unverified → 保持单源引用，未经用户确认不得提升验证等级。");
   }
 
-  return lines.join("\n");
+  return clip(lines.join("\n"), MAX_TOTAL_MEMORY_CHARS);
 }
 
 // ── engine with per-process caching ─────────────────────────────────────────
@@ -1102,10 +1142,10 @@ function defaultSessionsRoot() {
 }
 
 function normalizeConfig(config) {
-  const vaultRaw = (process.env.DSH_OBSIDIAN_VAULT ?? config.vaultRoot ?? "").trim();
-  // Empty vaultRoot means "the agent's session cwd" — resolved per agent so the
-  // same preset is portable across machines and vaults.
-  const vaultRoot = vaultRaw === "" ? "" : resolve(vaultRaw);
+  // vaultRoot is resolved per agent (config → env → session cwd) by the shared
+  // resolveWorkspaceRoot helper from note-tools.mjs, so the preset stays
+  // portable across machines and vaults.
+  const vaultRoot = (config.vaultRoot ?? "").trim();
   const sessionsRaw = (process.env.DSH_SESSIONS_ROOT ?? config.sessionsRoot ?? "").trim();
   const sessionsRoot = resolve(sessionsRaw === "" ? defaultSessionsRoot() : sessionsRaw);
   const maxHistoryEntries = Number.isInteger(config.maxHistoryEntries) && config.maxHistoryEntries > 0
@@ -1116,19 +1156,14 @@ function normalizeConfig(config) {
     : DEFAULT_MAX_HISTORY_CHARS;
   const cacheTtlMs = Number.isFinite(config.cacheTtlMs) && config.cacheTtlMs >= 0 ? config.cacheTtlMs : 0;
   const auditEnabled = config.auditEnabled !== false;
+  const dialogueIndexEnabled = config.dialogueIndex !== false;
+  const remindersEnabled = config.reminders !== false;
   const auditMaintainHookStats = config.auditMaintainHookStats !== false;
   const auditIntervalMs = Number.isFinite(config.auditIntervalMs) && config.auditIntervalMs >= 0
     ? config.auditIntervalMs
     : DEFAULT_AUDIT_INTERVAL_MS;
-  if (!isAbsolute(sessionsRoot)) throw new TypeError("obsidian-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, auditMaintainHookStats, auditIntervalMs };
-}
-
-function resolveVaultRoot(config, agent) {
-  if (config.vaultRoot !== "") return config.vaultRoot;
-  const cwd = agent?.session?.header?.cwd ?? agent?.session?.cwd;
-  if (typeof cwd === "string" && cwd !== "" && isAbsolute(cwd)) return cwd;
-  return "";
+  if (!isAbsolute(sessionsRoot)) throw new TypeError("math-memory: sessionsRoot must be an absolute path");
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, auditIntervalMs };
 }
 
 function fingerprint(logs) {
@@ -1224,9 +1259,9 @@ class MemoryEngine {
    * Deterministic memory health report for one vault, at most once per
    * auditIntervalMs (default 24h). Reuses the on-disk report when fresh.
    */
-  auditReportFor(vaultRoot) {
+  auditReportFor(vaultRoot, enabled = this.#config.auditEnabled) {
     const config = this.#config;
-    if (!config.auditEnabled) return undefined;
+    if (!enabled) return undefined;
     const cached = this.#auditCache.get(vaultRoot);
     if (cached !== undefined && Date.now() - cached.generatedAt < config.auditIntervalMs) return cached;
     if (cached === undefined) {
@@ -1259,19 +1294,29 @@ class MemoryEngine {
   async sectionForAgent(agent) {
     const config = this.#config;
     try {
-      const vaultRoot = resolveVaultRoot(config, agent);
+      const sessionCwd = agent?.session?.header?.cwd ?? agent?.session?.cwd;
+      const vaultRoot = this.#helpers.resolveWorkspaceRoot
+        ? this.#helpers.resolveWorkspaceRoot(config.vaultRoot, process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT, sessionCwd)
+        : "";
       if (vaultRoot === "") {
-        return "## 长期记忆（obsidian-memory 未配置）\n\n" +
-          "当前会话没有可用的 vault 工作目录；设置 DSH_OBSIDIAN_VAULT 或在 preset 配置 vaultRoot。";
+        return "## 长期记忆（math-memory 未配置）\n\n" +
+          "当前会话没有可用的 vault 工作目录；设置 DSH_WORKSPACE_ROOT（或 DSH_OBSIDIAN_VAULT）或在 preset 配置 vaultRoot。";
+      }
+      // Per-workspace standalone settings (.deepseek/config.md) override the
+      // preset config, so each vault/folder can carry its own switches.
+      const ws = parseMemoryConfig(memoryConfigText(vaultRoot)) ?? {};
+      if (ws.enabled === false) {
+        return "## 长期记忆（本工作区已停用）\n\n" +
+          "当前工作区的 .deepseek/config.md 里 enabled: false；如需开启，把该项改为 true（或删除该文件）。";
       }
       const currentSessionId = agent?.session?.id;
-      const dialogueIndex = this.getDialogueIndex(vaultRoot);
-      const auditReport = this.auditReportFor(vaultRoot);
+      const dialogueIndex = (ws.dialogueIndex ?? config.dialogueIndexEnabled) ? this.getDialogueIndex(vaultRoot) : { sources: [], entries: [] };
+      const auditReport = this.auditReportFor(vaultRoot, ws.audit ?? config.auditEnabled);
       const query = latestUserText(agent);
-      const memoText = memoDigest(vaultRoot, MAX_INBOX_CHARS, query, this.#helpers);
+      const memoText = memoDigest(vaultRoot, MAX_INBOX_CHARS, query, this.#helpers, ws.reminders ?? config.remindersEnabled);
       return buildMemorySection({ ...config, vaultRoot }, currentSessionId, dialogueIndex, auditReport, memoText);
     } catch (error) {
-      return `## 长期记忆（obsidian-memory 暂不可用）\n\n${String(error)}`;
+      return `## 长期记忆（math-memory 暂不可用）\n\n${String(error)}`;
     }
   }
 }
@@ -1281,14 +1326,21 @@ class MemoryEngine {
 export async function apply(ctx, config) {
   // Import the sibling first so the audit pass can reuse its hook parser and
   // tokenizer (memory v2). The note tools are applied on the same context.
-  const notes = await import("./obsidian-notes.mjs");
+  const notes = await import("./note-tools.mjs");
+  if (config?.enabled === false) {
+    // Master switch: memory system fully off (no injection / audit / dialogue
+    // index). Files and caches are preserved. Note tools still apply below.
+    await notes.apply(ctx, config?.notes ?? {});
+    return;
+  }
   const engine = new MemoryEngine(config ?? {}, {
     parseHookFrontmatter: notes.parseHookFrontmatter,
     tokenize: notes.tokenize,
     weightedOverlap: notes.weightedOverlap,
     computeDocFreq: notes.computeDocFreq,
     bm25Score: notes.bm25Score,
-    computeCorpusStats: notes.computeCorpusStats
+    computeCorpusStats: notes.computeCorpusStats,
+    resolveWorkspaceRoot: notes.resolveWorkspaceRoot
   });
   ctx.on("system-prompt/assemble", async (assembly, context, next) => {
     const assembled = await next();
@@ -1297,7 +1349,7 @@ export async function apply(ctx, config) {
     if (text === "") return assembled;
     return {
       ...assembled,
-      sections: [...assembled.sections, { name: "obsidian:memory", text }]
+      sections: [...assembled.sections, { name: "dsh-math:memory", text }]
     };
   });
 

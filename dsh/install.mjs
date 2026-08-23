@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * dsh-obsidian-math — install the Obsidian math-memory plugin into a
+ * dsh-math-memory — install the Obsidian math-memory plugin into a
  * DeepSeek Harness installation.
  *
  * Usage:
- *   dsh-obsidian-math install [--vault <vaultDir>] [--dsh-home <dir>] [--force]
- *   dsh-obsidian-math status
+ *   dsh-math-memory install [--vault <vaultDir>] [--dsh-home <dir>] [--force]
+ *   dsh-math-memory status
  *
  * What it writes (idempotent; existing user edits are preserved unless
  * --force is given):
- *   $DSH_HOME/.agent-presets/obsidian/   agent preset (file tools + dedicated note tools + memory plugin)
- *   $DSH_HOME/profiles/obsidian/         the `dsh --profile obsidian` profile
+ *   $DSH_HOME/.agent-presets/notes-assistant/   agent preset (file tools + dedicated note tools + memory plugin)
+ *   $DSH_HOME/profiles/notes-assistant/         the `dsh --profile notes-assistant` profile
  *   <vault>/.deepseek/...                optional vault memory templates (when --vault is given)
  */
 
@@ -30,7 +30,7 @@ const PROFILE_DIR = join(PACKAGE_ROOT, "dsh", "profile");
 const TEMPLATES_DIR = join(PACKAGE_ROOT, "dsh", "templates");
 // The Obsidian companion plugin and the shipped preset hard-code this name;
 // keeping it fixed in the CLI avoids the two drifting apart.
-const PROFILE_NAME = "obsidian";
+const PROFILE_NAME = "notes-assistant";
 
 function parseArgs(argv) {
   const options = {
@@ -39,7 +39,8 @@ function parseArgs(argv) {
     dshHome: "",
     force: false,
     quiet: false,
-    dryRun: false
+    dryRun: false,
+    presetOnly: false
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -50,16 +51,19 @@ function parseArgs(argv) {
     else if (arg === "--force" || arg === "-f") options.force = true;
     else if (arg === "--quiet" || arg === "-q") options.quiet = true;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--preset-only") options.presetOnly = true;
     else if (arg === "--help" || arg === "-h") {
-      console.log(`dsh-obsidian-math — DeepSeek Harness plugin installer
+      console.log(`dsh-math-memory — DeepSeek Harness plugin installer
 
 Usage:
-  dsh-obsidian-math install [--vault <vaultDir>] [--dsh-home <dir>] [--force]
-  dsh-obsidian-math status [--dsh-home <dir>]
+  dsh-math-memory install [--vault <vaultDir>] [--dsh-home <dir>] [--force]
+  dsh-math-memory status [--dsh-home <dir>]
 
 Options:
   --vault <dir>    also create the vault memory templates (.deepseek/..., AGENTS.md)
   --dsh-home <dir> harness home (default: $DSH_HOME or ~/.dsh)
+  --preset-only    install only the agent preset (skip the standalone profile), so the
+                   preset appears in your main dsh web UI alongside other agent presets
   --force          overwrite preset/profile config files (preserves user edits otherwise)
   --dry-run        print planned writes without touching the filesystem`);
       process.exit(0);
@@ -105,8 +109,9 @@ function resolveDshHome(options) {
 function installPreset(options, dshHome) {
   const presetRoot = join(dshHome, ".agent-presets", PROFILE_NAME);
   // Code always updates (bug fixes); user-editable metadata is preserved.
-  copyFile(options, join(PRESET_DIR, "obsidian-memory.mjs"), join(presetRoot, "obsidian-memory.mjs"), true);
-  copyFile(options, join(PRESET_DIR, "obsidian-notes.mjs"), join(presetRoot, "obsidian-notes.mjs"), true);
+  copyFile(options, join(PRESET_DIR, "math-memory.mjs"), join(presetRoot, "math-memory.mjs"), true);
+  copyFile(options, join(PRESET_DIR, "note-tools.mjs"), join(presetRoot, "note-tools.mjs"), true);
+  copyFile(options, join(PRESET_DIR, "hook-frontmatter.mjs"), join(presetRoot, "hook-frontmatter.mjs"), true);
   copyFile(options, join(PRESET_DIR, "preset.yml"), join(presetRoot, "preset.yml"), options.force);
   copyFile(options, join(PRESET_DIR, "agent.cordis.yml"), join(presetRoot, "agent.cordis.yml"), options.force);
 }
@@ -119,8 +124,8 @@ function installProfile(options, dshHome) {
   copyFile(options, join(PROFILE_DIR, "pnpm-workspace.yaml"), join(profileRoot, "pnpm-workspace.yaml"), !existsSync(join(profileRoot, "pnpm-workspace.yaml")));
   // Plugin-owned patch overlay + host plugin: always refreshed so the vault
   // workspace auto-registration reaches existing installs on update.
-  copyFile(options, join(PROFILE_DIR, "obsidian-workspace.mjs"), join(profileRoot, "obsidian-workspace.mjs"), true);
-  copyFile(options, join(PROFILE_DIR, "obsidian.patch.yml"), join(profileRoot, "obsidian.patch.yml"), true);
+  copyFile(options, join(PROFILE_DIR, "math-memory-workspace.mjs"), join(profileRoot, "math-memory-workspace.mjs"), true);
+  copyFile(options, join(PROFILE_DIR, "notes-assistant.patch.yml"), join(profileRoot, "notes-assistant.patch.yml"), true);
 }
 
 /** Warn when the global home patch references skin bundles the minimal profile does not mount. */
@@ -137,32 +142,16 @@ function warnAboutHomePatch(options, dshHome) {
     log(options, "NOTE: $DSH_HOME/cordis.patch.yml references dsh skin bundles (@linxin666/...).");
     log(options, "The generated obsidian profile only mounts dsh-base + dsh-web-app, so those");
     log(options, "skin patch entries will fail to apply. Either remove the skin entries from the");
-    log(options, "global patch or add the skin bundles to $DSH_HOME/profiles/obsidian/package.json.");
+    log(options, "global patch or add the skin bundles to $DSH_HOME/profiles/notes-assistant/package.json.");
   }
 }
 
 function installVaultTemplates(options) {
   if (options.vault === "") return;
   const vault = resolve(options.vault);
-  const templates = [
-    ["AGENTS.md", "AGENTS.md"],
-    ["profile.md", join(".deepseek", "memory", "profile.md")],
-    ["topics-index.md", join(".deepseek", "memory", "topics", "index.md")],
-    ["records-readme.md", join(".deepseek", "memory", "records", "_README.md")],
-    ["records-index.md", join(".deepseek", "memory", "records", "index.md")],
-    ["theorems-readme.md", join(".deepseek", "memory", "theorems", "_README.md")],
-    ["theorems-index.md", join(".deepseek", "memory", "theorems", "index.md")],
-    ["templates-readme.md", join(".deepseek", "memory", "templates", "_README.md")],
-    ["templates-index.md", join(".deepseek", "memory", "templates", "index.md")],
-    ["episodes-readme.md", join(".deepseek", "memory", "episodes", "_README.md")],
-    ["episodes-index.md", join(".deepseek", "memory", "episodes", "index.md")],
-    ["inbox-readme.md", join(".deepseek", "inbox", "_README.md")],
-    ["inbox-index.md", join(".deepseek", "inbox", "index.md")],
-    ["capture-policy.md", join(".deepseek", "capture-policy.md")],
-    ["notation.md", join(".deepseek", "memory", "notation.md")]
-  ];
-  for (const [source, target] of templates) {
-    copyTemplate(options, source, join(vault, target), false);
+  const manifest = JSON.parse(readFileSync(join(PACKAGE_ROOT, "dsh", "templates-manifest.json"), "utf8"));
+  for (const [source, relTarget] of Object.entries(manifest)) {
+    copyTemplate(options, source, join(vault, ...relTarget.split("/")), false);
   }
 }
 
@@ -178,6 +167,20 @@ function statusCommand(options, dshHome) {
   }
 }
 
+/** Warn when a pre-rename `obsidian` install still exists (deprecated legacy name). */
+function warnAboutLegacyProfile(options, dshHome) {
+  const legacyPreset = join(dshHome, ".agent-presets", "obsidian");
+  const legacyProfile = join(dshHome, "profiles", "obsidian");
+  if (existsSync(legacyPreset) || existsSync(legacyProfile)) {
+    log(options, "");
+    log(options, "NOTE: legacy `obsidian` preset/profile directories were detected.");
+    log(options, "      The preset is now `notes-assistant`; the old dirs are unused and can be");
+    log(options, "      removed after migration:");
+    if (existsSync(legacyPreset)) log(options, `        ${legacyPreset}`);
+    if (existsSync(legacyProfile)) log(options, `        ${legacyProfile}`);
+  }
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const dshHome = resolveDshHome(options);
@@ -186,15 +189,23 @@ function main() {
     return;
   }
   if (options.command === "update") options.force = false;
-  log(options, `dsh-obsidian-math: installing into ${dshHome}`);
+  log(options, `dsh-math-memory: installing into ${dshHome}`);
   installPreset(options, dshHome);
-  installProfile(options, dshHome);
+  if (!options.presetOnly) {
+    installProfile(options, dshHome);
+    warnAboutHomePatch(options, dshHome);
+  }
   installVaultTemplates(options);
-  warnAboutHomePatch(options, dshHome);
+  warnAboutLegacyProfile(options, dshHome);
   log(options, "");
-  log(options, "Done. Start the Obsidian mode with:");
-  log(options, `  dsh --profile ${PROFILE_NAME} --port 3180 --patch "${join(dshHome, "profiles", PROFILE_NAME, "obsidian.patch.yml")}"`);
-  log(options, "Or install the companion Obsidian community plugin: it starts this service automatically.");
+  if (options.presetOnly) {
+    log(options, "Done. The `数学笔记助手` agent preset is now available in this dsh's web UI.");
+    log(options, "Pick it when creating a session, and set the session workspace to your vault.");
+  } else {
+    log(options, "Done. Start the Obsidian mode with:");
+    log(options, `  dsh --profile ${PROFILE_NAME} --port 3180 --patch "${join(dshHome, "profiles", PROFILE_NAME, "notes-assistant.patch.yml")}"`);
+    log(options, "Or install the companion Obsidian community plugin: it starts this service automatically.");
+  }
 }
 
 main();

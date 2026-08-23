@@ -8,7 +8,7 @@
 
 `scripts/qa/engine-probe.mjs`：对真实 vault 跑 ground-truth 召回断言（换说法/连字符变体/读取半径/无答案弱信号 12 组）。**零 token、秒级**，改打分器/语料组装后必跑。
 
-- 断言三类：`must rank top-k`（目标文件须进入前 k 名）、`__WEAK__`（无答案查询 top-1 coverage 必须 < 0.4）；
+- 断言三类：`must rank top-k`（目标文件须进入前 k 名）、`__WEAK__`（无答案查询 top-1 coverage 必须 < 0.35）；
 - ground truth 与本机 vault 绑定（`DSH_OBSIDIAN_VAULT` 可覆盖），vault 内容变化时同步维护断言。
 
 ### 真实会话 E2E（消耗模型 tokens）
@@ -42,7 +42,7 @@ node scripts/qa/e2e.mjs --cases my-cases.json --port 3192   # 自定义用例集
 
 ## 3. 环境依赖
 
-- `DSH_HOME`（默认 `E:/software/deepseek-harness/.dsh`）、`DSH_OBSIDIAN_VAULT`（默认 `D:/Obsidian笔记数据库`）、`DSH_BIN`（dsh 启动脚本，默认安装路径）；
+- `DSH_HOME`、`DSH_OBSIDIAN_VAULT`（或 `DSH_WORKSPACE_ROOT`）、`DSH_BIN`（dsh 启动脚本）三个环境变量必填——QA 脚本不再内置本机路径默认值；
 - E2E 需要本机 dsh 安装 + 已配置的模型凭据；引擎探针无任何外部依赖。
 
 ## 4. 演进路线（后续可扩展）
