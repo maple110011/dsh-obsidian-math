@@ -2,6 +2,12 @@
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
+## [0.6.2] - 2026-08-23
+
+### Changed
+
+- **链接路径免手工编码**：AGENTS.md 与注入的链接模板改为「路径原样放入链接即可（中文和 `/` 都不用手工 percent-encode，浏览器会自动处理）」，消除 agent 思考过程中逐字计算 URL 编码的 token 浪费。
+
 ## [0.6.1] - 2026-08-23
 
 ### Changed

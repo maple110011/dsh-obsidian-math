@@ -1071,10 +1071,10 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     const linkToken = (process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN ?? process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN)?.trim() ?? "";
     const tokenSuffix = linkToken === "" ? "" : `&t=${linkToken}`;
     lines.push(
-      `- 回复正文中引用笔记时，使用可点击链接：[标题](${linkBaseUrl}/open?path=<vault 相对路径，需 URL 编码>${tokenSuffix})；`,
+      `- 回复正文中引用笔记时，使用可点击链接：[标题](${linkBaseUrl}/open?path=<vault 相对路径，原样放入>${tokenSuffix})；`,
       "  点击即可在 Obsidian 中打开对应笔记。笔记文件内部仍写 [[wikilink]]，两者不要混用。",
       `- 引用记忆卡时标注验证等级徽标：✅用户确认（hook.verified=user-confirmed）/ ⚖️互证（cross-referenced）/ ❓单源（single-source 或缺失）。`,
-      `- 本回复依据了记忆卡时，在末尾给反馈链接（path 为该卡 vault 相对路径，需 URL 编码）：[✅ 这条对](${linkBaseUrl}/feedback?path=<卡路径>&action=confirm${tokenSuffix}) [❌ 这条错](${linkBaseUrl}/feedback?path=<卡路径>&action=wrong${tokenSuffix})；用户点击后由 Obsidian 插件直接改写验证等级与成功率，无需你代劳。`
+      `- 本回复依据了记忆卡时，在末尾给反馈链接（path 为该卡 vault 相对路径，原样放入）：[✅ 这条对](${linkBaseUrl}/feedback?path=<卡路径>&action=confirm${tokenSuffix}) [❌ 这条错](${linkBaseUrl}/feedback?path=<卡路径>&action=wrong${tokenSuffix})；用户点击后由 Obsidian 插件直接改写验证等级与成功率，无需你代劳。`
     );
   }
 

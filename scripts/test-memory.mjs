@@ -392,7 +392,7 @@ process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = 'test-token-42';
 const linkSection = buildMemorySection(
   { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
   'live-session', { sources: [], entries: [] }, undefined, '', '');
-check('links: /open template carries t=', linkSection.includes('/open?path=<vault 相对路径，需 URL 编码>&t=test-token-42)'));
+check('links: /open template carries t=', linkSection.includes('/open?path=<vault 相对路径，原样放入>&t=test-token-42)'));
 check('links: /feedback confirm carries t=', linkSection.includes('action=confirm&t=test-token-42)'));
 check('links: /feedback wrong carries t=', linkSection.includes('action=wrong&t=test-token-42)'));
 if (prevLinkUrl === undefined) delete process.env.DSH_OBSIDIAN_LINK_URL; else process.env.DSH_OBSIDIAN_LINK_URL = prevLinkUrl;
