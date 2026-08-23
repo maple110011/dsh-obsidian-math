@@ -22,6 +22,6 @@ jobs:
           npm test > /tmp/npm-test.log 2>&1
           status=$?
           if [ "$status" -ne 0 ]; then
-            tail -n 25 /tmp/npm-test.log | sed 's/^/::error::/'
+            python3 -c "import sys; s=open('/tmp/npm-test.log').read(); s=s.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); print('::error::' + s[-2500:])"
           fi
           exit "$status"
