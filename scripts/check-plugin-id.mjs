@@ -19,14 +19,25 @@ if (typeof id !== "string" || id === "") {
   process.exit(1);
 }
 
-const deploy = readFileSync(join(root, "scripts", "deploy-local.mjs"), "utf8");
+// deploy-local.mjs is a machine-specific helper (gitignored); it is absent in
+// CI / fresh clones, so its drift check is best-effort and skipped when missing.
+let deploy = "";
+try {
+  deploy = readFileSync(join(root, "scripts", "deploy-local.mjs"), "utf8");
+} catch {
+  // not present in this checkout — skip the deploy-local drift check below
+}
 const template = readFileSync(join(root, "obsidian", "main.template.js"), "utf8");
 const readme = readFileSync(join(root, "README.md"), "utf8");
 
 let failed = 0;
 const check = (label, ok) => { if (!ok) { console.log(`[STALE] ${label}`); failed += 1; } };
 
-check(`deploy-local.mjs pluginDir uses id '${id}'`, deploy.includes(`'plugins', '${id}'`));
+if (deploy !== "") {
+  check(`deploy-local.mjs pluginDir uses id '${id}'`, deploy.includes(`'plugins', '${id}'`));
+} else {
+  console.log('plugin-id check: (skipping deploy-local.mjs drift check — file absent in this checkout)');
+}
 check(`main.template.js debug.log path uses id '${id}'`, template.includes(`'plugins', '${id}'`));
 check(`README plugin dir uses id '${id}'`, readme.includes(`plugins/${id}/`));
 
