@@ -287,6 +287,45 @@ class LinkServer {
   }
 }
 
+// ── dsh frontend link patch ────────────────────────────────────────────────
+// The dsh web frontend renders every http(s) markdown link with target=_blank,
+// so our loopback /open and /feedback links open the system browser instead of
+// navigating the embedded iframe in place. Patch the installed frontend bundle
+// so loopback links stay in-frame (the LinkServer then history.back()s to dsh).
+function patchDshFrontendLinks(installDir) {
+  if (!installDir) return '跳过 dsh 前端链接补丁：未检测到安装目录';
+  const q = String.fromCharCode(34);
+  const assetsDir = join(installDir, 'node_modules', '@deepseek-ai', 'dsh-web-frontend', 'dist', 'assets');
+  let files = [];
+  try {
+    files = readdirSync(assetsDir).filter((name) => name.startsWith('index-') && name.endsWith('.js'));
+  } catch {
+    return '跳过 dsh 前端链接补丁：未找到 dsh-web-frontend/dist/assets';
+  }
+  if (files.length === 0) return '跳过 dsh 前端链接补丁：assets 目录为空';
+  const find = '[' + q + 'http:' + q + ',' + q + 'https:' + q + '].includes(new URL(u).protocol)?{target:' + q + '_blank' + q + ',rel:' + q + 'noopener noreferrer' + q + '}:{}';
+  const replace = '(()=>{try{const x=new URL(u);return[' + q + 'http:' + q + ',' + q + 'https:' + q + '].includes(x.protocol)&&![' + q + '127.0.0.1' + q + ',' + q + 'localhost' + q + '].includes(x.hostname)}catch{return false}})()?{target:' + q + '_blank' + q + ',rel:' + q + 'noopener noreferrer' + q + '}:{}';
+  let patched = 0;
+  for (const name of files) {
+    const path = join(assetsDir, name);
+    let content;
+    try {
+      content = readFileSync(path, 'utf8');
+    } catch {
+      continue;
+    }
+    if (content.includes(replace)) { patched += 1; continue; }
+    if (!content.includes(find)) continue;
+    try {
+      writeFileSync(path, content.split(find).join(replace), 'utf8');
+      patched += 1;
+    } catch {
+      // best-effort; a read-only install just keeps the old behavior
+    }
+  }
+  return patched > 0 ? 'dsh 前端链接补丁：已处理 ' + patched + ' 个 bundle（loopback 链接改为站内跳转）' : 'dsh 前端链接补丁：无需处理（未命中或已打补丁）';
+}
+
 // ── dsh detection ───────────────────────────────────────────────────────────
 
 function validInstallDir(dir) {
@@ -455,6 +494,7 @@ class DshService {
       this.setStatus('missing-dsh');
       throw new Error('未找到 dsh。请打开插件设置，点击“自动检测”，或先安装 DeepSeek Harness。');
     }
+    this.appendLog(patchDshFrontendLinks(location.installDir));
     const patchPath = this.plugin.settings.autoInit
       ? ensureObsidianPatch(location)
       : join(location.home, 'profiles', PRESET_NAME, 'notes-assistant.patch.yml');

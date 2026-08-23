@@ -2,6 +2,14 @@
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
+## [0.6.1] - 2026-08-23
+
+### Changed
+
+- **链接站内跳转**：Obsidian 插件启动时对已安装的 dsh-web-frontend bundle 做幂等补丁，loopback `/open`、`/feedback` 链接不再 `target="_blank"`（不再跳外部浏览器），改在 iframe 内跳转并由 LinkServer `history.back()` 回到对话。
+- **数学交流提示词**：AGENTS.md 开头 persona 改为「数学学习伙伴」，新增「数学交流风格」（少工程腔、公式自然嵌入、先直觉后严格、少元语言）与「少弹窗」节；难度自适应不再弹窗问、改为文末一句话。
+- **ask_user 节制**：明确「除非真正需要用户抉择，否则不弹窗；每次只问一个关键问题、选项 ≤3」。
+
 ## [0.6.0] - 2026-08-23
 
 > 单仓身份解耦 + 记忆系统开关 + 独立设置面板 + 皮肤中心移除 + 文献库 + 记忆系统强化（两轮）+ dsh web 记忆面板（方案 A 两实例）。QA：`npm test` 82/82 全绿、engine-probe 12/12 全绿；真实会话 E2E 留待用户本机跑。

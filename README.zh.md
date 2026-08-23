@@ -90,7 +90,7 @@ node scripts/deploy-local.mjs     # 本机一键部署
 - **仓库结构**：[ARCHITECTURE.md](ARCHITECTURE.md)——目录职责、双组件数据流、记忆↔检索边界、落地清单。
 - **记忆系统知识库**：[docs/memory/](docs/memory/)——design（实现规格）、retrieval-v3（检索提案）、testing（QA 方法论）、assessment、references（论文笔记）、changelog、handoff。
 - **验收记录**：引擎探针 12/12；真实会话 E2E 4/4（含「无答案不编造」「改写重试」行为验证）；成本基准题（旧系统同题 17 万 tokens）新系统实测约 2.5 万计费 tokens（缓存命中 68%）。
-- 版本：**0.6.0**（试做型；记忆架构未经长期使用测试，会继续演进）。
+- 版本：**0.6.1**（试做型；记忆架构未经长期使用测试，会继续演进）。
 
 ## 隐私与安全
 
