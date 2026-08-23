@@ -18,4 +18,10 @@ jobs:
       - name: Ensure main.js is up to date
         run: git diff --exit-code main.js
       - name: Run tests
-        run: npm test
+        run: |
+          npm test > /tmp/npm-test.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            tail -n 25 /tmp/npm-test.log | sed 's/^/::error::/'
+          fi
+          exit "$status"
