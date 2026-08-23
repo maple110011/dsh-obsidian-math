@@ -474,6 +474,8 @@ class DshService {
   }
 
   async ensureStarted() {
+    const location = this.location();
+    if (location !== null) this.appendLog(patchDshFrontendLinks(location.installDir));
     if (await probeService(this.plugin.settings.port, 1200)) {
       this.warnPortOccupied();
       this.setStatus('running');
@@ -494,7 +496,6 @@ class DshService {
       this.setStatus('missing-dsh');
       throw new Error('未找到 dsh。请打开插件设置，点击“自动检测”，或先安装 DeepSeek Harness。');
     }
-    this.appendLog(patchDshFrontendLinks(location.installDir));
     const patchPath = this.plugin.settings.autoInit
       ? ensureObsidianPatch(location)
       : join(location.home, 'profiles', PRESET_NAME, 'notes-assistant.patch.yml');

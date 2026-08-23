@@ -2,6 +2,12 @@
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
+## [0.6.3] - 2026-08-23
+
+### Fixed
+
+- **链接补丁在「服务已在运行」时也执行**：补丁调用从 `start()` 移到 `ensureStarted()`，避免端口已被占用时跳过补丁导致 loopback 链接仍 `target="_blank"`。
+
 ## [0.6.2] - 2026-08-23
 
 ### Changed
