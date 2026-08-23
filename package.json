@@ -1,6 +1,6 @@
 {
   "name": "dsh-math-memory",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Obsidian side-panel math memory agent for DeepSeek Harness: layered long-term memory, idea memo with proactive review reminders, unified note_recall retrieval plus dedicated note search/create/backlink tools. Ships as both a dsh plugin and an Obsidian community plugin.",
   "type": "module",
   "bin": {
@@ -14,9 +14,10 @@
   ],
   "scripts": {
     "postinstall": "node dsh/install.mjs install --quiet",
-    "test": "node --check dsh/install.mjs && node --check dsh/preset/note-tools.mjs && node --check dsh/preset/math-memory.mjs && node --check dsh/profile/math-memory-workspace.mjs && node --check main.js && node -e \"import('./dsh/preset/math-memory.mjs').then(m=>console.log('preset ok:', m.name))\" && node scripts/test-memory.mjs && node scripts/test-installer.mjs && node scripts/check-rename.mjs && node scripts/check-skin-fallback.mjs && node scripts/check-plugin-id.mjs",
+    "test": "node --check dsh/install.mjs && node --check dsh/preset/note-tools.mjs && node --check dsh/preset/math-memory.mjs && node --check dsh/profile/math-memory-workspace.mjs && node --check main.js && node -e \"import('./dsh/preset/math-memory.mjs').then(m=>console.log('preset ok:', m.name))\" && node scripts/test-memory.mjs && node scripts/test-installer.mjs && node scripts/check-rename.mjs && node scripts/check-skin-fallback.mjs && node scripts/check-plugin-id.mjs && node scripts/check-doc-consistency.mjs && node --check scripts/lit-import.mjs && node --check dsh/host/memory-admin.mjs && node --check dsh/host/math-memory-panel.mjs",
     "qa": "node scripts/qa/run.mjs",
-    "qa:e2e": "node scripts/qa/run.mjs --e2e"
+    "qa:e2e": "node scripts/qa/run.mjs --e2e",
+    "build:client": "node dsh/client-panel/build-client.mjs"
   },
   "keywords": [
     "deepseek",
@@ -38,5 +39,8 @@
   "license": "MIT",
   "engines": {
     "node": ">=22.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

@@ -601,6 +601,13 @@ function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
  */
 export function buildAuditReport(root, helpers) {
   const stats = readRetrievalStats(root);
+  // Passive retrieval signal recorded by note_recall under "__meta__":
+  // total calls and empty-result calls. Reuse-rate ("hit but not cited") is
+  // not deterministically observable here — the agent reports it per AGENTS.md.
+  const recallMeta = stats["__meta__"] ?? {};
+  const recallCalls = Number.isFinite(recallMeta.calls) ? Math.max(0, Math.trunc(recallMeta.calls)) : 0;
+  const recallEmpty = Number.isFinite(recallMeta.empty) ? Math.max(0, Math.trunc(recallMeta.empty)) : 0;
+  const passive = { calls: recallCalls, empty: recallEmpty, emptyRate: recallCalls > 0 ? Number((recallEmpty / recallCalls).toFixed(2)) : null };
   const today = localDateString();
   const cards = [];
 
@@ -666,11 +673,16 @@ export function buildAuditReport(root, helpers) {
       if (Number.isFinite(statEntry.uses) && statEntry.uses > 0) mergedAny = true;
       syncHookStatsToCard(card.filePath, card.uses, card.lastUsed);
     }
-    if (mergedAny) {
+    // Reset the per-period counters (card hits AND the passive "__meta__"
+    // signal) whenever there is anything to consume. Merged-or-not, the meta
+    // must not carry over into the next audit window.
+    if (mergedAny || passive.calls > 0) {
       const cleaned = {};
       for (const [rel, entry] of Object.entries(stats)) {
+        if (rel === "__meta__") continue;
         cleaned[rel] = { uses: 0, last_used: typeof entry?.last_used === "string" ? entry.last_used : "" };
       }
+      cleaned["__meta__"] = { calls: 0, empty: 0 };
       try {
         writeFileSync(join(root, RETRIEVAL_STATS_FILE), JSON.stringify(cleaned, null, 2), "utf8");
       } catch {
@@ -768,8 +780,31 @@ export function buildAuditReport(root, helpers) {
     }
   }
 
+  // ── heat/utility + antipatterns (memory-review 2026-08) ────────────────────
+  // Heat-based utility (MACLA prune × MemoryOS heat × ISM promote/demote):
+  // 0.5 × verified strength + 0.3 × usage frequency + 0.2 × recency (90-day).
+  const verifiedStrength = { "user-confirmed": 1, "cross-referenced": 0.66, "single-source": 0.33 };
+  const utilityOf = (card) => {
+    const v = verifiedStrength[card.verified] ?? 0.33;
+    const freq = Math.min(card.uses / 10, 1);
+    const recency = card.days === null ? 0.5 : Math.max(0, 1 - card.days / 90);
+    return 0.5 * v + 0.3 * freq + 0.2 * recency;
+  };
+  const archiveCandidates = cards
+    .filter((card) => card.status === "active" && card.verified !== "user-confirmed")
+    .map((card) => ({ card, utility: Number(utilityOf(card).toFixed(3)) }))
+    .sort((a, b) => a.utility - b.utility)
+    .slice(0, 3);
+
+  // Antipatterns: weak cards (failure signal) + artifact cards explicitly
+  // marked as counterexamples / failures / mistakes-to-avoid.
+  const antipatterns = cards.filter((card) =>
+    card.status === "active" &&
+    ((card.successRate !== null && card.successRate <= AUDIT_WEAK_RATE && card.uses >= AUDIT_WEAK_USES) ||
+     (card.type === "artifact" && /反例|障碍|失败|mistake|antipattern|avoid/i.test(card.title))));
+
   const lines = [];
-  const counts = { cards: cards.length, strong: strong.length, weak: weak.length, unused: unused.length, duplicates: duplicates.length, unverified: unverified.length };
+  const counts = { cards: cards.length, strong: strong.length, weak: weak.length, unused: unused.length, duplicates: duplicates.length, unverified: unverified.length, antipatterns: antipatterns.length, archiveCandidates: archiveCandidates.length };
   if (cards.length > 0) {
     lines.push(`记忆体检（${today}，共 ${cards.length} 张卡）`);
     if (structural.missingSource.length + structural.brokenLinks.length + structural.notInIndex.length > 0) {
@@ -778,6 +813,16 @@ export function buildAuditReport(root, helpers) {
       if (structural.brokenLinks.length > 0) structuralParts.push(`断链: ${structural.brokenLinks.length} 处（${structural.brokenLinks.slice(0, 2).join("；")}）`);
       if (structural.notInIndex.length > 0) structuralParts.push(`未入索引: ${structural.notInIndex.length} 张（${structural.notInIndex.slice(0, 3).join("、")}）`);
       lines.push(`- 结构校验：${structuralParts.join("；")}——按 AGENTS.md 补 source、修断链、补索引行。`);
+    }
+    if (passive.calls > 0) {
+      const emptyPct = Math.round((passive.empty / passive.calls) * 100);
+      lines.push("- 检索健康：近 " + passive.calls + " 次 note_recall，空结果 " + passive.empty + " 次（" + emptyPct + "%）——空结果率高时先改进查询蒸馏，不要硬凑。");
+    }
+    if (antipatterns.length > 0) {
+      lines.push("- 反模式（失败经验，供提炼「要避免的错误」）: " + antipatterns.slice(0, 3).map((card) => "[[" + card.rel.replace(/.md$/, "") + "|" + card.title + "]]").join("、"));
+    }
+    if (archiveCandidates.length > 0) {
+      lines.push("- 低效用归档候选（0.5×可靠性+0.3×频次+0.2×新近度）: " + archiveCandidates.map(({ card, utility }) => "[[" + card.rel.replace(/.md$/, "") + "|" + card.title + "]](" + utility + ")").join("、") + "——向用户建议处置，不自行删除。");
     }
     for (const [label, items, formatter] of [
       ["strong（可 reinforce）", strong.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
@@ -803,6 +848,9 @@ export function buildAuditReport(root, helpers) {
       brokenLinks: structural.brokenLinks.length,
       notInIndex: structural.notInIndex.length
     },
+    antipatterns: antipatterns.map((card) => card.rel),
+    archiveCandidates: archiveCandidates.map(({ card, utility }) => ({ rel: card.rel, title: card.title, utility })),
+    passive,
     report: clip(lines.join("\n"), MAX_AUDIT_CHARS)
   };
 }

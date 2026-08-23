@@ -2,6 +2,55 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 面板小项收尾（方案 A）
+
+- `settings.section` 显示名改对字段 `label`（之前误用 title/locale），面板现名「记忆面板」。
+- 面板顶部增加「工作区下拉」（宿主新增 `GET /memory-panel/workspaces`，注入 workspaceRegistry）+ 手动输入。
+- Obsidian 插件（方案 A：保持两实例）新增命令「在 dsh web 打开记忆面板」与设置 `memoryPanelUrl`（默认 3080），用 electron.shell.openExternal 打开主 dsh web；notes profile 仍保持独立/fail-closed。
+- `npm test` 82/82 全绿，main.js 重建。
+
+## 2026-08 · Phase 2b（dsh web 记忆面板）
+
+- 客户端包 `dsh/client-panel/`：`src/index.jsx`（React 面板，settings.section 槽位：vault 路径输入 + 记录/模板/备忘录/体检 + ✅/❌/归档）+ `build-client.mjs`（esbuild → `window.__ModuleLoader__.load`）+ `install-into-profile.mjs`（装进 web profile + insert cordis.patch.yml）。
+- 装配机制：web profile 的 `dsh.profile.bundles` 里 `dsh-web-ui-all` 聚合各 `dsh-client-ui-*`；本面板作为独立包 insert 进 `profiles/web/cordis.patch.yml`（host 半 index.mjs 挂 /memory-panel/*，client 半 client.js 挂 settings.section）。
+- 已实测：主 dsh web（3080）Settings 出现记忆面板，填 vault 路径后能拉取 `/memory-panel/state`。
+- 遗留小项：settings.section 的显示名未接 i18n（按钮无名字，纯外观）。
+
+## 2026-08 · Phase 2a（host 面板路由）
+
+- 新增 `dsh/host/math-memory-panel.mjs`：host-plane 插件（inject webServer），挂 `/memory-panel/*` 路由（loopback-only + pathInside 门控），复用 `memory-admin.mjs`：state / feedback / archive / capture-policy / archive-episodes。
+- 接线：`install.mjs` 与 Obsidian bootstrap 把 `memory-admin.mjs` + `math-memory-panel.mjs` + `hook-frontmatter.mjs` 写进 profile 目录；`notes-assistant.patch.yml` 挂载 `math-memory-panel`；`npm test` 增语法检查。
+- 冒烟：profile 启动后 `GET /memory-panel/state` 返回 `{ok:true,state:{...}}`。
+- 剩余：Phase 2b 客户端面板（settings.section 槽位）。
+
+## 2026-08 · Phase 1 解耦（host-agnostic core）
+
+- 新建 `dsh/host/memory-admin.mjs`：把 Obsidian 插件里的确定性记忆操作 + 面板数据层抽成纯 node:fs/path 函数（pathInside/setHookField/setTopField/setCapturePolicyMode/applyFeedback/archiveMemoryFile/archiveOldEpisodes/parseMemoryFrontmatter/titleOf/daysSinceText/collectMemoryState/readAuditText/FEEDBACK_MESSAGES），hook 解析器与 capture-policy 模板改为注入。
+- 接入构建：`build-obsidian.mjs` 嵌入该文件；插件 `MEMORY_ADMIN` 加载器（import/export 剥离 + 注入 fs/path）；插件本地同名函数全部改为别名/薄封装，消除重复。
+- 冒烟验证：加载器 eval 后 13 个导出可用；`npm test` 82/82 全绿；main.js 重建。
+
+## 2026-08 · 记忆系统强化第二轮（recency + 模板/记录 schema + QA 验收）
+
+- `hookPrior` 增加新近度项（90 天线性衰减，Belief Memory λ^τ 推广到 records），权重 0.45/0.25/0.20/0.10。
+- records 模板新增 `confidence` 字段与「可修订记录（置信与备选）」规则；templates 维护规则补定理表聚合/按定理重选模板/解题步骤为实质性推理；profile 补静态/动态标注；AGENTS.md §8 环境变量旧名改 `DSH_MATH_MEMORY_LINK_URL`，三写补去重与备选、§4 补定理表聚合与条件演化门。
+- 回归 81 → 82；main.js 重建。
+- QA 验收：`npm test` 82/82 全绿；引擎探针 12/12 PASS（真实 vault `D:/Obsidian笔记数据库`）；`qa:e2e` 尝试运行但 dsh 服务启动即退（exit code 1）——需用户侧模型凭据/余额/环境，复跑命令见下。
+
+## 2026-08 · 记忆系统强化第一轮（promote/demote + 热度归档 + 反模式 + 被动信号）
+
+- 依据 14 篇文献综合评估（literature/notes/memory-system-review.md）落实高优先级改进。
+- note_recall：hook 先验改为 verified/success_rate/uses 三因素（`hookPrior`，promote/demote）；检索统计新增 `__meta__`（总调用/空结果）。
+- 体检：新增 反模式（weak + artifact 失败卡）、低效用归档候选（热度三因素排序）、检索健康（空结果率）；stats 重置同步清 `__meta__`。
+- AGENTS.md：三写补自动链接、Refine 步、promote/demote 说明、反模式/归档候选/检索健康处理规则、检索粒度纪律。
+- 回归 75 → 81；main.js 重建。
+
+## 2026-08 · 仓库文档大改（结构收敛 + 漂移清零 + 一致性守卫）
+
+- 背景：审查发现根目录与 `docs/memory/` 两份文档集存在事实漂移（测试断言数在 README/ARCHITECTURE/TESTING 各写 63/70/75）、导航缺口（`docs/memory/README.md` 漏列 control-panel/testing/handoff）、两个孤儿文档（根 `REFACTOR-PLAN.md`、根 `TESTING.md`），以及双 changelog 的双写负担。
+- 改动：断言数统一为真实值 75（以 `scripts/test-memory.mjs` 的 `check()` 数为准）；README 双语旧身份 `obsidian`→`notes-assistant`；design.md 注入段名改 `dsh-math:memory`、删除「hook schema 无版本常量」这一已失效局限；env 旧名改新名并注明兼容。
+- 结构：`REFACTOR-PLAN.md` 加历史档案横幅退役；根 `TESTING.md` 并入 `docs/memory/testing.md`（新增「本地验收手册」节）；`docs/memory/README.md` 导航补齐 3 份；根 CHANGELOG 定位为发布摘要，记忆细账只进本文件。
+- 守卫：新增 `scripts/check-doc-consistency.mjs`（断言数与代码实测自动比对），接入 `npm test`，从机制上防止数字漂移复发。
+
 ## 2026-08 · 皮肤中心在 obsidian 界面不可见（挂载宿主补齐）
 
 - 症状：用户实测 obsidian 内嵌 dsh 界面找不到皮肤中心与透明度调节；boot manifest 里 `ui-skin-center` 正常加载。

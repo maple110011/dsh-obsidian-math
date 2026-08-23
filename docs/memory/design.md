@@ -12,7 +12,7 @@
 ```text
                  system prompt 组装
                  ├─ persona + AGENTS.md + 工具说明（静态）
-                 └─ obsidian:memory 段（每次组装动态追加）
+                 └─ dsh-math:memory 段（每次组装动态追加）
                         │
    vault/.deepseek/     │  buildMemorySection()
    ┌──────────────────┐ │  ├─ 五层摘要：profile / topics / records /
@@ -66,7 +66,7 @@
 粗到细的路由规则，核心是“注入的是导航，证据在磁盘”：
 
 - 关键词/tag 找笔记 → `note_search`；反链 → `note_links`；
-- v3（检索重构，见 retrieval-v3.md）：统一入口 `note_recall`——BM25 对笔记+全部记忆层一次排序，kind-aware passage，空结果/重试协议；注入层只保留导航（S5 已移除逐轮召回段）；
+- v3（检索重构，见 retrieval-v3.md）：统一入口 `note_recall`——BM25 对笔记+全部记忆层一次排序，kind-aware passage，空结果/重试协议；hook 命中带 verified/success_rate/uses + 新近度先验（promote/demote + recency，`hookPrior`）；注入层只保留导航（S5 已移除逐轮召回段）；
 - **隐藏目录限制**：Obsidian 的 vault 索引排除所有点号开头的路径段（已核对 1.13.7 源码），`.deepseek` 文件无法经 openLinkText/TFile 打开——记忆面板点击卡片走插件内预览 Modal。
 - 精确事实/原话/日期 → grep episodes → 读命中文件；
 - 类型化事实 → records/index → grep/读记录 → `source` 回证据；
@@ -100,7 +100,7 @@
 ## 8. 生命周期维护（宿主插件）
 
 - agent 无删除/移动工具；>90 天 episode 由 Obsidian 插件启动时移入 `episodes/archive/` 并更新 index（可配置关闭/手动触发）；
-- v2 新增：记忆体检报告由 math-memory 插件确定性扫描生成（≤每天一次），见 v2-proposal §3。
+- v2 新增：记忆体检报告由 math-memory 插件确定性扫描生成（≤每天一次），见 v2-proposal §3；报告现含 strong/weak/unused/unverified + 结构校验 + **反模式（失败经验）** + **低效用归档候选（0.5×可靠性+0.3×频次+0.2×新近度）** + **检索健康（note_recall 空结果率）**。
 
 ## 9. 安全边界（fail-closed）
 
@@ -110,4 +110,4 @@
 
 ## 10. 已知局限（详见 assessment.md）
 
-检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板目前仅在 Obsidian 侧（dsh web ui 面板待重构 Phase 4）；hook frontmatter schema 无版本常量（重构 Phase 2 补）。
+检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板目前仅在 Obsidian 侧（dsh web ui 面板待重构 Phase 4）。

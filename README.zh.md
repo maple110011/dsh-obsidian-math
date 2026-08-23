@@ -7,7 +7,7 @@
 一个**双组件**仓库：
 
 1. **Obsidian 社区插件**（id `dsh-math-assistant`，仓库根 `manifest.json` + `main.js`）：右侧栏嵌入 dsh Web UI、自动检测并启动 dsh 服务、首次运行自动初始化 dsh 侧配置与 vault 模板；另有记忆面板、捕获策略设置与确定性维护。
-2. **dsh 插件**（npm 包 `dsh-math-memory`，`dsh/`）：把同一套 `obsidian` agent preset / profile 与 vault 模板安装进 `$DSH_HOME`。
+2. **dsh 插件**（npm 包 `dsh-math-memory`，`dsh/`）：把同一套 `notes-assistant` agent preset / profile 与 vault 模板安装进 `$DSH_HOME`。
 
 两者写入的 dsh 配置完全相同、幂等。**只装 Obsidian 插件即可使用**；`dsh/install.mjs` 供纯 CLI 场景。
 
@@ -80,7 +80,7 @@ vault/
 ## 开发与质量
 
 ```bash
-npm test          # 语法 + 63 项零 token 回归 + 安装器 e2e（漂移检测）
+npm test          # 语法 + 82 项零 token 回归 + 安装器 e2e（漂移检测）
 npm run qa        # 引擎探针：真实 vault 12 组召回断言（零 token）
 npm run qa:e2e    # 真实会话端到端验收（烧真实 tokens，报告 API 级 usage）
 node scripts/build-obsidian.mjs   # 重建 main.js（改共享文件后必跑）
@@ -90,7 +90,7 @@ node scripts/deploy-local.mjs     # 本机一键部署
 - **仓库结构**：[ARCHITECTURE.md](ARCHITECTURE.md)——目录职责、双组件数据流、记忆↔检索边界、落地清单。
 - **记忆系统知识库**：[docs/memory/](docs/memory/)——design（实现规格）、retrieval-v3（检索提案）、testing（QA 方法论）、assessment、references（论文笔记）、changelog、handoff。
 - **验收记录**：引擎探针 12/12；真实会话 E2E 4/4（含「无答案不编造」「改写重试」行为验证）；成本基准题（旧系统同题 17 万 tokens）新系统实测约 2.5 万计费 tokens（缓存命中 68%）。
-- 版本：**0.5.1**（试做型；记忆架构未经长期使用测试，会继续演进）。
+- 版本：**0.6.0**（试做型；记忆架构未经长期使用测试，会继续演进）。
 
 ## 隐私与安全
 

@@ -461,6 +461,29 @@ export function rankBm25(queryTokens, tokenizedDocs, stats) {
 }
 
 /**
+ * Hook prior for note_recall ranking (ISM promote/demote, localized):
+ * verified level + success_rate + usage frequency, mapped into [0,1].
+ * Non-hook documents get the neutral 0.5 baseline; a user-confirmed, high-
+ * success, frequently-used card ranks above a single-source, low-success one.
+ */
+export function hookPrior(hook, updatedDate = null) {
+  if (hook === null || hook === undefined) return 0.5;
+  const verifiedWeight = { "user-confirmed": 1, "cross-referenced": 0.75, "single-source": 0.5 };
+  const verified = verifiedWeight[hook.verified] ?? 0.5;
+  const success = Number.isFinite(Number(hook.success_rate)) ? Number(hook.success_rate) : 0.5;
+  const uses = Math.min((Number.isFinite(Number(hook.uses)) ? Number(hook.uses) : 0) / 10, 1);
+  // Recency (Belief Memory λ^τ, generalized to records): prefer cards that
+  // were updated or used recently; 90-day linear decay into [0,1].
+  const date = updatedDate || hook.last_used;
+  let recency = 0.5;
+  if (typeof date === "string" && date !== "") {
+    const t = Date.parse(date);
+    if (Number.isFinite(t)) recency = Math.max(0, Math.min(1, 1 - (Date.now() - t) / (90 * 86400000)));
+  }
+  return 0.45 * success + 0.25 * uses + 0.20 * verified + 0.10 * recency;
+}
+
+/**
  * CJK character containment in [0,1]: how many DISTINCT Chinese characters of
  * the query appear in the doc. Bridges short-vs-long word mismatch (子列 vs
  * 子序列) that bigram tokenization cannot see; zero for non-CJK queries.
@@ -609,6 +632,10 @@ function recordRetrievalStatsNow(vaultPath, cardPaths) {
     stats = {};
   }
   const today = localDateString();
+  const meta = stats["__meta__"] ?? { calls: 0, empty: 0 };
+  meta.calls = (Number.isFinite(meta.calls) ? meta.calls : 0) + 1;
+  if (cardPaths.length === 0) meta.empty = (Number.isFinite(meta.empty) ? meta.empty : 0) + 1;
+  stats["__meta__"] = meta;
   for (const rel of cardPaths) {
     const entry = stats[rel] ?? {};
     entry.uses = (Number.isFinite(entry.uses) ? entry.uses : 0) + 1;
@@ -631,7 +658,7 @@ function recordRetrievalStatsNow(vaultPath, cardPaths) {
  * failure must not fail the retrieval itself.
  */
 function recordRetrievalStats(vaultPath, cardPaths) {
-  if (typeof vaultPath !== "string" || vaultPath === "" || cardPaths.length === 0) return;
+  if (typeof vaultPath !== "string" || vaultPath === "") return;
   statsWriteQueue = statsWriteQueue
     .then(() => recordRetrievalStatsNow(vaultPath, cardPaths))
     .catch(() => {});
@@ -961,6 +988,7 @@ export async function apply(ctx, config) {
           title: titleFromDoc(frontmatter, body, note.name),
           tags: kind === "note" ? noteTags({ frontmatter, body }) : [],
           topic: metaScalar(frontmatter, "topic") ?? "",
+          updated: metaScalar(frontmatter, "updated") ?? "",
           hook: frontmatter === null ? null : parseHookFrontmatter(frontmatter),
           body
         };
@@ -973,9 +1001,7 @@ export async function apply(ctx, config) {
       const docTokenSets = passages.map((passage) => new Set(tokenize(passage)));
       const rawScores = docs.map((doc, i) => bm25Score(queryTokens, tokenize(passages[i]), corpusStats));
       const maxScore = Math.max(1e-9, ...rawScores);
-      const priorOf = (doc) => doc.hook === null
-        ? 0.5
-        : 0.5 * hookNumber(doc.hook, "success_rate", 0.5) + 0.5 * Math.min(hookNumber(doc.hook, "uses", 0) / 10, 1);
+      const priorOf = (doc) => hookPrior(doc.hook, doc.updated);
       const operatorMatch = (doc) => operator === null || (doc.hook !== null && normalizeOperator(doc.hook.operator) === operator);
       // 0.85 BM25 + 0.10 CJK char containment (bridges 子列/子序列-class
       // word-form gaps) + 0.05 success/uses prior.

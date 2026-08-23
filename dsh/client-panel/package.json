@@ -1,0 +1,23 @@
+{
+  "name": "@dsh-math-memory/client-ui-memory-panel",
+  "version": "0.1.0",
+  "description": "dsh web 里的「数学笔记助手」记忆管理面板（settings.section 槽位）。",
+  "type": "module",
+  "private": true,
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  }
+}

@@ -34,7 +34,9 @@ const preset = {
   "profile-cordis.patch.yml": readNormalized(join(root, "dsh", "profile", "cordis.patch.yml")),
   "profile-pnpm-workspace.yaml": readNormalized(join(root, "dsh", "profile", "pnpm-workspace.yaml")),
   "profile-math-memory-workspace.mjs": readNormalized(join(root, "dsh", "profile", "math-memory-workspace.mjs")),
-  "profile-notes-assistant.patch.yml": readNormalized(join(root, "dsh", "profile", "notes-assistant.patch.yml"))
+  "profile-notes-assistant.patch.yml": readNormalized(join(root, "dsh", "profile", "notes-assistant.patch.yml")),
+  "host-memory-admin.mjs": readNormalized(join(root, "dsh", "host", "memory-admin.mjs")),
+  "host-math-memory-panel.mjs": readNormalized(join(root, "dsh", "host", "math-memory-panel.mjs"))
 };
 
 const templates = {};

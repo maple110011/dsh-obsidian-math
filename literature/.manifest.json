@@ -1,0 +1,110 @@
+{
+  "generatedAt": "2026-08-23T07:47:41.751Z",
+  "source": "D:/临时/agent记忆",
+  "out": "E:/software/ss/Deepseek-Harness/dsh-obsidian-math/literature",
+  "bibPath": "D:\\临时\\agent记忆\\collected papers.bib",
+  "entries": [
+    {
+      "citekey": "gaoLeanSearchV2Global2026",
+      "pdf": "gao et al. - 2026 - leansearch v2 global premise retrieval for lean 4 theorem proving.pdf",
+      "mineruDir": "Gao et al. - 2026 - LeanSearch v2 Global Premise Retrieval for Lean 4 Theorem Proving.pdf-37f25d18-c9f1-48f5-9b51-a325b5d4ba13",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "dasRaDeRReasoningawareDense2025",
+      "pdf": "das et al. - 2025 - rader reasoning-aware dense retrieval models.pdf",
+      "mineruDir": "Das et al. - 2025 - RaDeR Reasoning-aware Dense Retrieval Models.pdf-d2def507-060a-4362-99e8-ed884cd46241",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "chenAgentIRReasoningAwareRetrieval2026",
+      "pdf": "chen et al. - 2026 - agentir reasoning-aware retrieval for deep research agents.pdf",
+      "mineruDir": "Chen et al. - 2026 - AgentIR Reasoning-Aware Retrieval for Deep Research Agents.pdf-229d7107-83c1-4012-946d-f14819c91037",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "zhouAreWeReady2026a",
+      "pdf": "zhou et al. - 2026 - are we ready for an agent-native memory system.pdf",
+      "mineruDir": "Zhou et al. - 2026 - Are We Ready For An Agent-Native Memory System.pdf-2cbd90c4-0f4e-4154-9756-0d2e2d027c67",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "juAutomatedConjectureResolution2026a",
+      "pdf": "ju et al. - 2026 - automated conjecture resolution with formal verification.pdf",
+      "mineruDir": "Ju et al. - 2026 - Automated Conjecture Resolution with Formal Verification.pdf-a9c0365f-9cfc-471c-aaee-9a5d046d1aa3",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "xuPassiveRetrievalActive2026a",
+      "pdf": "xu et al. - 2026 - from passive retrieval to active memory navigation learning to use memory as a structured action space.pdf",
+      "mineruDir": "Xu et al. - 2026 - From Passive Retrieval to Active Memory Navigation Learning to Use Memory as a Structured Action Space.pdf-b0cf7531-06a8-4bfb-bb1f-1742f8fbeebf",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "lanTemplateTheoremsGraphConstruction2026",
+      "pdf": "lan et al. - 2026 - template-theorems graph construction to enhance mathematical reasoning capabilities of llm.pdf",
+      "mineruDir": "Lan et al. - 2026 - Template-Theorems Graph Construction to Enhance Mathematical Reasoning Capabilities of LLM.pdf-55fa7c3c-802d-4401-8dcf-6e15f9006dc2",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "dixitISMSelfImprovingStrategy2026a",
+      "pdf": "dixit et al. - 2026 - ismself-improving strategy memory for continual mathematical reasoning.pdf",
+      "mineruDir": "Dixit et al. - 2026 - ISMSelf-Improving Strategy Memory for Continual Mathematical Reasoning.pdf-e4863f63-68a8-4493-9dc5-c3ee512c2a04",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "liaoBeliefMemoryAgent2026",
+      "pdf": "liao et al. - 2026 - belief memory agent memory under partial observability.pdf",
+      "mineruDir": "Liao et al. - 2026 - Belief Memory Agent Memory Under Partial Observability.pdf-d553f5cc-a1d5-4fdb-a571-6b040b582a06",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "forouzandehLearningHierarchicalProcedural2025",
+      "pdf": "forouzandeh et al. - 2025 - learning hierarchical procedural memory for llm agents through bayesian selection and contrastive refinement.pdf",
+      "mineruDir": "Forouzandeh et al. - 2025 - Learning Hierarchical Procedural Memory for LLM Agents through Bayesian Selection and Contrastive Refinement.pdf-fb72b8a1-90a1-449e-946b-ec255e3c1b98",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "xuAMemAgenticMemory2025",
+      "pdf": "xu et al. - 2025 - a-mem agentic memory for llm agents.pdf",
+      "mineruDir": "Xu et al. - 2025 - A-Mem Agentic Memory for LLM Agents.pdf-c72b7ed4-4a76-4af9-9c9e-94738454cc30",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "weiEvoMemoryBenchmarkingLLM2026",
+      "pdf": "wei et al. - 2026 - evo-memory benchmarking llm agent test-time learning with self-evolving memory.pdf",
+      "mineruDir": "Wei et al. - 2026 - Evo-Memory Benchmarking LLM Agent Test-time Learning with Self-Evolving Memory.pdf-45f772e2-eece-4a7c-9317-e66df1add783",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "kangMemoryOSAI2025",
+      "pdf": "kang et al. - 2025 - memory os of ai agent.pdf",
+      "mineruDir": "Kang et al. - 2025 - Memory OS of AI Agent.pdf-6883b4bc-f3c7-48b2-a35e-80d6c3531c28",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "shutovaEvaluatingMemoryStructure2026",
+      "pdf": "shutova et al. - 2026 - evaluating memory structure in llm agents.pdf",
+      "mineruDir": "Shutova et al. - 2026 - Evaluating Memory Structure in LLM Agents.pdf-1413f7f1-715c-4d1c-9301-ce4517a032ff",
+      "status": "unread",
+      "card": "created"
+    }
+  ],
+  "warnings": {
+    "missingPdf": [],
+    "missingMd": []
+  }
+}

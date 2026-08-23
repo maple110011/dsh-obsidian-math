@@ -34,12 +34,19 @@
 | `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 dsh-web-ui 插件**，保持独立）、`notes-assistant.patch.yml`（workspace 自动注册，插件刷新）、`math-memory-workspace.mjs` |
 | `dsh/templates/` | **vault 模板**：`AGENTS.md`（工作协议，自动加载）、`profile.md`、`notation.md`（记号体系）、`topics-index.md`、`records-{readme,index}.md`、`theorems-*.md`、`templates-*.md`、`episodes-*.md`、`inbox-*.md`、`capture-policy.md` |
 | `dsh/install.mjs` | npm CLI 安装器（`dsh-math-memory install --vault …`），幂等、保留用户编辑 |
+| `dsh/host/` | host-agnostic 记忆管理核心：`memory-admin.mjs`（确定性操作 + 面板数据层）、`math-memory-panel.mjs`（`/memory-panel/*` 路由） |
+| `dsh/client-panel/` | dsh web 记忆面板：`src/index.jsx` + `build-client.mjs`（esbuild） + `install-into-profile.mjs` |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignore，机器特定路径；备份 + 三路安装 + 验证） |
 | `scripts/qa/` | **QA 工具链**：`engine-probe.mjs`（零 token 召回断言）、`e2e.mjs`（真实会话验收，含 API 级 token 计量）、`cases.json`、`run.mjs`；方法论见 `docs/memory/testing.md` |
-| `scripts/test-memory.mjs` | 零 token 回归（63 断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 回归（82 断言，进 `npm test`） |
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测 |
+| `scripts/check-doc-consistency.mjs` | 文档一致性守卫：断言数等易漂移数字与代码实测值一致（进 `npm test`） |
+| `scripts/lit-import.mjs` | 文献库导入器：BibTeX + PDF + MinerU markdown → agent/人类双面文献库（见 `docs/literature.md`） |
 | `docs/memory/` | **知识库**：README（导航+状态表）、design（当前实现规格）、retrieval-v3（检索提案与状态）、testing（QA 方法论）、assessment（评估轮次）、v2-proposal、references（论文笔记）、changelog（记忆系统细账）、control-panel、handoff（交接） |
+| `docs/literature.md` | **文献库架构规格**：双面分离、文件契约、研读→蒸馏闭环（`scripts/lit-import.mjs` 的实施说明） |
+| `docs/dsh-panel-research.md` | dsh 面板机制调研：noema/aionui 挂载方式，Phase 2 面板路线（官方 `settings.section` 槽位） |
+| `literature/` | **文献库（仓库内维护）**：`cards/` 蒸馏卡 + `reading/` 研读笔记 + `notes/` 跨文献产出 + `.raw/` 原始语料 + `index.md`/`library.bib`；导入器 `scripts/lit-import.mjs`，规格 `docs/literature.md` |
 | `.github/workflows/` | CI（重建 main.js 一致性 + 全测试）、release（tag 触发发布资产） |
 
 ## 3. 记忆系统 ↔ 检索系统：写读分离、文件契约耦合
@@ -62,7 +69,7 @@
 ## 4. 常用命令
 
 ```bash
-npm test                        # 语法 + 63 项回归 + 安装器 e2e（含漂移检测）
+npm test                        # 语法 + 82 项回归 + 安装器 e2e（含漂移检测）
 npm run qa                      # 引擎探针（零 token，12 组召回断言）
 npm run qa:e2e                  # 引擎探针 + 真实会话端到端（烧真实 tokens，含 API 级计量）
 node scripts/build-obsidian.mjs # 重建 main.js（改 dsh/ 或模板后必跑）
@@ -75,5 +82,5 @@ dsh --profile notes-assistant --port 3180 --patch <home>/profiles/notes-assistan
 1. 逻辑放对层：host（Obsidian 插件）/ agent（preset）/ 数据（vault 模板）；
 2. 纯函数进 `scripts/test-memory.mjs` 回归；行为断言进 `scripts/qa/`；
 3. 新模板三路安装（main.template.js bootstrap / install.mjs / deploy-local.mjs）+ 进 build-obsidian.mjs 嵌入清单；
-4. 文档同步：design.md（规格）、CHANGELOG.md + docs/memory/changelog.md（细账）、**README.md 与 README.zh.md 中英同步（中文文档必须始终保留）**、必要时 handoff.md；
+4. 文档同步：design.md（规格）、CHANGELOG.md（发布摘要）＋ docs/memory/changelog.md（记忆系统细账）、**README.md 与 README.zh.md 中英同步（中文文档必须始终保留）**、必要时 handoff.md；断言数等数字改动后跑 `scripts/check-doc-consistency.mjs`（进 `npm test`）。
 5. 构建 → npm test → npm run qa → deploy-local →（用户口令后）提交推送。

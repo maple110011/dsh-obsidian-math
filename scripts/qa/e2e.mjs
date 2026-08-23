@@ -159,7 +159,9 @@ async function runCase(index, testCase, serviceLog) {
 const serviceLog = join(tmpDir, "service.log");
 const logFd = openSync(serviceLog, "w");
 const env = { ...process.env, DSH_HOME: HOME, DSH_OBSIDIAN_VAULT: VAULT, DSH_SESSIONS_ROOT: join(HOME, "sessions") };
-const child = spawn(process.execPath, [DSH_BIN, "--profile", "notes-assistant", "--patch", join(HOME, "profiles", "notes-assistant", "notes-assistant.patch.yml"), "--port", String(PORT)], {
+// The notes-assistant profile loads the whole vault corpus + dialogue index at
+// first prompt; the default Node heap can OOM on a real vault. Give it headroom.
+const child = spawn(process.execPath, ["--max-old-space-size=4096", DSH_BIN, "--profile", "notes-assistant", "--patch", join(HOME, "profiles", "notes-assistant", "notes-assistant.patch.yml"), "--no-open", "--port", String(PORT)], {
   cwd: VAULT, stdio: ["ignore", logFd, logFd], env, windowsHide: true
 });
 
@@ -175,7 +177,8 @@ try {
   log(`\nE2E 结果: ${pass}/${cases.length} PASS，真实 tokens 总消耗 ${totalTokens.toLocaleString()}（来自 DeepSeek API usage）`);
   process.exitCode = pass === cases.length ? 0 : 1;
 } catch (error) {
-  log("[ERROR]", String(error));
+  log("[ERROR]", String(error), "| cause:", (error?.cause?.code ?? error?.cause?.message ?? "n/a"));
+  try { log("[service log tail]", readFileSync(serviceLog, "utf8").slice(-800).replace(/\n+/g, " ")); } catch { /* no log */ }
   process.exitCode = 1;
 } finally {
   try { child.kill(); } catch { /* already gone */ }

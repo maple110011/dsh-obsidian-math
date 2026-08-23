@@ -1,0 +1,312 @@
+{
+  "generatedAt": "2026-08-23T07:47:41.750Z",
+  "count": 14,
+  "entries": [
+    {
+      "citekey": "gaoLeanSearchV2Global2026",
+      "title": "LeanSearch v2: Global Premise Retrieval for Lean 4 Theorem Proving",
+      "shorttitle": "LeanSearch v2",
+      "authors": [
+        "Gao, Guoxiong",
+        "Sun, Zeming",
+        "Jiang, Jiedong",
+        "Wang, Yutong",
+        "Xu, Jingda",
+        "Wu, Peihao",
+        "Dai, Bryan",
+        "Dong, Bin"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Information Retrieval",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2605.13137",
+      "url": "http://arxiv.org/abs/2605.13137",
+      "card": "cards/gaoLeanSearchV2Global2026.md",
+      "fullText": ".raw/gaoLeanSearchV2Global2026/full.md",
+      "pdf": ".raw/gaoLeanSearchV2Global2026/source.pdf"
+    },
+    {
+      "citekey": "dasRaDeRReasoningawareDense2025",
+      "title": "RaDeR: Reasoning-aware Dense Retrieval Models",
+      "shorttitle": "RaDeR",
+      "authors": [
+        "Das, Debrup",
+        "Nuallain, Sam O'",
+        "Rahimi, Razieh"
+      ],
+      "year": "2025",
+      "keywords": "Computer Science - Computation and Language, Computer Science - Information Retrieval",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2505.18405",
+      "url": "http://arxiv.org/abs/2505.18405",
+      "card": "cards/dasRaDeRReasoningawareDense2025.md",
+      "fullText": ".raw/dasRaDeRReasoningawareDense2025/full.md",
+      "pdf": ".raw/dasRaDeRReasoningawareDense2025/source.pdf"
+    },
+    {
+      "citekey": "chenAgentIRReasoningAwareRetrieval2026",
+      "title": "AgentIR: Reasoning-Aware Retrieval for Deep Research Agents",
+      "shorttitle": "AgentIR",
+      "authors": [
+        "Chen, Zijian",
+        "Ma, Xueguang",
+        "Zhuang, Shengyao",
+        "Lin, Jimmy",
+        "Asai, Akari",
+        "Zhong, Victor"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Computation and Language",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2603.04384",
+      "url": "http://arxiv.org/abs/2603.04384",
+      "card": "cards/chenAgentIRReasoningAwareRetrieval2026.md",
+      "fullText": ".raw/chenAgentIRReasoningAwareRetrieval2026/full.md",
+      "pdf": ".raw/chenAgentIRReasoningAwareRetrieval2026/source.pdf"
+    },
+    {
+      "citekey": "zhouAreWeReady2026a",
+      "title": "Are We Ready For An Agent-Native Memory System?",
+      "shorttitle": "",
+      "authors": [
+        "Zhou, Wei",
+        "Zhou, Xuanhe",
+        "Han, Shaokun",
+        "Xu, Hongming",
+        "Li, Guoliang",
+        "Li, Zhiyu",
+        "Xiong, Feiyu",
+        "Wu, Fan"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Computation and Language, Computer Science - Databases, Computer Science - Information Retrieval",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2606.24775",
+      "url": "http://arxiv.org/abs/2606.24775",
+      "card": "cards/zhouAreWeReady2026a.md",
+      "fullText": ".raw/zhouAreWeReady2026a/full.md",
+      "pdf": ".raw/zhouAreWeReady2026a/source.pdf"
+    },
+    {
+      "citekey": "juAutomatedConjectureResolution2026a",
+      "title": "Automated Conjecture Resolution with Formal Verification",
+      "shorttitle": "",
+      "authors": [
+        "Ju, Haocheng",
+        "Gao, Guoxiong",
+        "Jiang, Jiedong",
+        "Wu, Bin",
+        "Sun, Zeming",
+        "Liu, Shurui",
+        "Chen, Leheng",
+        "Wang, Yutong",
+        "Wang, Yuefeng",
+        "Wang, Zichen",
+        "He, Wanyi",
+        "Wu, Peihao",
+        "Xiao, Liang",
+        "Liu, Ruochuan",
+        "Dai, Bryan",
+        "Dong, Bin"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Machine Learning",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2604.03789",
+      "url": "http://arxiv.org/abs/2604.03789",
+      "card": "cards/juAutomatedConjectureResolution2026a.md",
+      "fullText": ".raw/juAutomatedConjectureResolution2026a/full.md",
+      "pdf": ".raw/juAutomatedConjectureResolution2026a/source.pdf"
+    },
+    {
+      "citekey": "xuPassiveRetrievalActive2026a",
+      "title": "From Passive Retrieval to Active Memory Navigation: Learning to Use Memory as a Structured Action Space",
+      "shorttitle": "From Passive Retrieval to Active Memory Navigation",
+      "authors": [
+        "Xu, Yue",
+        "Sun, Yutao",
+        "Liu, Yihao",
+        "Zhou, Mengyu",
+        "Qiao, Jiayi",
+        "Ma, Lu",
+        "Tang, Kai",
+        "Wang, Wenjie",
+        "Jiang, Xiaoxi",
+        "Jiang, Guanjun"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2607.05794",
+      "url": "http://arxiv.org/abs/2607.05794",
+      "card": "cards/xuPassiveRetrievalActive2026a.md",
+      "fullText": ".raw/xuPassiveRetrievalActive2026a/full.md",
+      "pdf": ".raw/xuPassiveRetrievalActive2026a/source.pdf"
+    },
+    {
+      "citekey": "lanTemplateTheoremsGraphConstruction2026",
+      "title": "Template-Theorems Graph Construction to Enhance Mathematical Reasoning Capabilities of LLM",
+      "shorttitle": "",
+      "authors": [
+        "Lan, Yarong",
+        "Xu, Yajing",
+        "Chen, Huajun"
+      ],
+      "year": "2026",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.1609/aaai.v40i37.40411",
+      "url": "https://ojs.aaai.org/index.php/AAAI/article/view/40411",
+      "card": "cards/lanTemplateTheoremsGraphConstruction2026.md",
+      "fullText": ".raw/lanTemplateTheoremsGraphConstruction2026/full.md",
+      "pdf": ".raw/lanTemplateTheoremsGraphConstruction2026/source.pdf"
+    },
+    {
+      "citekey": "dixitISMSelfImprovingStrategy2026a",
+      "title": "ISM:Self-Improving Strategy Memory for Continual Mathematical Reasoning",
+      "shorttitle": "ISM",
+      "authors": [
+        "Dixit, Prakhar",
+        "Oates, Tim"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Machine Learning",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2606.31191",
+      "url": "http://arxiv.org/abs/2606.31191",
+      "card": "cards/dixitISMSelfImprovingStrategy2026a.md",
+      "fullText": ".raw/dixitISMSelfImprovingStrategy2026a/full.md",
+      "pdf": ".raw/dixitISMSelfImprovingStrategy2026a/source.pdf"
+    },
+    {
+      "citekey": "liaoBeliefMemoryAgent2026",
+      "title": "Belief Memory: Agent Memory Under Partial Observability",
+      "shorttitle": "Belief Memory",
+      "authors": [
+        "Liao, Junfeng",
+        "Wang, Qizhou",
+        "Zhu, Jianing",
+        "Du, Bo",
+        "Yan, Rui",
+        "Chen, Xiuying"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Computation and Language",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2605.05583",
+      "url": "http://arxiv.org/abs/2605.05583",
+      "card": "cards/liaoBeliefMemoryAgent2026.md",
+      "fullText": ".raw/liaoBeliefMemoryAgent2026/full.md",
+      "pdf": ".raw/liaoBeliefMemoryAgent2026/source.pdf"
+    },
+    {
+      "citekey": "forouzandehLearningHierarchicalProcedural2025",
+      "title": "Learning Hierarchical Procedural Memory for LLM Agents through Bayesian Selection and Contrastive Refinement",
+      "shorttitle": "",
+      "authors": [
+        "Forouzandeh, Saman",
+        "Peng, Wei",
+        "Moradi, Parham",
+        "Yu, Xinghuo",
+        "Jalili, Mahdi"
+      ],
+      "year": "2025",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Machine Learning",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2512.18950",
+      "url": "http://arxiv.org/abs/2512.18950",
+      "card": "cards/forouzandehLearningHierarchicalProcedural2025.md",
+      "fullText": ".raw/forouzandehLearningHierarchicalProcedural2025/full.md",
+      "pdf": ".raw/forouzandehLearningHierarchicalProcedural2025/source.pdf"
+    },
+    {
+      "citekey": "xuAMemAgenticMemory2025",
+      "title": "A-Mem: Agentic Memory for LLM Agents",
+      "shorttitle": "A-Mem",
+      "authors": [
+        "Xu, Wujiang",
+        "Liang, Zujie",
+        "Mei, Kai",
+        "Gao, Hang",
+        "Tan, Juntao",
+        "Zhang, Yongfeng"
+      ],
+      "year": "2025",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.52202/085713-0593",
+      "url": "https://proceedings.neurips.cc/paper_files/paper/2025/hash/19909c36f51abc4856b4560aff3d36d6-Abstract-Conference.html",
+      "card": "cards/xuAMemAgenticMemory2025.md",
+      "fullText": ".raw/xuAMemAgenticMemory2025/full.md",
+      "pdf": ".raw/xuAMemAgenticMemory2025/source.pdf"
+    },
+    {
+      "citekey": "weiEvoMemoryBenchmarkingLLM2026",
+      "title": "Evo-Memory: Benchmarking LLM Agent Test-time Learning with Self-Evolving Memory",
+      "shorttitle": "Evo-Memory",
+      "authors": [
+        "Wei, Tianxin",
+        "Sachdeva, Noveen",
+        "Coleman, Benjamin",
+        "He, Zhankui",
+        "Bei, Yuanchen",
+        "Ning, Xuying",
+        "Ai, Mengting",
+        "Li, Yunzhe",
+        "He, Jingrui",
+        "Chi, Ed H.",
+        "Wang, Chi",
+        "Chen, Shuo",
+        "Pereira, Fernando",
+        "Kang, Wang-Cheng",
+        "Cheng, Derek Zhiyuan"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Computation and Language",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2511.20857",
+      "url": "http://arxiv.org/abs/2511.20857",
+      "card": "cards/weiEvoMemoryBenchmarkingLLM2026.md",
+      "fullText": ".raw/weiEvoMemoryBenchmarkingLLM2026/full.md",
+      "pdf": ".raw/weiEvoMemoryBenchmarkingLLM2026/source.pdf"
+    },
+    {
+      "citekey": "kangMemoryOSAI2025",
+      "title": "Memory OS of AI Agent",
+      "shorttitle": "",
+      "authors": [
+        "Kang, Jiazheng",
+        "Ji, Mingming",
+        "Zhao, Zhe",
+        "Bai, Ting"
+      ],
+      "year": "2025",
+      "keywords": "Computer Science - Artificial Intelligence",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2506.06326",
+      "url": "http://arxiv.org/abs/2506.06326",
+      "card": "cards/kangMemoryOSAI2025.md",
+      "fullText": ".raw/kangMemoryOSAI2025/full.md",
+      "pdf": ".raw/kangMemoryOSAI2025/source.pdf"
+    },
+    {
+      "citekey": "shutovaEvaluatingMemoryStructure2026",
+      "title": "Evaluating Memory Structure in LLM Agents",
+      "shorttitle": "",
+      "authors": [
+        "Shutova, Alina",
+        "Olenina, Alexandra",
+        "Vinogradov, Ivan",
+        "Sinitsin, Anton"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Machine Learning, Computer Science - Computation and Language",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2602.11243",
+      "url": "http://arxiv.org/abs/2602.11243",
+      "card": "cards/shutovaEvaluatingMemoryStructure2026.md",
+      "fullText": ".raw/shutovaEvaluatingMemoryStructure2026/full.md",
+      "pdf": ".raw/shutovaEvaluatingMemoryStructure2026/source.pdf"
+    }
+  ]
+}

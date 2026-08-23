@@ -125,6 +125,10 @@ function installProfile(options, dshHome) {
   // Plugin-owned patch overlay + host plugin: always refreshed so the vault
   // workspace auto-registration reaches existing installs on update.
   copyFile(options, join(PROFILE_DIR, "math-memory-workspace.mjs"), join(profileRoot, "math-memory-workspace.mjs"), true);
+  // Host-plane memory panel + its shared core + the hook parser it imports.
+  copyFile(options, join(PACKAGE_ROOT, "dsh", "host", "memory-admin.mjs"), join(profileRoot, "memory-admin.mjs"), true);
+  copyFile(options, join(PACKAGE_ROOT, "dsh", "host", "math-memory-panel.mjs"), join(profileRoot, "math-memory-panel.mjs"), true);
+  copyFile(options, join(PRESET_DIR, "hook-frontmatter.mjs"), join(profileRoot, "hook-frontmatter.mjs"), true);
   copyFile(options, join(PROFILE_DIR, "notes-assistant.patch.yml"), join(profileRoot, "notes-assistant.patch.yml"), true);
 }
 

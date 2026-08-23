@@ -7,7 +7,7 @@
 A **two-component** repository:
 
 1. **Obsidian community plugin** (id `dsh-math-assistant`, repo-root `manifest.json` + `main.js`): embeds the dsh web UI in the right sidebar, detects and starts the dsh service, bootstraps the dsh-side configuration and vault templates on first run, and hosts the memory panel, capture-policy settings, and deterministic maintenance.
-2. **dsh plugin** (npm package `dsh-math-memory`, `dsh/`): installs the same `obsidian` agent preset / profile and vault templates into `$DSH_HOME`.
+2. **dsh plugin** (npm package `dsh-math-memory`, `dsh/`): installs the same `notes-assistant` agent preset / profile and vault templates into `$DSH_HOME`.
 
 Both write identical, idempotent configuration. **Installing the Obsidian plugin alone is enough**; `dsh/install.mjs` covers the pure-CLI workflow.
 
@@ -80,7 +80,7 @@ vault/
 ## Development & quality
 
 ```bash
-npm test          # syntax + 63 zero-token regression checks + installer e2e (drift detection)
+npm test          # syntax + 82 zero-token regression checks + installer e2e (drift detection)
 npm run qa        # engine probe: 12 ground-truth recall assertions on the real vault (zero tokens)
 npm run qa:e2e    # real-session end-to-end acceptance (spends real tokens; reports API-level usage)
 node scripts/build-obsidian.mjs   # rebuild main.js (required after shared-file changes)
@@ -90,7 +90,7 @@ node scripts/deploy-local.mjs     # one-shot local deployment
 - **Repository structure**: [ARCHITECTURE.md](ARCHITECTURE.md) — directory responsibilities, the two-component data flow, the memory↔retrieval boundary, and the feature checklist.
 - **Memory knowledge base**: [docs/memory/](docs/memory/) — design (implementation spec), retrieval-v3 (retrieval proposal), testing (QA methodology), assessment, references (paper notes), changelog, handoff.
 - **Acceptance record**: engine probe 12/12; real-session E2E 4/4 (including the no-answer honesty and reformulate-retry behaviors); the cost-benchmark question (170K tokens pre-system) now measures ≈25K billed tokens (68% of the prompt served from cache).
-- Version: **0.5.1** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
+- Version: **0.6.0** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
 
 ## Privacy & safety
 

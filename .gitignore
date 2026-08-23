@@ -9,3 +9,6 @@ release/
 # local deployment helper (machine-specific paths; run manually)
 scripts/deploy-local.mjs
 scripts/deploy-local.log
+
+# literature raw corpus (large binaries; regenerate via scripts/lit-import.mjs)
+literature/.raw/

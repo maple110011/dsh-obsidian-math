@@ -11,6 +11,8 @@
       name: ./math-memory-workspace.mjs
       config:
         vaultPath: !!js process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT
+    - id: math-memory-panel
+      name: ./math-memory-panel.mjs
 
 # The skin manager writes a global patch ($DSH_HOME/cordis.patch.yml) that
 # inserts the ACTIVE web skin into EVERY profile. The obsidian profile

@@ -1,8 +1,10 @@
 # Changelog
 
-## [Unreleased]
+> 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
-> 单仓身份解耦 + 记忆系统开关 + 独立设置面板 + 皮肤中心移除。版本号未动（后续还有记忆系统与仓库文档大改）。
+## [0.6.0] - 2026-08-23
+
+> 单仓身份解耦 + 记忆系统开关 + 独立设置面板 + 皮肤中心移除 + 文献库 + 记忆系统强化（两轮）+ dsh web 记忆面板（方案 A 两实例）。QA：`npm test` 82/82 全绿、engine-probe 12/12 全绿；真实会话 E2E 留待用户本机跑。
 
 ### Changed（破坏性更名）
 
@@ -21,6 +23,12 @@
 - **独立设置面板**：工作区级 `.deepseek/config.md`（host-agnostic，与 Obsidian/dsh web ui 无关）。
 - **`--preset-only`** 安装标志：只装 agent preset 进任意 DSH_HOME（主 dsh 里也能用「数学笔记助手」）。
 - **守卫脚本**：`check-rename.mjs`（profile 名一致性）、`check-skin-fallback.mjs`（皮肤降级一致性）、`check-plugin-id.mjs`（插件 id 与目录名一致性），均接入 `npm test`。
+- **记忆系统强化（第一轮）**：note_recall 的 hook 先验改为 verified/success_rate/uses 三因素（promote/demote，`hookPrior`）；每日体检新增反模式、低效用归档候选（热度三因素）、检索健康（空结果率）；AGENTS.md 补写卡自动链接、Refine 步、检索粒度纪律；零 token 回归 75→81。
+- **记忆系统强化（第二轮）**：`hookPrior` 增加新近度项（90 天线性衰减，recency）；records 模板加 `confidence` 与「可修订记录（置信与备选）」；templates/profile/AGENTS.md 补定理表聚合、条件演化门、写卡去重、env 旧名改 `DSH_MATH_MEMORY_LINK_URL`；零 token 回归 81→82。
+- **Phase 2b（dsh web 记忆面板）**：新增 `dsh/client-panel/`（React 面板 + esbuild 打包 + 安装脚本），面板出现在主 dsh web Settings（`settings.section` 槽位），复用 `/memory-panel/*`；已实测可用。
+- **面板小项收尾（方案 A 两实例）**：面板 `settings.section` 显示名修正为 `label`（现名「记忆面板」）；面板顶部工作区下拉（宿主 `GET /memory-panel/workspaces` + `workspaceRegistry`）+ 手动 root 输入（localStorage `dsh-math-memory.panelRoot`）；Obsidian 插件新增命令「在 dsh web 打开记忆面板」+ 设置 `memoryPanelUrl`（默认 `http://127.0.0.1:3080/`，`electron.shell.openExternal`）——**两实例架构**：主 dsh web `3080`（编程 + 记忆面板）、notes dsh web `3180`（Obsidian 聊天，fail-closed，不挂任何 `@linxin666`）；`scripts/qa/e2e.mjs` 加固（`--no-open`、`--max-old-space-size`、boot 失败 cause 日志、`DSH_BIN` 用真实 JS 入口而非 shell shim）。
+- **Phase 2a（host 面板路由）**：新增 `dsh/host/math-memory-panel.mjs`（inject webServer，挂 `/memory-panel/*`，loopback-only + pathInside 门控，复用 `memory-admin.mjs`）；`install.mjs`/Obsidian bootstrap/`notes-assistant.patch.yml` 接线；boot 冒烟 `GET /memory-panel/state` 返回 `{ok:true}`。
+- **Phase 1 解耦（host-agnostic core）**：把 Obsidian 插件里的确定性记忆操作与面板数据层抽成 `dsh/host/memory-admin.mjs`（纯 node:fs/path，注入 hook 解析器）；`build-obsidian.mjs` 嵌入 + 插件 `MEMORY_ADMIN` 加载器；插件本地副本改为别名，消除重复；`npm test` 增 `node --check dsh/host/memory-admin.mjs`。
 
 ### Removed
 
@@ -30,6 +38,14 @@
 
 - 文档漂移（Critical/High/Medium/Low 全清）：`retrieval-v3.md` 状态头、`v2-proposal.md` 退役标注、`handoff.md` 滞后两版、`design.md` 旧局限、`三个→四个`笔记工具等。
 - coverage 阈值统一为 0.35；注入加真实总上限（≤18000 字符）；E2E 端口/probe 路径与脚本对齐。
+
+### Docs
+
+- 仓库文档大改：测试断言数统一为 75（README 中英 / ARCHITECTURE / docs/memory/README）；README 双语旧身份 `obsidian`→`notes-assistant`；design.md 注入段名与 hook schema 版本状态对齐代码；env 旧名改新名（`DSH_WORKSPACE_ROOT` / `DSH_MATH_MEMORY_*`）。
+- 结构收敛：`REFACTOR-PLAN.md` 退役（历史档案横幅）、根 `TESTING.md` 并入 `docs/memory/testing.md`（新增本地验收手册）、`docs/memory/README.md` 导航补齐 control-panel/testing/handoff；根 CHANGELOG 只做发布摘要，记忆系统细账统一进 `docs/memory/changelog.md`。
+- 新增 `scripts/check-doc-consistency.mjs`：断言数等易漂移数字与代码实测值自动比对，接入 `npm test`。
+- 新增文献库子系统（仓库 `literature/`）：`docs/literature.md`（架构规格）+ `scripts/lit-import.mjs`（BibTeX + PDF + MinerU markdown → 双面文献库：人类侧 `cards/`/`reading/`/`notes/`/`index.md`，机器侧 `.raw/`/`.index.json`）；14 条文献全部导入（14 篇均有 MinerU 全文）。
+- 新增 `docs/dsh-panel-research.md`：dsh web 面板机制调研（noema/aionui 客户端契约、`settings.section` 槽位字段、web profile 客户端装配显式名单、宿主路由契约）。
 
 ## [0.5.1] - 2026-08-16
 

@@ -25,6 +25,7 @@ updated: YYYY-MM-DD
 source: '[[YYYY-MM-DD-episode-slug]]'
 topic: <相关主题或“未归类”>
 related: []
+confidence: 1.0        # 可选：0–1，可修订事实/偏好的置信度（被质疑时下调；模型维护）
 hook:                 # 可选：检索特征块（记忆 v2，供 note_recall 统一检索加权）
   operator: probability      # 算子类型：algebra/number-theory/geometry/combinatorics/probability/analysis/statistics/calculus/linear-algebra/topology/logic
   pattern: subsequence_argument   # 结构模式（下划线分词）
@@ -66,3 +67,4 @@ hook:                 # 可选：检索特征块（记忆 v2，供 note_recall �
 4. **传播**：记录更新后，再按需更新 `topics/index.md` 与 `profile.md`（局部更新）。
 5. 更新 `records/index.md`（按类型分组一行一条）。
 6. **体检响应**：系统提示的「记忆体检」段列出 weak/疑似重复/unused/strong/unverified 时，按 AGENTS.md 第 2 节的体检规则处理（合并标 superseded、绝不删除文件）。
+7. **可修订记录（置信与备选，Belief Memory 本土化）**：fact / preference 可能被后续证据推翻，不要当成不可改的点估计——有反证/存疑时在「内容」里保留备选结论与各自依据；被用户判错（[❌ 这条错]）时不删除，记「已推翻 → 新结论（日期）」，可下调 `confidence`。

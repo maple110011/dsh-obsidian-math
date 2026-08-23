@@ -22,6 +22,7 @@ import {
   composePassage,
   cjkCharOverlap,
   queryCoverage,
+  hookPrior,
   resolveWorkspaceRoot
 } from '../dsh/preset/note-tools.mjs';
 import { HOOK_SCHEMA_VERSION } from '../dsh/preset/hook-frontmatter.mjs';
@@ -149,7 +150,8 @@ writeFileSync(join(templatesDir, 'tpl-solution.md'), card([
   '# 子序列解法模板'
 ]));
 writeFileSync(join(cacheDir, 'retrieval-stats.json'), JSON.stringify({
-  '.deepseek/memory/records/rec-a.md': { uses: 1, last_used: '2026-08-16' }
+  '.deepseek/memory/records/rec-a.md': { uses: 1, last_used: '2026-08-16' },
+  '__meta__': { calls: 5, empty: 1 }
 }));
 
 // ── 1. hook parsing ─────────────────────────────────────────────────────────
@@ -183,6 +185,13 @@ const rel = weightedOverlap(query, relevantText, docFreq);
 const irr = weightedOverlap(query, irrelevantText, docFreq);
 check('scoring: relevant beats irrelevant', rel > irr && irr === 0, `rel=${rel.toFixed(3)} irr=${irr.toFixed(3)}`);
 
+// ── 3b. hook prior (promote/demote) ──────────────────────────────────────
+const priorHigh = hookPrior({ verified: 'user-confirmed', success_rate: '0.9', uses: '8' });
+const priorLow = hookPrior({ verified: 'single-source', success_rate: '0.2', uses: '1' });
+check('prior: confirmed+strong beats single+weak', priorHigh > priorLow, 'high=' + priorHigh.toFixed(3) + ' low=' + priorLow.toFixed(3));
+check('prior: non-hook is neutral 0.5', hookPrior(null) === 0.5);
+check('prior: fresh beats stale (recency)', hookPrior({ verified: 'user-confirmed', success_rate: '0.8', uses: '5' }, '2026-08-20') > hookPrior({ verified: 'user-confirmed', success_rate: '0.8', uses: '5' }, '2020-01-01'));
+
 // ── 4. audit pass ───────────────────────────────────────────────────────────
 const report = buildAuditReport(root, {
   parseHookFrontmatter,
@@ -196,6 +205,11 @@ check('audit: unused detected', report.counts.unused >= 1);
 check('audit: duplicate pair detected', report.counts.duplicates >= 1);
 check('audit: unverified detected', report.counts.unverified >= 1);
 check('audit: report bounded', report.report.length <= 1200, `len=${report.report.length}`);
+
+check('audit: antipatterns detected (weak card)', report.counts.antipatterns >= 1);
+check('audit: archive candidates detected', report.counts.archiveCandidates >= 1);
+check('audit: passive recall signal read', report.passive.calls === 5 && report.passive.empty === 1 && report.passive.emptyRate === 0.2, JSON.stringify(report.passive));
+check('audit: report carries heat+antipattern+passive lines', report.report.includes('检索健康') && report.report.includes('反模式') && report.report.includes('归档候选'));
 
 // ── 5. deterministic hook-stats sync ────────────────────────────────────────
 const recA = readFileSync(join(recordsDir, 'rec-a.md'), 'utf8');
