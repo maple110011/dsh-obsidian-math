@@ -303,9 +303,9 @@ function patchDshFrontendLinks(installDir) {
     return '跳过 dsh 前端链接补丁：未找到 dsh-web-frontend/dist/assets';
   }
   if (files.length === 0) return '跳过 dsh 前端链接补丁：assets 目录为空';
-  const find = '[' + q + 'http:' + q + ',' + q + 'https:' + q + '].includes(new URL(u).protocol)?{target:' + q + '_blank' + q + ',rel:' + q + 'noopener noreferrer' + q + '}:{}';
-  const replace = '(()=>{try{const x=new URL(u);return[' + q + 'http:' + q + ',' + q + 'https:' + q + '].includes(x.protocol)&&![' + q + '127.0.0.1' + q + ',' + q + 'localhost' + q + '].includes(x.hostname)}catch{return false}})()?{target:' + q + '_blank' + q + ',rel:' + q + 'noopener noreferrer' + q + '}:{}';
+  const marker = '![' + q + '127.0.0.1' + q + ',' + q + 'localhost' + q + '].includes(new URL(';
   let patched = 0;
+  let already = 0;
   for (const name of files) {
     const path = join(assetsDir, name);
     let content;
@@ -314,16 +314,24 @@ function patchDshFrontendLinks(installDir) {
     } catch {
       continue;
     }
-    if (content.includes(replace)) { patched += 1; continue; }
-    if (!content.includes(find)) continue;
+    if (content.includes(marker)) { already += 1; continue; }
+    let next = content;
+    for (const v of ['u', 's']) {
+      const find = '[' + q + 'http:' + q + ',' + q + 'https:' + q + '].includes(new URL(' + v + ').protocol)';
+      const replace = '([' + q + 'http:' + q + ',' + q + 'https:' + q + '].includes(new URL(' + v + ').protocol)&&![' + q + '127.0.0.1' + q + ',' + q + 'localhost' + q + '].includes(new URL(' + v + ').hostname))';
+      next = next.split(find).join(replace);
+    }
+    if (next === content) continue;
     try {
-      writeFileSync(path, content.split(find).join(replace), 'utf8');
+      writeFileSync(path, next, 'utf8');
       patched += 1;
     } catch {
       // best-effort; a read-only install just keeps the old behavior
     }
   }
-  return patched > 0 ? 'dsh 前端链接补丁：已处理 ' + patched + ' 个 bundle（loopback 链接改为站内跳转）' : 'dsh 前端链接补丁：无需处理（未命中或已打补丁）';
+  if (patched > 0) return 'dsh 前端链接补丁：已处理 ' + patched + ' 个 bundle（loopback 链接改为站内跳转）';
+  if (already > 0) return 'dsh 前端链接补丁：已打补丁（' + already + ' 个 bundle）';
+  return 'dsh 前端链接补丁：未命中（该 dsh 版本的链接渲染方式未识别）';
 }
 
 // ── dsh detection ───────────────────────────────────────────────────────────
