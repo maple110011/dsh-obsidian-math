@@ -1,6 +1,6 @@
 {
   "name": "dsh-math-memory",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Obsidian side-panel math memory agent for DeepSeek Harness: layered long-term memory, idea memo with proactive review reminders, unified note_recall retrieval plus dedicated note search/create/backlink tools. Ships as both a dsh plugin and an Obsidian community plugin.",
   "type": "module",
   "bin": {

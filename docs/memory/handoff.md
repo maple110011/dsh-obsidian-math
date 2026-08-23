@@ -1,7 +1,7 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、决策、已修坑、未做事项与工作约定。
-> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**版本 0.6.3（2026-08-23）**。
+> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**版本 0.6.4（2026-08-23）**。
 
 ## 1. 项目是什么
 
@@ -76,7 +76,9 @@
 13. **面板 = 宿主半 + 客户端半**：宿主插件（`dsh/host/math-memory-panel.mjs` 的 webServer 路由）+ 客户端插件（`dsh/client-panel/` 的 React 壳）**两半都要装进同一 profile** 才成面板。
 14. **`DSH_BIN=dsh` 是 shell shim**：e2e/脚本要传真实 JS 入口 `.../node_modules/@deepseek-ai/dsh/lib/bin.js`，否则 service 早期退出 code 1。
 15. **dsh web 长会话 OOM**：本机曾 `JavaScript heap out of memory`（fetch ECONNRESET 表象）。启动加 `--max-old-space-size`（本机 4096）+ `--no-open`，boot 失败把 cause 写进日志再断言，别只报 code。
-true
+16. **面板前端 fetch 空 root**：`root` 为空时 fetch 会拿到 SPA HTML（`<!doctype`）导致 `Unexpected token '<'`。root 输入 + localStorage（`dsh-math-memory.panelRoot`）守卫；工作区列表走 `GET /memory-panel/workspaces`。
+17. **本机有两个 dsh 安装**：Obsidian 插件 `dshInstallDir` 可能指向非 npm 全局的 dsh（如 `E:/software/deepseek-harness/dsh` v0.1.0-rc.6），其 dsh-web-frontend bundle 与 npm 全局版（v0.1.1-rc.2）文件名与渲染器变量都不同。前端补丁必须同时改写 `new URL(u).protocol` 与 `new URL(s).protocol` 两种写法；排查「补丁未命中」先看插件 `data.json` 的 `dshInstallDir` 到底指向哪个 dsh。
+18. **乱码 workspace 会话目录会让 dsh 崩溃**：`$DSH_HOME/sessions/` 里若出现含 `~FFFD~`（Unicode 替换字符）的乱码目录，dsh 0.1.1-rc.2 在 session identity 校验时报 `corrupt session log` 并 boot 失败。把乱码目录移出 `sessions/`（备份，勿直接删）即可恢复。
 
 ## 5. 用户决策记录（不要推翻）
 

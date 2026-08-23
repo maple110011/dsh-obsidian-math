@@ -2,6 +2,12 @@
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
+## [0.6.4] - 2026-08-23
+
+### Fixed
+
+- **链接补丁兼容两种 dsh 前端渲染器**：本机存在两个 dsh 安装（Obsidian 用的 `E:\software\deepseek-harness\dsh` v0.1.0-rc.6 与 npm 全局 v0.1.1-rc.2），其 markdown 渲染器分别写 `new URL(u).protocol` 与 `new URL(s).protocol`。补丁现同时改写两种写法、按 marker 幂等，loopback `/open`、`/feedback` 链接在两种 dsh 上都不再 `target="_blank"`，点击在 Obsidian 内 iframe 跳转、不再弹外部浏览器。
+
 ## [0.6.3] - 2026-08-23
 
 ### Fixed

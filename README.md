@@ -90,7 +90,7 @@ node scripts/deploy-local.mjs     # one-shot local deployment
 - **Repository structure**: [ARCHITECTURE.md](ARCHITECTURE.md) — directory responsibilities, the two-component data flow, the memory↔retrieval boundary, and the feature checklist.
 - **Memory knowledge base**: [docs/memory/](docs/memory/) — design (implementation spec), retrieval-v3 (retrieval proposal), testing (QA methodology), assessment, references (paper notes), changelog, handoff.
 - **Acceptance record**: engine probe 12/12; real-session E2E 4/4 (including the no-answer honesty and reformulate-retry behaviors); the cost-benchmark question (170K tokens pre-system) now measures ≈25K billed tokens (68% of the prompt served from cache).
-- Version: **0.6.3** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
+- Version: **0.6.4** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
 
 ## Privacy & safety
 
