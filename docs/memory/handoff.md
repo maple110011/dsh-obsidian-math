@@ -1,7 +1,7 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、决策、已修坑、未做事项与工作约定。
-> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**版本 0.6.4（2026-08-23）**。
+> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**版本 0.6.5（2026-08-23）**。
 
 ## 1. 项目是什么
 
@@ -23,7 +23,7 @@
 | `dsh/preset/hook-frontmatter.mjs` | **共享 hook 块解析器**（单一事实源；+ `HOOK_SCHEMA_VERSION`；被 ESM import + 插件嵌入 loader 双路加载） |
 | `dsh/preset/agent.cordis.yml` | preset 装配：最小工具面 + 记忆开关（`enabled`/`dialogueIndex`/`reminders`/`audit`） |
 | `dsh/preset/preset.yml` | preset 元信息（显示名「数学笔记助手」） |
-| `dsh/profile/` | **profile `notes-assistant`**：fail-closed 沙箱（workspace-write + approval never）；**不挂载任何 dsh-web-ui 插件** |
+| `dsh/profile/` | **profile `notes-assistant`**：fail-closed 沙箱（workspace-write + approval never）；**默认不挂载 dsh-web-ui 插件**（皮肤中心可经 Obsidian 设置开关启用） |
 | `dsh/templates/` | vault 模板：AGENTS.md + 记忆层模板 + `config.md`（独立设置）+ `capture-policy.md` |
 | `dsh/templates-manifest.json` | **模板清单单一事实源**（build/install/bootstrap 三处派生 + 构建漏模板门禁） |
 | `dsh/install.mjs` | CLI 安装器（npm bin `dsh-math-memory`；`--preset-only` 只装 preset） |
@@ -34,7 +34,7 @@
 | `docs/dsh-panel-research.md` | dsh web 面板机制调研（客户端契约 / settings.section 槽位 / profile 装配名单 / 宿主路由） |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
-| `scripts/test-memory.mjs` | 零 token 记忆回归（82 项断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 记忆回归（85 项断言，进 `npm test`） |
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测 |
 | `scripts/check-doc-consistency.mjs` | 文档一致性守卫（断言数等数字与代码实测对齐，进 `npm test`） |
 | `scripts/check-rename.mjs` / `check-skin-fallback.mjs` / `check-plugin-id.mjs` | 三个守卫（见 §4 坑） |
@@ -42,6 +42,8 @@
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignored，含本机路径；用 copyFileSync 手动遍历，勿用 cpSync） |
 
 ## 3. 当前状态（2026-08 大改收尾后）
+
+> **增量（本会话）**：文献库入库 MemTrapBench（第 15 篇，已蒸馏），并落地「记忆适用性（防记忆陷阱，AdaptiveMem 本土化）」——AGENTS.md §5 四风险 + 决策流程、`math-memory.mjs` 每轮注入适用性纪律、`note_recall` 适用性提示、`inapplicable` 反馈动作（不降成功率）、`lit-import.mjs` 改增量合并（修全量覆盖 bug）、`docs/literature.md` 补「新增单篇文献 SOP」。回归 83→85。
 
 **本轮改动总账（按阶段）**：
 
@@ -55,9 +57,9 @@
 
 **身份解耦（早前 Phase 2，已稳定）**：文件更名 `obsidian-*`→`math-memory`/`note-tools`/`math-memory-workspace`；npm 包 `dsh-obsidian-math`→`dsh-math-memory`；profile/preset id `obsidian`→`notes-assistant`；权限预设 `obsidian-locked`→`math-memory-locked`；env 别名 `DSH_WORKSPACE_ROOT`/`DSH_MATH_MEMORY_*`（旧名兼容）。**单仓**（不拆双 git 仓库）。
 
-**开关与共存 / 独立设置面板**：总开关 `enabled` + 粒度开关 `dialogueIndex`/`reminders`/`audit`；独立设置面板 = 工作区级 `.deepseek/config.md`（host-agnostic 配置文件）；`--preset-only` 只装 preset；**移除皮肤中心挂载**（消除 `@linxin666` 依赖）。
+**开关与共存 / 独立设置面板**：总开关 `enabled` + 粒度开关 `dialogueIndex`/`reminders`/`audit`；独立设置面板 = 工作区级 `.deepseek/config.md`（host-agnostic 配置文件）；`--preset-only` 只装 preset；**皮肤中心改为可选**（默认不挂载；Obsidian 设置「启用皮肤中心」开关把 `ui-skin-center` + `ui-web-ui-settings` 追加到 `notes-assistant.patch.yml`，需 web profile 镜像 `@linxin666` 包）。
 
-**QA 状态**：`npm test` 82/82 全绿；engine-probe 12/12 全绿；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。
+**QA 状态**：`npm test` 85/85 全绿；engine-probe 12/12 全绿；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
@@ -66,7 +68,7 @@
 3. **vault 索引排除点号路径段**（`.deepseek` 对 Obsidian API 不可见）：面板用 node fs 读取 + 预览 Modal，不能 openLinkText/TFile。
 4. **Obsidian 1.13.7 的 Notice 构造不调 setMessage**——抓 toast 用 DOM MutationObserver。
 5. **插件 id `dsh-math-assistant` 是稳定标识、永远不要改**——Obsidian 按 `.obsidian/plugins/<目录名>/` 加载插件，manifest `id` 必须等于目录名；改 id 会让已有安装插件「消失」。有 `check-plugin-id` 守卫。
-6. **notes profile 不再挂载任何 dsh-web-ui 插件**——若有人把 `@linxin666` 挂载加回 `cordis.patch.yml` 会 boot 崩（`check-skin-fallback` 会拦：挂载必须在降级块里被禁用；当前是 0 挂载）。
+6. **notes profile 默认不挂载 dsh-web-ui 插件**——皮肤中心（`ui-skin-center`/`ui-web-ui-settings`）是可选的，由 Obsidian 设置「启用皮肤中心」在运行时追加进 `notes-assistant.patch.yml`（仅在存在 web profile 可镜像时）。若有人把 `@linxin666` 挂载加回 `cordis.patch.yml` 会 boot 崩（`check-skin-fallback` 会拦：挂载必须在降级块里被禁用；`cordis.patch.yml` 当前是 0 挂载）。
 7. **插件 bootstrap 每次加载强制刷新** `math-memory.mjs/note-tools.mjs/.../notes-assistant.patch.yml`（overwrite=true）——机器本地手改这些文件会被冲掉，改动必须进仓库。
 8. **防护必须双端接线**：给 loopback 端点加 CSRF/权限校验时，必须同步更新注入给模型的链接模板（`t=`）；只改端点不改模板 = 点击闭环静默断裂。
 9. **缓存语义变更必须带版本**：`cache/dialogue-index.json` 按指纹复用；任何过滤/配对语义变化都要 bump `schemaVersion`（现为 2）。
@@ -86,14 +88,14 @@
 - npm 包名 `dsh-math-memory`；插件 id `dsh-math-assistant`（**不改**）；仓库名 `dsh-obsidian-math`（**未改**）。
 - 版本 0.6.2（2026-08-23：链接站内跳转 + 数学交流提示词 + ask_user 节制 + 链接路径免手工编码）。
 - 独立设置面板 = **配置文件**（`.deepseek/config.md`），不是图形 UI（若需要可后续在其上加 web 页面）。
-- **记忆面板进主 dsh web（3080）**（方案 A）：Obsidian 用命令 `shell.openExternal` 打开 3080；notes profile（3180）保持独立/fail-closed、**不挂任何 `@linxin666` UI**。
+- **记忆面板进主 dsh web（3080）**（方案 A）：Obsidian 用命令 `shell.openExternal` 打开 3080；notes profile（3180）保持独立/fail-closed、**默认不挂任何 `@linxin666` UI**（皮肤中心可经设置开启）。
 - **文献库放仓库**（`.raw/` gitignore）。
 - 不做 token 型 benchmark；推送 GitHub 必须等用户口令（"推送"）。
 
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 82 项零 token 回归 + 安装器 e2e + 漂移 + 三守卫 + 文档一致性 + 语法检查
+npm test                        # 85 项零 token 回归 + 安装器 e2e + 漂移 + 三守卫 + 文档一致性 + 语法检查
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile
@@ -109,6 +111,10 @@ node dsh/install.mjs install --dsh-home <home> --preset-only   # 只装 preset �
 
 | 项 | 说明 | 优先级 |
 |---|---|---|
+| **3 类陷阱压力样例进引擎探针** | 造 Cognitive Bias / Task Boundary / Trauma 的数学版 ground-truth 进 `scripts/qa/engine-probe.mjs`（需绑定真实 vault，vault 内容变化时同步维护） | 中 |
+| **「记忆诱发退化」被动信号** | 有/无记忆对照的答案质量（LLM-judge 打分）作为体检的「固定/扭曲」健康指标（需接 judge，可选增强） | 低 |
+| **note_recall 结构化适用性字段** | 现为 prompt 提醒（描述 + 渲染），可升级为返回可判定的「适用性」弱信号（如跨 operator/主题命中标注） | 低 |
+| **文献库剩余 13 篇蒸馏** | `literature/` 15 篇仅 2 篇 distilled（shutova + memtrapbench）；按 `docs/literature.md` §8 SOP 逐篇研读 + 蒸馏 + 回流记忆 | 中 |
 | **真实 E2E（用户跑）** | `npm run qa:e2e` 需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN（真实 JS 入口）+ 模型余额；本轮已诊断「profile 缺失已装 + OOM 已降 4G + cause 日志」，留用户跑 | 高（发布前） |
 | **Obsidian 本机部署验收** | `deploy-local` 后用户在 Obsidian reload + 命令「在 dsh web 打开记忆面板」实测打开 3080 面板 | 高（发布前） |
 | **dsh session 路径编码 mojibake** | 非 ASCII workspace 路径下 session 目录编码分裂（正确 vs 乱码并存），影响跨工作区 dialogue index；已知未修 | 中 |

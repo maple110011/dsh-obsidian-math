@@ -43,9 +43,11 @@
 # "composed sandbox and approval defaults match no preset".
 
 # UI aesthetics: the dsh-web-ui skin center (ui-skin-center) and its card host
-# (ui-web-ui-settings) are deliberately NOT mounted — the memory profile stays
-# independent of the dsh-web-ui plugin family, so it has no @linxin666 packages
-# to resolve and boots even without a `web` profile.
+# (ui-web-ui-settings) are NOT mounted here. The Obsidian plugin can mount them
+# optionally (settings.enableSkinCenter) by appending an insert block to the
+# notes-assistant.patch.yml overlay at runtime. The default stays independent
+# of the dsh-web-ui plugin family, so it has no @linxin666 packages to resolve
+# and boots even without a `web` profile.
 
 - id: permission
   config:

@@ -21,7 +21,9 @@
 # so the skin package always resolves and the obsidian web UI follows the
 # same skin the user picked for the main web profile. No id lists to keep.
 #
-# The profile also mounts the skin center (ui-skin-center in cordis.patch.yml)
-# plus its card host ui-web-ui-settings — aesthetics only, no agent tools;
-# the rest of the dsh-web-ui family stays unmounted to keep the minimal
-# surface.
+# The skin CENTER UI (ui-skin-center + its settings card host
+# ui-web-ui-settings) is optional and controlled by the Obsidian plugin's
+# "启用皮肤中心" setting: when enabled, the plugin appends an extra `insert:`
+# block for those two packages to THIS file at runtime (and only when a web
+# profile exists to mirror them from). This base file mounts neither, so the
+# default boot stays independent of the dsh-web-ui plugin family.

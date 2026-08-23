@@ -326,6 +326,59 @@ function renderReadme() {
   ].join('\n');
 }
 
+/** Load a JSON file if present, else fallback. */
+function loadJson(path, fallback) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return fallback; }
+}
+
+/** Upsert-merge arrays of citekey'd objects; incoming wins on a key collision. */
+function mergeByCitekey(existing, incoming) {
+  const map = new Map();
+  for (const e of (Array.isArray(existing) ? existing : [])) {
+    if (e && typeof e.citekey === 'string') map.set(e.citekey, e);
+  }
+  for (const e of (Array.isArray(incoming) ? incoming : [])) {
+    if (e && typeof e.citekey === 'string') map.set(e.citekey, e);
+  }
+  return [...map.values()];
+}
+
+/** Split raw BibTeX into @entry blocks keyed by citekey (raw text preserved). */
+function splitBibRaw(text) {
+  const blocks = [];
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const at = text.indexOf('@', i);
+    if (at < 0) break;
+    const brace = text.indexOf('{', at);
+    if (brace < 0) break;
+    const comma = text.indexOf(',', brace);
+    if (comma < 0) break;
+    const key = text.slice(brace + 1, comma).trim();
+    let depth = 0;
+    let end = brace;
+    for (let k = brace; k < n; k += 1) {
+      const ch = text[k];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') { depth -= 1; if (depth === 0) { end = k; break; } }
+    }
+    if (depth !== 0) break;
+    blocks.push({ key, raw: text.slice(at, end + 1) });
+    i = end + 1;
+  }
+  return blocks;
+}
+
+/** Additive BibTeX merge: append source @entries whose citekey is absent (never drops existing entries). */
+function mergeBib(existingText, sourceText) {
+  const existing = typeof existingText === 'string' ? existingText : '';
+  const existingKeys = new Set(splitBibRaw(existing).map((b) => b.key));
+  const additions = splitBibRaw(sourceText).filter((b) => !existingKeys.has(b.key));
+  if (additions.length === 0) return existing;
+  return existing.replace(/\s*$/, '\n\n') + additions.map((b) => b.raw).join('\n\n') + '\n';
+}
+
 function main() {
   const a = parseArgs(process.argv);
   const source = a.source;
@@ -429,9 +482,20 @@ function main() {
     return;
   }
 
-  copyFileOrNull(bibPath, join(out, 'library.bib'));
+  // ── merge (not clobber) the machine-side aggregates ──────────────────────
+  // lit-import is incremental-safe: importing a SUBSET of the library must
+  // not drop the entries already on disk. Load existing state and upsert by
+  // citekey; library.bib is merged additively (append missing @entries only).
+  const existingIndex = loadJson(join(out, '.index.json'), { entries: [] });
+  const existingManifest = loadJson(join(out, '.manifest.json'), { entries: [] });
+  const existingBib = existsSync(join(out, 'library.bib')) ? readFileSync(join(out, 'library.bib'), 'utf8') : '';
 
-  const rows = jsonEntries.map(x => ({ citekey: x.citekey, title: x.title, authors: x.authors, year: x.year, keywords: x.keywords, status: x.status }));
+  const mergedIndexEntries = mergeByCitekey(existingIndex.entries, jsonEntries);
+  const mergedManifestEntries = mergeByCitekey(existingManifest.entries, report);
+  const mergedBib = mergeBib(existingBib, readFileSync(bibPath, 'utf8'));
+  writeFileSync(join(out, 'library.bib'), mergedBib, 'utf8');
+
+  const rows = mergedIndexEntries.map((x) => ({ citekey: x.citekey, title: x.title, authors: x.authors, year: x.year, keywords: x.keywords, status: x.status }));
   const autoBlock = AUTO_START + '\n' + renderIndexBlock(rows) + '\n' + AUTO_END;
   const indexPath = join(out, 'index.md');
   if (existsSync(indexPath)) {
@@ -447,10 +511,10 @@ function main() {
   const readmePath = join(out, 'README.md');
   if (!existsSync(readmePath)) writeFileSync(readmePath, renderReadme(), 'utf8');
 
-  writeJson(join(out, '.index.json'), { generatedAt: new Date().toISOString(), count: jsonEntries.length, entries: jsonEntries });
+  writeJson(join(out, '.index.json'), { generatedAt: new Date().toISOString(), count: mergedIndexEntries.length, entries: mergedIndexEntries });
   writeJson(join(out, '.manifest.json'), {
     generatedAt: new Date().toISOString(), source, out, bibPath,
-    entries: report,
+    entries: mergedManifestEntries,
     warnings: { missingPdf, missingMd }
   });
 

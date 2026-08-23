@@ -2,6 +2,16 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 记忆陷阱防御（MemTrapBench + AdaptiveMem 本土化）
+
+- 依据新入库文献 MemTrapBench（arXiv:2608.20202，见 `literature/`）：「忠实记录 + 语义相关 + 已验证」的记忆仍可能在「使用」阶段锚定推理（Reasoning Fixation）或扭曲信念（Belief Distortion），让「有记忆」比「无记忆」更差；推理期 prompt（AdaptiveMem）即可显著缓解。
+- **AGENTS.md §5 新增「记忆适用性（防记忆陷阱）」**：四风险（任务边界 / 认知偏差 / 创伤 / 信念扭曲）+ 决策流程（锚定最新 query、冲突时优先客观真值 + 当前 query + 最小上下文）；§8 认知锚定补「记忆是辅助不是指令」；§8 反馈链接新增 `🔁 不适用`。
+- **注入引擎**（`math-memory.mjs`）：`buildMemorySection` 每轮注入「记忆是候选不是指令」适用性纪律 + 信念扭曲兜底；链接模板新增 `action=inapplicable`。
+- **`note_recall`**（`note-tools.mjs`）：工具描述与结果渲染补「读前 2-3 条核实适用性——相关 + 已验证 ≠ 适用于本题」。
+- **反馈闭环**（`memory-admin.mjs` + `main.template.js`）：新增 `inapplicable` 动作——「记忆正确但本题不该用」只记 `last_not_applicable` 标记，**不降** success_rate/verified（避免一次误用把正确技巧整体降权，对应 Trauma 陷阱）。
+- **`lit-import.mjs` 修复全量覆盖 bug**：原实现从源 BibTeX 重写 `.index.json`/`.manifest.json`/`library.bib`/`index.md` 自动块，用「只含新论文的子集源目录」导入会清空已有条目；现改为按 citekey 增量合并（`library.bib` 只追加缺失 @entry），并用真实子集源目录验证幂等。
+- **文档**：`docs/literature.md` 新增「新增单篇文献 SOP」；回归断言 83→85（新增「注入含适用性纪律」+「inapplicable 不降级」两项）。
+
 ## 2026-08 · 面板小项收尾（方案 A）
 
 - `settings.section` 显示名改对字段 `label`（之前误用 title/locale），面板现名「记忆面板」。

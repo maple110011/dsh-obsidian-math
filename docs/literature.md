@@ -108,10 +108,31 @@ node scripts/lit-import.mjs --source <源目录> --out <输出目录>           
 
 ## 7. 施行状态与下一步
 
-**已完成（仓库 `literature/`）**：14 条 BibTeX 全部匹配 14 个 PDF，14 篇全部有 MinerU `full.md`（`unread`）；产出 14 张卡、`notes/_README.md`、`index.md`/`.index.json`/`.manifest.json`/`library.bib`，`.raw/` 含 14 份 PDF + full.md + images（约 42MB，511 张图）。
+**已完成（仓库 `literature/`）**：15 条 BibTeX 全部匹配 15 个 PDF，15 篇全部有 MinerU `full.md`；产出 15 张卡、`notes/_README.md`、`index.md`/`.index.json`/`.manifest.json`/`library.bib`，`.raw/` 含 15 份 PDF + full.md + images（约 42MB，511 张图）。已蒸馏 2 篇：`shutovaEvaluatingMemoryStructure2026`、`wangMemTrapBenchBenchmarkingCognitive2026`。
 
 **下一步候选（需拍板后再动）**：
 1. **git 处理**：`.raw/` 是约 42MB 二进制（PDF + 图片），建议加入 `.gitignore`（工作区保留、不进 git 历史），或整体纳入版本库做备份——由你定；
 2. **蒸馏流程**：从 `unread` 开始研读，把可迁移机制写进卡片「核心机制 / 映射」两节，并回流到 vault 记忆的 records/hook、theorems、templates；
 3. **纳入统一检索**：让 `note_recall` 把 `literature/cards/`（或 full.md 摘要级）纳入统一语料（需改 `note-tools.mjs`）；
 4. **AGENTS.md 增文献路由**：告诉 agent「找论文先读 index → 卡片 → full.md → 蒸馏进 records/hook」（需改模板 + 重建 `main.js`）。
+
+## 8. 新增单篇文献 SOP（后续 agent 照此执行）
+
+目标：把一篇新论文加入文献库并留下研读记录，**不破坏已有条目**。
+
+1. **准备源目录**：把新论文的 `*.pdf`（可选的 MinerU `full.md` 目录 + BibTeX `collected papers.bib`）放进一个临时源目录——**不必包含全部论文**（导入器是增量合并的）。
+2. **导入**：
+   ```bash
+   node scripts/lit-import.mjs --source <临时源目录> --out literature
+   ```
+   - 按 citekey 增量合并 `.index.json` / `.manifest.json`，`index.md` 自动块从合并结果重生成，`library.bib` 只追加缺失的 @entry——**不会覆盖已有条目**（已修复，幂等可重复跑）。
+   - 有 MinerU `full.md` → 状态 `unread`；缺 → `to-process`（待转换）。
+3. **通读**：读 `.raw/<citekey>/full.md`（MinerU 全文，事实源）。
+4. **写卡片**：把 `cards/<citekey>.md` 的 TODO 换成蒸馏——「一句话」+「核心机制 / 方法」+「与我的工作 / 记忆的映射」，frontmatter `status` 改为 `distilled`。
+5. **写研读记录**：按 `reading/_TEMPLATE.md` 的 14 节写 `reading/<citekey>.md`（重点：可迁移机制清单 + 映射/差距 + 行动项）。
+6. **回流记忆（可选）**：把可复用机制蒸馏进 vault 记忆的 records/hook、theorems、templates。
+
+**约定**：
+- `citekey` 是唯一 ID，贯穿目录/卡片/索引，不要改。
+- `cards/*.md` 是人类侧真相（status 流转 `unread → reading → distilled`）；`.index.json` / `index.md` 的 status 是机器默认（`unread`），与卡片可能不一致，属已知现象。
+- `.raw/`、`.index.json`、`.manifest.json` 是机器侧，不手改。

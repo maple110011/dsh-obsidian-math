@@ -35,7 +35,7 @@ Mathematics learning is long-horizon accumulation: notation habits, theoretical 
 - **Memory panel**: browse all five layers, search, hook stats with 📈 usage trends, per-card ✅/❌/supersede/archive, audit report; **edit-and-save in the panel** (mtime conflict guard); capture policy editable on the settings page with effect descriptions.
 - **Feedback loop**: `[✅ 这条对] [❌ 这条错]` links in replies deterministically rewrite cards through the loopback `/feedback` endpoint (CSRF-token protected); note references are clickable and jump into Obsidian (`/open`).
 - **Reply-quality protocol**: intuition before formalism, anchoring new material to your existing notes, difficulty adaptation, Socratic correction, low-frequency check questions.
-- **No dsh-web-ui plugins mounted (independence)**: the profile bundles `dsh-web-app` for the embedded chat UI, but mounts **none** of the dsh-web-ui plugin family (skin center / task board / SSH / aionui panel / git-graph / pet / live-stats, etc.) — so it has no `@linxin666` UI packages to resolve and boots cleanly with or without a `web` profile.
+- **No dsh-web-ui plugins mounted by default (independence)**: the profile bundles `dsh-web-app` for the embedded chat UI, but mounts **none** of the dsh-web-ui plugin family (skin center / task board / SSH / aionui panel / git-graph / pet / live-stats, etc.) by default — so it has no `@linxin666` UI packages to resolve and boots cleanly with or without a `web` profile. The **skin center** (skin picker + background transparency) can be optionally re-enabled from the plugin settings; it requires a `web` profile to mirror the `@linxin666` skin packages from.
 
 ### Safety (fail-closed)
 - Tool surface: file read/write/search + four note tools + ask_user; no shell, no web, no subagents, no delete tools. **No dsh-web-ui plugins are mounted** — the profile keeps the minimal agent tool surface.
@@ -57,7 +57,7 @@ dsh-math-memory install --vault "D:\\Obsidian笔记数据库"
 dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assistant/notes-assistant.patch.yml"
 ```
 
-Plugin settings: port, dsh install dir, DSH_HOME, auto-start, auto-init, auto-archive (>90-day episodes), ribbon button, keep-alive on close, and the **capture-policy dropdowns**.
+Plugin settings: port, dsh install dir, DSH_HOME, auto-start, auto-init, auto-archive (>90-day episodes), ribbon button, keep-alive on close, the **skin-center toggle** (optional dsh-web-ui skin settings), and the **capture-policy dropdowns**.
 
 ## Vault layout
 
@@ -80,7 +80,7 @@ vault/
 ## Development & quality
 
 ```bash
-npm test          # syntax + 82 zero-token regression checks + installer e2e (drift detection)
+npm test          # syntax + 85 zero-token regression checks + installer e2e (drift detection)
 npm run qa        # engine probe: 12 ground-truth recall assertions on the real vault (zero tokens)
 npm run qa:e2e    # real-session end-to-end acceptance (spends real tokens; reports API-level usage)
 node scripts/build-obsidian.mjs   # rebuild main.js (required after shared-file changes)
@@ -89,8 +89,8 @@ node scripts/deploy-local.mjs     # one-shot local deployment
 
 - **Repository structure**: [ARCHITECTURE.md](ARCHITECTURE.md) — directory responsibilities, the two-component data flow, the memory↔retrieval boundary, and the feature checklist.
 - **Memory knowledge base**: [docs/memory/](docs/memory/) — design (implementation spec), retrieval-v3 (retrieval proposal), testing (QA methodology), assessment, references (paper notes), changelog, handoff.
-- **Acceptance record**: engine probe 12/12; real-session E2E 4/4 (including the no-answer honesty and reformulate-retry behaviors); the cost-benchmark question (170K tokens pre-system) now measures ≈25K billed tokens (68% of the prompt served from cache).
-- Version: **0.6.4** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
+- **Acceptance record**: engine probe 12/12; the real-session E2E suite covers 5 cases (including the no-answer honesty and reformulate-retry behaviors); the cost-benchmark question (170K tokens pre-system) now measures ≈25K billed tokens (68% of the prompt served from cache).
+- Version: **0.6.5** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
 
 ## Privacy & safety
 

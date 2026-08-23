@@ -901,7 +901,7 @@ export async function apply(ctx, config) {
   // ── note_recall (memory v3 S1: unified entry) ─────────────────────────────
   ctx.tools.register(defineTool({
     name: "note_recall",
-    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry — prefer it over grep and over per-layer routes whenever you need to find relevant content; it answers in one call what previously took several. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high). Then READ the top 2-3 matches in full before using them. An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards.`,
+    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry — prefer it over grep and over per-layer routes whenever you need to find relevant content; it answers in one call what previously took several. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high). Then READ the top 2-3 matches in full and RE-EVALUATE whether each actually fits the CURRENT query before using them — a relevant, verified, high-score hit is a candidate, not a mandate (a previously-successful technique can be a fixation trap on a slightly-different instance). An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards.`,
     parameters: {
       query: { type: "string", required: true, description: "Distilled search query: the reasoning challenge plus candidate technique keywords, e.g. '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli'." },
       operator: { type: "string", description: `Optional stage-1 hard filter, one of ${[...HOOK_OPERATORS].join("/")}. Only hook cards with a matching operator are scored; when none matches, all docs are scored and mode reports the fallback.` },
@@ -952,7 +952,7 @@ export async function apply(ctx, config) {
           return `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path}) score ${match.score.toFixed(3)}${extra === "" ? "" : " · " + extra}\n  ${match.snippet}`;
         });
         const weak = value.matches.filter((match) => match.coverage < 0.35).length;
-        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实后再使用；${weak} 条 coverage<0.35 属弱信号，多为词面巧合）:\n${lines.join("\n")}` }];
+        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实适用性后再使用——相关 + 已验证 ≠ 适用于本题；${weak} 条 coverage<0.35 属弱信号，多为词面巧合）:\n${lines.join("\n")}` }];
       }
     },
     isConcurrencySafe: () => true,

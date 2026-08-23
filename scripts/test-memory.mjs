@@ -39,6 +39,7 @@ import {
   buildHookHistory,
   MAX_TOTAL_MEMORY_CHARS
 } from '../dsh/preset/math-memory.mjs';
+import { applyFeedback } from '../dsh/host/memory-admin.mjs';
 
 const results = [];
 function check(name, condition, detail = '') {
@@ -237,6 +238,7 @@ check('nav: static navigation layers present',
 check('nav: notation system injected', navSection.includes('记号体系') && navSection.includes('Wasserstein 距离'));
 check('nav: no per-request recall section', !navSection.includes('本轮记忆召回'));
 check('nav: total memory section is bounded', navSection.length <= MAX_TOTAL_MEMORY_CHARS, `len=${navSection.length}`);
+check('nav: adaptive-mem applicability guard injected', navSection.includes('记忆是候选') && navSection.includes('任务边界') && navSection.includes('信念扭曲'));
 
 // ── 6b. resolveWorkspaceRoot priority (config > env > cwd) ─────────────────
 check('workspace: config wins over env and cwd', resolveWorkspaceRoot('/cfg', '/env', '/cwd') === resolve('/cfg'));
@@ -259,7 +261,7 @@ check('hook: schema version is a positive integer', Number.isInteger(HOOK_SCHEMA
 
 const recallHelpers = { tokenize, weightedOverlap, computeDocFreq, bm25Score, computeCorpusStats };
 
-// ── 7. latestUserText / pairMessages (C) ──// ── 7. latestUserText / pairMessages (C) ───────────────────────────────────
+// ── 7. latestUserText / pairMessages (C) ───────────────────────────────────
 const fakeAgent = { session: { log: [
   { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '第一问' }] } },
   { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '答一' }] } } },
@@ -294,6 +296,12 @@ writeFileSync(join(inboxDir, 'optimal-transport.md'), [
 const digest = memoDigest(root, 2200, '最优传输 Sinkhorn 熵正则', recallHelpers);
 check('memo: fresh-but-relevant memo surfaces', digest.includes('最优传输想法') && digest.includes('提醒候选'));
 check('memo: reminders off hides reminder candidates', !memoDigest(root, 2200, '最优传输 Sinkhorn 熵正则', recallHelpers, false).includes('提醒候选'));
+// M1 regression: memoDigest must tolerate a missing helpers object (the
+// buildMemorySection fallback calls it with no helpers/query).
+check('memo: no-helpers fallback lists memos without crashing', (() => {
+  const noHelpers = memoDigest(root, 2200);
+  return noHelpers.includes('最优传输想法');
+})());
 
 // ── 9. B1: stats zeroed after merge ─────────────────────────────────────────
 const statsAfter = JSON.parse(readFileSync(join(cacheDir, 'retrieval-stats.json'), 'utf8'));
@@ -438,6 +446,28 @@ const h3 = buildHookHistory(h2, hookCards, '2026-08-16');
 check('history: same day updates in place', h3.snapshots['.deepseek/memory/records/rec-a.md']?.length === 2 && h3.snapshots['.deepseek/memory/records/rec-a.md'][1].date === '2026-08-16');
 const h4 = buildHookHistory(h3, hookCards, '2026-08-17', 3);
 check('history: per-card cap respected', h4.snapshots['.deepseek/memory/records/rec-a.md']?.length <= 3);
+
+// ── 20. feedback: inapplicable must not degrade the card (MemTrapBench Trauma) ─
+const fbCard = join(recordsDir, 'fb-card.md');
+writeFileSync(fbCard, card([
+  '---',
+  'id: fb-card',
+  'type: artifact',
+  'status: active',
+  'updated: 2026-08-01',
+  'title: 反馈测试卡',
+  'hook:',
+  '  operator: probability',
+  '  success_rate: 0.8',
+  '  verified: user-confirmed',
+  '---',
+  '',
+  '# 反馈测试卡'
+]));
+const fbResult = applyFeedback(fbCard, 'inapplicable');
+const fbAfter = readFileSync(fbCard, 'utf8');
+check('feedback: inapplicable marks context but keeps success_rate/verified',
+  fbResult.ok === true && /success_rate:\s*0.8/.test(fbAfter) && /verified:\s*user-confirmed/.test(fbAfter) && fbAfter.includes('last_not_applicable'));
 
 rmSync(root, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok).length;

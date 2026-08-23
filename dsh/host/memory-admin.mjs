@@ -12,6 +12,7 @@ import { join } from "node:path";
 export const FEEDBACK_MESSAGES = {
   confirm: '已确认 ✅ 该记忆升级为 user-confirmed（成功率提至 ≥0.9）',
   wrong: '已记录 ❌ 该记忆成功率减半，明日体检将重新评估',
+  inapplicable: '已记录 🔁 该记忆在此上下文不适用（不降成功率，保留原验证等级）',
   stale: '已标记 superseded（保留证据，不删除）',
   forget: '已归档到 .deepseek/archive/records/'
 };
@@ -109,6 +110,13 @@ export function applyFeedback(filePath, action) {
     const rated = setHookField(frontmatter, 'success_rate', String(next));
     if (rated === null) return { ok: false, message: '该卡片没有 hook 块' };
     frontmatter = rated;
+  } else if (action === 'inapplicable') {
+    // "Not applicable to this context" is NOT evidence the card is wrong:
+    // leave success_rate/verified/status untouched so a correct technique is
+    // not degraded by a single misapplication (MemTrapBench "Trauma" trap).
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    frontmatter = setTopField(frontmatter, 'last_not_applicable', today);
   } else if (action === 'stale') {
     frontmatter = setTopField(frontmatter, 'status', 'superseded');
   }

@@ -25,6 +25,7 @@
 | 未读 | [Evo-Memory: Benchmarking LLM Agent Test-time Learning with Self-Evolving Memory](cards/weiEvoMemoryBenchmarkingLLM2026.md) | Wei, Tianxin 等 | 2026 | Computer Science - Artificial Intelligence |
 | 未读 | [Memory OS of AI Agent](cards/kangMemoryOSAI2025.md) | Kang, Jiazheng 等 | 2025 | Computer Science - Artificial Intelligence |
 | 未读 | [Evaluating Memory Structure in LLM Agents](cards/shutovaEvaluatingMemoryStructure2026.md) | Shutova, Alina 等 | 2026 | Computer Science - Machine Learning |
+| 未读 | [MemTrapBench: Benchmarking Cognitive Traps in LLM Memory Use](cards/wangMemTrapBenchBenchmarkingCognitive2026.md) | Wang, Mengru 等 | 2026 | Computer Science - Artificial Intelligence |
 <!-- END AUTO-INDEX -->
 
 ## 使用

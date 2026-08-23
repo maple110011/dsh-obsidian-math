@@ -1,11 +1,11 @@
-# 记忆系统当前设计（v0.5.x 实现规格）
+# 记忆系统当前设计（v0.6.x 实现规格）
 
 > 本文档描述**代码里真实存在**的记忆系统，不是愿景。对应文件：
 > - 注入引擎：`dsh/preset/math-memory.mjs`
 > - 笔记工具：`dsh/preset/note-tools.mjs`
 > - 工作协议：`dsh/templates/AGENTS.md`（安装进 vault 根目录）
 > - 记忆模板：`dsh/templates/*.md`（安装进 `<vault>/.deepseek/**`）
-> - 生命周期维护：`obsidian/main.template.js` 的 `archiveOldEpisodes`
+> - 生命周期维护：`dsh/host/memory-admin.mjs` 的 `archiveOldEpisodes`（由 Obsidian 插件启动时触发）
 
 ## 1. 架构总览
 
@@ -110,4 +110,4 @@
 
 ## 10. 已知局限（详见 assessment.md）
 
-检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板目前仅在 Obsidian 侧（dsh web ui 面板待重构 Phase 4）。
+检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板有两套入口：Obsidian 侧 ItemView（浏览/搜索/编辑/反馈/归档）与 dsh web ui 的 `settings.section` 面板（`dsh/client-panel/`，主 dsh web 3080 上使用）。

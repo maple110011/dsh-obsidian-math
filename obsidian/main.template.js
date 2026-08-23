@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS = {
   autoArchiveEpisodes: true,
   showRibbon: true,
   keepAliveOnUnload: false,
+  enableSkinCenter: false,
   memoryPanelUrl: 'http://127.0.0.1:3080/'
 };
 
@@ -122,7 +123,7 @@ function nodeExecutable() {
 
 // ── memory v2 control surface: deterministic feedback (phase 1a) ──────────
 
-const FEEDBACK_ACTIONS = new Set(['confirm', 'wrong', 'stale', 'forget']);
+const FEEDBACK_ACTIONS = new Set(['confirm', 'wrong', 'inapplicable', 'stale', 'forget']);
 
 const FEEDBACK_MESSAGES = MEMORY_ADMIN.FEEDBACK_MESSAGES;
 
@@ -505,7 +506,7 @@ class DshService {
       throw new Error('未找到 dsh。请打开插件设置，点击“自动检测”，或先安装 DeepSeek Harness。');
     }
     const patchPath = this.plugin.settings.autoInit
-      ? ensureObsidianPatch(location)
+      ? ensureObsidianPatch(this.plugin, location)
       : join(location.home, 'profiles', PRESET_NAME, 'notes-assistant.patch.yml');
     const patchArgs = existsSync(patchPath) ? ['--patch', patchPath] : [];
     const vaultPath = this.plugin.app.vault.adapter.getBasePath();
@@ -521,8 +522,8 @@ class DshService {
         : { DSH_OBSIDIAN_FEEDBACK_TOKEN: this.plugin.linkServer.token })
     };
     const args = location.script
-      ? [location.script, '--profile', PRESET_NAME, ...patchArgs, '--port', String(this.plugin.settings.port)]
-      : ['--profile', PRESET_NAME, ...patchArgs, '--port', String(this.plugin.settings.port)];
+      ? [location.script, '--profile', PRESET_NAME, ...patchArgs, '--no-open', '--port', String(this.plugin.settings.port)]
+      : ['--profile', PRESET_NAME, ...patchArgs, '--no-open', '--port', String(this.plugin.settings.port)];
     const executable = location.script ? nodeExecutable() : 'dsh';
     // Without a resolved script we rely on the dsh launcher; Windows needs a
     // shell to execute .cmd shims.
@@ -586,6 +587,24 @@ class DshService {
 const SKIN_FALLBACK_START = "# --- skin-disable fallback (auto-added: web profile missing) ---";
 const SKIN_FALLBACK_END = "# --- end skin-disable fallback ---";
 
+// Optional skin center mount (settings.enableSkinCenter): the dsh-web-ui skin
+// picker + its settings card host. Appended to the plugin-owned
+// notes-assistant.patch.yml overlay only when BOTH the toggle is on AND a web
+// profile exists to mirror the @linxin666 packages from; degrade mode (no web
+// profile) skips it so boot never dies with ERR_MODULE_NOT_FOUND.
+const SKIN_CENTER_INSERT = [
+  '',
+  '# Optional skin center (settings.enableSkinCenter): mount the dsh-web-ui skin',
+  '# picker + its settings card host. Only appended when the web profile exists',
+  '# to mirror the @linxin666 packages from; otherwise boot would fail with',
+  '# ERR_MODULE_NOT_FOUND, so degrade mode skips this block.',
+  '- insert:',
+  "    - id: ui-skin-center",
+  "      name: '@linxin666/dsh-client-ui-skin-center'",
+  "    - id: ui-web-ui-settings",
+  "      name: '@linxin666/dsh-client-ui-web-ui-settings'"
+].join('\n');
+
 /**
  * Extract the machine-local skin-disable fallback block (if present) so the
  * plugin-owned refresh below never wipes it. The block is appended by
@@ -605,25 +624,52 @@ function readSkinFallbackBlock(patchPath) {
   }
 }
 
+/** The web profile's @linxin666 scope that the skin packages mirror from. */
+function webSkinScope(home) {
+  return join(home, 'profiles', 'web', 'node_modules', '@linxin666');
+}
+
+/** True when the skin center can be mounted: toggle on AND a web profile exists to mirror from. */
+function skinCenterMountable(settings, home) {
+  return settings.enableSkinCenter === true && existsSync(webSkinScope(home));
+}
+
+/** Build the plugin-owned notes-assistant.patch.yml content (embedded base + optional skin center). */
+function buildNotesAssistantPatch(settings, home) {
+  let content = EMBEDDED_PRESET['profile-notes-assistant.patch.yml'];
+  if (skinCenterMountable(settings, home)) {
+    content += '\n\n' + SKIN_CENTER_INSERT + '\n';
+  }
+  return content;
+}
+
+/**
+ * Write notes-assistant.patch.yml: refresh the embedded content, append the
+ * optional skin-center block, and re-apply the machine-local degrade fallback
+ * in one write so a degraded boot never sees a patch file missing its block.
+ */
+function writeNotesAssistantPatch(plugin, home) {
+  const patchPath = join(home, 'profiles', PRESET_NAME, 'notes-assistant.patch.yml');
+  const fallback = readSkinFallbackBlock(patchPath);
+  const content = buildNotesAssistantPatch(plugin.settings, home) + (fallback === '' ? '' : '\n\n' + fallback + '\n');
+  mkdirSync(dirname(patchPath), { recursive: true });
+  writeFileSync(patchPath, content, 'utf8');
+  return patchPath;
+}
+
 /**
  * Plugin-owned profile overlay: always refresh the auto-workspace host plugin
  * and return the `--patch` path handed to the dsh launcher.
  */
-function ensureObsidianPatch(location) {
+function ensureObsidianPatch(plugin, location) {
   const profileRoot = join(location.home, 'profiles', PRESET_NAME);
   ensureFile(join(profileRoot, 'math-memory-workspace.mjs'), EMBEDDED_PRESET['profile-math-memory-workspace.mjs'], true);
-  const patchPath = join(profileRoot, 'notes-assistant.patch.yml');
-  // Refresh the embedded content AND re-apply the machine-local fallback in
-  // one write, so a degraded boot never sees a patch file missing its block.
-  const fallback = readSkinFallbackBlock(patchPath);
-  const content = EMBEDDED_PRESET['profile-notes-assistant.patch.yml'] + (fallback === '' ? '' : '\n\n' + fallback + '\n');
   try {
-    mkdirSync(dirname(patchPath), { recursive: true });
-    writeFileSync(patchPath, content, 'utf8');
+    return writeNotesAssistantPatch(plugin, location.home);
   } catch {
     // best-effort; boot will surface the real error if this fails
+    return join(profileRoot, 'notes-assistant.patch.yml');
   }
-  return patchPath;
 }
 
 function bootstrapDshConfig(plugin, force = false) {
@@ -645,7 +691,8 @@ function bootstrapDshConfig(plugin, force = false) {
   if (ensureFile(join(profileRoot, 'cordis.patch.yml'), EMBEDDED_PRESET['profile-cordis.patch.yml'], force)) written.push('profile/cordis.patch.yml');
   if (ensureFile(join(profileRoot, 'pnpm-workspace.yaml'), EMBEDDED_PRESET['profile-pnpm-workspace.yaml'], force)) written.push('profile/pnpm-workspace.yaml');
   if (ensureFile(join(profileRoot, 'math-memory-workspace.mjs'), EMBEDDED_PRESET['profile-math-memory-workspace.mjs'], true)) written.push('profile/math-memory-workspace.mjs');
-  if (ensureFile(join(profileRoot, 'notes-assistant.patch.yml'), EMBEDDED_PRESET['profile-notes-assistant.patch.yml'], true)) written.push('profile/notes-assistant.patch.yml');
+  writeNotesAssistantPatch(plugin, home);
+  written.push('profile/notes-assistant.patch.yml');
   // Host-plane memory panel + its shared core + the hook parser it imports.
   if (ensureFile(join(profileRoot, 'memory-admin.mjs'), EMBEDDED_PRESET['host-memory-admin.mjs'], true)) written.push('profile/memory-admin.mjs');
   if (ensureFile(join(profileRoot, 'math-memory-panel.mjs'), EMBEDDED_PRESET['host-math-memory-panel.mjs'], true)) written.push('profile/math-memory-panel.mjs');
@@ -1419,7 +1466,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
     containerEl.createEl('p', { text: `版本 ${this.plugin.manifest?.version ?? ''}` });
     containerEl.createEl('p', { text: '在 Obsidian 右侧栏嵌入 DeepSeek Harness 数学记忆助手。插件会自动启动 dsh 服务，无需额外打开命令行窗口。' });
     containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '🔒 安全模式：助手只能写当前 vault 内的文件；权限升级审批默认关闭，不会弹出“是否提权”的窗口；工具集中没有删除类工具。' });
-    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '🧭 适用范围：面向数学类知识（数学、统计学笔记与数学思维方式）设计，其他领域的知识可能需要不同的记忆架构。当前为试做型（0.4.x），记忆架构尚未经过长期使用测试，后续会继续演进。' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '🧭 适用范围：面向数学类知识（数学、统计学笔记与数学思维方式）设计，其他领域的知识可能需要不同的记忆架构。当前为试做型（0.6.x），记忆架构尚未经过长期使用测试，后续会继续演进。' });
 
     new Setting(containerEl)
       .setName('端口')
@@ -1509,6 +1556,28 @@ class DshObsidianSettingTab extends PluginSettingTab {
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.keepAliveOnUnload).onChange(async (value) => {
         this.plugin.settings.keepAliveOnUnload = value;
         await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
+      .setName('启用皮肤中心（dsh web ui 皮肤设置）')
+      .setDesc('开启后在 dsh web ui 的「设置 → 插件 → Web UI 插件」里显示皮肤中心（皮肤选择 + 背景透明度）。需要本机存在 web profile 以镜像 @linxin666 皮肤包；关闭则完全不挂载 dsh-web-ui UI 插件（默认，独立性最好）。改动需重启 dsh 服务后生效。')
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.enableSkinCenter).onChange(async (value) => {
+        this.plugin.settings.enableSkinCenter = value;
+        await this.plugin.saveSettings();
+        try {
+          const location = this.plugin.service.location();
+          if (location !== null) {
+            writeNotesAssistantPatch(this.plugin, location.home);
+            if (value && !existsSync(webSkinScope(location.home))) {
+              new Notice('已开启皮肤中心，但未检测到 web profile（无法镜像 @linxin666 皮肤包），皮肤中心暂不生效。');
+            } else {
+              new Notice(value ? '皮肤中心已开启，重启 dsh 服务后生效。' : '皮肤中心已关闭，重启 dsh 服务后生效。');
+            }
+          }
+        } catch (error) {
+          new Notice('更新皮肤中心配置失败：' + String(error));
+        }
+        this.display();
       }));
 
     containerEl.createEl('h3', { text: '捕获策略' });

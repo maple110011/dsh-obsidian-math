@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-23T07:47:41.750Z",
-  "count": 14,
+  "generatedAt": "2026-08-23T15:52:42.867Z",
+  "count": 15,
   "entries": [
     {
       "citekey": "gaoLeanSearchV2Global2026",
@@ -307,6 +307,30 @@
       "card": "cards/shutovaEvaluatingMemoryStructure2026.md",
       "fullText": ".raw/shutovaEvaluatingMemoryStructure2026/full.md",
       "pdf": ".raw/shutovaEvaluatingMemoryStructure2026/source.pdf"
+    },
+    {
+      "citekey": "wangMemTrapBenchBenchmarkingCognitive2026",
+      "title": "MemTrapBench: Benchmarking Cognitive Traps in LLM Memory Use",
+      "shorttitle": "MemTrapBench",
+      "authors": [
+        "Wang, Mengru",
+        "Luo, Haozhe",
+        "Xu, Zhenqian",
+        "Cui, Zhixiang",
+        "Xu, Haoming",
+        "Yang, Qu",
+        "Fang, Jizhan",
+        "Fang, Junfeng",
+        "Zhang, Ningyu"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Computation and Language, Computer Science - Computers and Society, Computer Science - Databases, Computer Science - Machine Learning",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2608.20202",
+      "url": "http://arxiv.org/abs/2608.20202",
+      "card": "cards/wangMemTrapBenchBenchmarkingCognitive2026.md",
+      "fullText": ".raw/wangMemTrapBenchBenchmarkingCognitive2026/full.md",
+      "pdf": ".raw/wangMemTrapBenchBenchmarkingCognitive2026/source.pdf"
     }
   ]
 }

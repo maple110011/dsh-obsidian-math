@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-08-23T07:47:41.751Z",
-  "source": "D:/临时/agent记忆",
-  "out": "E:/software/ss/Deepseek-Harness/dsh-obsidian-math/literature",
+  "generatedAt": "2026-08-23T15:52:42.869Z",
+  "source": "D:\\临时\\agent记忆",
+  "out": "literature",
   "bibPath": "D:\\临时\\agent记忆\\collected papers.bib",
   "entries": [
     {
@@ -101,6 +101,13 @@
       "mineruDir": "Shutova et al. - 2026 - Evaluating Memory Structure in LLM Agents.pdf-1413f7f1-715c-4d1c-9301-ce4517a032ff",
       "status": "unread",
       "card": "created"
+    },
+    {
+      "citekey": "wangMemTrapBenchBenchmarkingCognitive2026",
+      "pdf": "wang et al. - 2026 - memtrapbench benchmarking cognitive traps in llm memory use.pdf",
+      "mineruDir": "Wang et al. - 2026 - MemTrapBench Benchmarking Cognitive Traps in LLM Memory Use.pdf-646a86b2-5045-4027-87ab-14b08a3715fd",
+      "status": "unread",
+      "card": "kept"
     }
   ],
   "warnings": {

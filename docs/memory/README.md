@@ -24,7 +24,7 @@
 2. **长期方向**（详见 [`v2-proposal.md`](v2-proposal.md)）：
    - 检索式注入：已实现为 note_recall 统一入口（BM25 粗筛 + 精读挑选）+ 导航式注入（S5）；
    - 确定性维护：ISM 七机制的本土化维护 pass（审计报告已实现，模型执行的合并/强化走协议）；
-   - 记忆控制面：浏览/溯源/反馈已实现（Obsidian 记忆面板 + 反馈链接，阶段 1a/1b/1c）；dsh web ui 面板待上游官方槽位（阶段 2）。
+   - 记忆控制面：浏览/溯源/反馈已实现（Obsidian 记忆面板 + 反馈链接，阶段 1a/1b/1c）；dsh web ui 面板已实现（`settings.section` 槽位，装在主 dsh web 3080）。
 3. **不可动摇的原则**（来自两轮评估）：原文证据优先；写时保留（superseded 而非删除）；检索先粗后细；证明可核查；所有记忆写入带来源与验证等级；fail-closed 安全边界。
 
 ## 工作约定（对协作者/agent）
@@ -38,7 +38,7 @@
 
 | 项目 | 状态 |
 |---|---|
-| 检索 v3：note_recall 统一入口（笔记+记忆一次 BM25 排序，kind-aware passage，coverage 弱信号） | ✅ 已实现并两层验收（引擎探针 12/12 + 真实会话 E2E 4/4，见 testing.md） |
+| 检索 v3：note_recall 统一入口（笔记+记忆一次 BM25 排序，kind-aware passage，coverage 弱信号） | ✅ 已实现并两层验收（引擎探针 12/12 + 真实会话 E2E 5 用例，见 testing.md） |
 | 检索 v3：精读挑选协议（蒸馏查询/空结果重试/精读纪律）与导航式注入 | ✅ 已实现（AGENTS.md §4/§5；注入层=导航层） |
 | v2 之确定性记忆体检 + hook 统计回写 + 结构校验（S6） | ✅ 已实现（`cache/memory-audit.json`；缺 source/断链/未入索引） |
 | v2 之验证徽标 + 反馈链接 + 记忆面板（浏览/编辑/趋势） | ✅ 已实现（control-panel.md 阶段 1a/1b + 面板内编辑 + 📈 趋势） |
@@ -47,4 +47,4 @@
 | 回复质量协议（学习对话原则） | ✅ 已实现（AGENTS.md §8） |
 | 检索 v3 之 embedding 后端（Tier B） | ⬜ 可选（用户暂缓；95MB 本地模型 + hybrid 打分） |
 | 检索 v3 之独立 LLM 重排（A6） | ⬜ 可选（默认关闭；探针不满意时启用） |
-| 质量保障 | ✅ 82 项零 token 回归 + `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |
+| 质量保障 | ✅ 85 项零 token 回归 + `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |

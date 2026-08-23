@@ -35,7 +35,7 @@
 - **记忆面板**：五层浏览、搜索、hook 统计与 📈 使用趋势、逐卡 ✅/❌/过期/归档、体检报告展示；**面板内直接编辑保存**（mtime 冲突防护）；捕获策略与策略说明在设置页可见可改。
 - **反馈闭环**：回复内 `[✅ 这条对] [❌ 这条错]` 链接经 loopback `/feedback` 端点确定性改写卡片（CSRF token 保护）；笔记引用可点击跳转 Obsidian（`/open`）。
 - **回复质量协议**：直觉先行、认知锚定（新内容挂钩你的笔记）、难度自适应、苏格拉底式纠错、低频检查性收尾。
-- **不挂载任何 dsh-web-ui 插件（独立性）**：profile 只 bundle `dsh-web-app` 以嵌入聊天 UI，但**不挂载** dsh-web-ui 插件家族（皮肤中心/任务看板/SSH/aionui 面板/git-graph/宠物/统计等）——因此没有 `@linxin666` UI 包需要解析，有/无 `web` profile 都能干净启动。
+- **默认不挂载 dsh-web-ui 插件（独立性）**：profile 只 bundle `dsh-web-app` 以嵌入聊天 UI，**默认不挂载** dsh-web-ui 插件家族（皮肤中心/任务看板/SSH/aionui 面板/git-graph/宠物/统计等）——因此没有 `@linxin666` UI 包需要解析，有/无 `web` profile 都能干净启动。**皮肤中心**（皮肤选择 + 背景透明度）可在插件设置里选择性开启，需本机存在 `web` profile 以镜像 `@linxin666` 皮肤包。
 
 ### 安全（fail-closed）
 - 工具面：文件读写/搜索 + 四个笔记工具 + ask_user；无 shell/web/子代理/删除工具。**不挂载任何 dsh-web-ui 插件**——保持最小 agent 工具面。
@@ -57,7 +57,7 @@ dsh-math-memory install --vault "D:\\Obsidian笔记数据库"
 dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assistant/notes-assistant.patch.yml"
 ```
 
-插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**捕获策略三档下拉框**。
+插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**皮肤中心开关**（可选 dsh-web-ui 皮肤设置）、**捕获策略三档下拉框**。
 
 ## vault 布局
 
@@ -80,7 +80,7 @@ vault/
 ## 开发与质量
 
 ```bash
-npm test          # 语法 + 82 项零 token 回归 + 安装器 e2e（漂移检测）
+npm test          # 语法 + 85 项零 token 回归 + 安装器 e2e（漂移检测）
 npm run qa        # 引擎探针：真实 vault 12 组召回断言（零 token）
 npm run qa:e2e    # 真实会话端到端验收（烧真实 tokens，报告 API 级 usage）
 node scripts/build-obsidian.mjs   # 重建 main.js（改共享文件后必跑）
@@ -89,8 +89,8 @@ node scripts/deploy-local.mjs     # 本机一键部署
 
 - **仓库结构**：[ARCHITECTURE.md](ARCHITECTURE.md)——目录职责、双组件数据流、记忆↔检索边界、落地清单。
 - **记忆系统知识库**：[docs/memory/](docs/memory/)——design（实现规格）、retrieval-v3（检索提案）、testing（QA 方法论）、assessment、references（论文笔记）、changelog、handoff。
-- **验收记录**：引擎探针 12/12；真实会话 E2E 4/4（含「无答案不编造」「改写重试」行为验证）；成本基准题（旧系统同题 17 万 tokens）新系统实测约 2.5 万计费 tokens（缓存命中 68%）。
-- 版本：**0.6.4**（试做型；记忆架构未经长期使用测试，会继续演进）。
+- **验收记录**：引擎探针 12/12；真实会话 E2E 共 5 个用例（含「无答案不编造」「改写重试」行为验证）；成本基准题（旧系统同题 17 万 tokens）新系统实测约 2.5 万计费 tokens（缓存命中 68%）。
+- 版本：**0.6.5**（试做型；记忆架构未经长期使用测试，会继续演进）。
 
 ## 隐私与安全
 

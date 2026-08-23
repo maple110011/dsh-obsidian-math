@@ -2,6 +2,29 @@
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
+## [0.6.5] - 2026-08-23
+
+### Added
+
+- **记忆陷阱防御（AdaptiveMem 本土化）**：依据新入库文献 MemTrapBench（arXiv:2608.20202），AGENTS.md §5 新增「记忆适用性（防记忆陷阱）」四风险 + 决策流程，`math-memory.mjs` 每轮注入「记忆是候选不是指令」适用性纪律 + 信念扭曲兜底，`note_recall` 补「读前 2-3 条核实适用性——相关 + 已验证 ≠ 适用于本题」。
+- **`inapplicable` 反馈动作**：新增「🔁 不适用」——「记忆正确但本题不该用」只记 `last_not_applicable` 标记，不降 success_rate/verified（避免一次误用把正确技巧整体降权）。
+- **文献库新增单篇文献 SOP**：`docs/literature.md` 新增「新增单篇文献 SOP」（6 步，供后续 agent 遵循）；入库 MemTrapBench（第 15 篇，已蒸馏）。
+
+### Fixed
+
+- **`lit-import.mjs` 全量覆盖**：原实现从源 BibTeX 重写 `.index.json`/`.manifest.json`/`library.bib`/`index.md` 自动块，用「只含新论文的子集源目录」导入会清空已有条目；现改为按 citekey 增量合并（`library.bib` 只追加缺失 @entry），并验证幂等。
+- **`memoDigest` 缺 helpers 必崩**：`buildMemorySection` 的无 helpers fallback 会因无条件调用 `helpers.tokenize` 抛 TypeError；现仅在可打分时 tokenize，无 helpers 时仍能列出备忘录（零 token 回归 82→83）。
+
+### Changed
+
+- **皮肤中心改为可选**：Obsidian 设置新增「启用皮肤中心」开关（默认关）。开启后把 `ui-skin-center` + `ui-web-ui-settings` 追加进 `notes-assistant.patch.yml`（仅当存在 web profile 可镜像 `@linxin666` 包时），在 dsh web ui 的「设置 → 插件 → Web UI 插件」里显示皮肤选择 + 背景透明度；关闭则保持默认的零 dsh-web-ui 依赖。
+- **Obsidian 启动 dsh 不再自动开浏览器**：插件 spawn dsh 时加 `--no-open`，3180 端口页面不再随服务启动弹出到系统浏览器（页面仍在 Obsidian 右侧栏 iframe 内可用）。
+
+### Docs
+
+- 清理文档漂移：设置页版本号 0.4.x→0.6.x；`notes-assistant.patch.yml` / `cordis.patch.yml` 皮肤中心注释改为「可选」语义；`design.md` 版本号与面板现状对齐；README 中英 E2E 用例数 4/4→5 用例；断言数 82→83 全仓统一。
+- 记忆陷阱防御配套文档：`docs/memory/changelog.md` 记「AdaptiveMem 本土化 + lit-import 修复」条目；`docs/memory/handoff.md` §3 增量说明、§7 记录后续工作（陷阱压力样例 / 记忆诱发退化被动信号 / note_recall 结构化适用性 / 文献库剩余 13 篇蒸馏）；回归断言 83→85 全仓统一。
+
 ## [0.6.4] - 2026-08-23
 
 ### Fixed
