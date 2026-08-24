@@ -1,12 +1,15 @@
 /**
- * check-skin-fallback — verify every `@linxin666` UI package mounted by
- * cordis.patch.yml's `insert:` is also disabled by the SKIN_FALLBACK degrade
- * block in main.template.js.
+ * check-skin-fallback — the base notes-assistant profile must not hard-mount
+ * any @linxin666 UI package in `cordis.patch.yml`.
  *
- * Why: those packages resolve only by mirroring from a `web` profile. When the
- * profile has no `web` (degrade mode), any mount left enabled is imported and
- * dies with ERR_MODULE_NOT_FOUND. This guard makes the degrade block keep in
- * sync with the mount list automatically.
+ * Why: those packages resolve only by mirroring from a `web` profile. The
+ * optional skin center (settings.enableSkinCenter) mounts them dynamically
+ * into `notes-assistant.patch.yml` only when the web profile (and the two
+ * skin-center packages) actually exist; the degrade block in main.template.js
+ * disables, at runtime, whatever skins the global skin manager wrote into
+ * $DSH_HOME/cordis.patch.yml when the web profile is absent. A hard mount in
+ * the base profile would make a web-profile-less boot die with
+ * ERR_MODULE_NOT_FOUND.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,27 +17,14 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const cordis = readFileSync(join(root, "dsh", "profile", "cordis.patch.yml"), "utf8");
-const template = readFileSync(join(root, "obsidian", "main.template.js"), "utf8");
 
 // Mounted @linxin666 ids: `- id: X` immediately followed by `name: '@linxin666/…'`.
-const mountIds = [];
 const mountRe = /-\s*id:\s*(\S+)\s*\n\s*name:\s*['"]@linxin666\//g;
-for (const m of cordis.matchAll(mountRe)) mountIds.push(m[1]);
+const mounts = [...cordis.matchAll(mountRe)].map((m) => m[1]);
 
-// Disabled ids in the degrade block: `'- id: X',` immediately followed by `'  disabled: true',`.
-const disabledIds = new Set();
-const disableRe = /-\s*id:\s*([^']+?)\s*',\s*\n\s*'\s*disabled:\s*true\s*',/g;
-for (const m of template.matchAll(disableRe)) disabledIds.add(m[1].trim());
-
-let failed = 0;
-for (const id of mountIds) {
-  if (!disabledIds.has(id)) {
-    console.log(`[STALE] skin-fallback: @linxin666 mount '${id}' is not disabled in the degrade block`);
-    failed += 1;
-  }
-}
-if (failed > 0) {
-  console.log(`\n${failed} @linxin666 mount(s) missing from the SKIN_FALLBACK degrade block — add '- id: <id>' + '  disabled: true' so a web-profile-less boot survives.`);
+if (mounts.length > 0) {
+  console.error(`\n${mounts.length} @linxin666 mount(s) in cordis.patch.yml: ${mounts.join(', ')}`);
+  console.error('The base notes-assistant profile must stay @linxin666-free — mount skins only via the optional skin center (settings.enableSkinCenter).');
   process.exit(1);
 }
-console.log(`skin-fallback check: ok (${mountIds.length} @linxin666 mount(s) all disabled in the degrade block)`);
+console.log(`skin-fallback check: ok (0 @linxin666 mounts in cordis.patch.yml — base profile is @linxin666-free)`);

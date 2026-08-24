@@ -11,6 +11,7 @@
 - **反馈闭环**（`memory-admin.mjs` + `main.template.js`）：新增 `inapplicable` 动作——「记忆正确但本题不该用」只记 `last_not_applicable` 标记，**不降** success_rate/verified（避免一次误用把正确技巧整体降权，对应 Trauma 陷阱）。
 - **`lit-import.mjs` 修复全量覆盖 bug**：原实现从源 BibTeX 重写 `.index.json`/`.manifest.json`/`library.bib`/`index.md` 自动块，用「只含新论文的子集源目录」导入会清空已有条目；现改为按 citekey 增量合并（`library.bib` 只追加缺失 @entry），并用真实子集源目录验证幂等。
 - **文档**：`docs/literature.md` 新增「新增单篇文献 SOP」；回归断言 83→85（新增「注入含适用性纪律」+「inapplicable 不降级」两项）。
+- **皮肤中心加固**：`skinCenterMountable` 收紧为检查「`dsh-client-ui-skin-center` + `dsh-client-ui-web-ui-settings` 两个具体包」而非「web profile 目录存在」；degrade 皮肤禁用块从硬编码 11 id 改为读取 `$DSH_HOME/cordis.patch.yml` 动态生成（新增/改名皮肤自动覆盖，无需再维护列表）；`check-skin-fallback.mjs` 改为断言基础 profile 零 @linxin666 挂载。
 
 ## 2026-08 · 面板小项收尾（方案 A）
 

@@ -624,14 +624,58 @@ function readSkinFallbackBlock(patchPath) {
   }
 }
 
+/**
+ * Read every `ui-skin-*` id the global skin-manager patch
+ * ($DSH_HOME/cordis.patch.yml) references — both the `id:` form and the
+ * `@linxin666/dsh-client-ui-skin-*` package-name form — so the degrade block
+ * disables exactly the skins that would otherwise break a web-profile-less
+ * boot. No hardcoded skin list: a new/renamed skin is picked up automatically.
+ */
+function readGlobalSkinIds(home) {
+  const globalPatch = join(home, 'cordis.patch.yml');
+  if (!existsSync(globalPatch)) return [];
+  try {
+    const text = readFileSync(globalPatch, 'utf8');
+    const ids = new Set();
+    for (const m of text.matchAll(/id:\s*(ui-skin-[\w-]+)/g)) ids.add(m[1]);
+    for (const m of text.matchAll(/dsh-client-ui-(skin-[\w-]+)/g)) {
+      if (m[1] !== 'skin-center') ids.add('ui-' + m[1]);
+    }
+    return [...ids].filter((id) => id !== 'ui-skin-center').sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Build the machine-local skin-disable fallback block from the global patch (no hardcoded list). */
+function buildSkinFallbackBlock(home) {
+  const ids = readGlobalSkinIds(home);
+  if (ids.length === 0) return '';
+  const rows = ids.map((id) => `- id: ${id}\n  disabled: true`).join('\n');
+  return `\n${SKIN_FALLBACK_START}\n${rows}\n${SKIN_FALLBACK_END}\n`;
+}
+
+/** Remove any existing skin-fallback block so a regenerate can replace it in place. */
+function stripSkinFallbackBlock(text) {
+  const start = text.indexOf(SKIN_FALLBACK_START);
+  const end = text.indexOf(SKIN_FALLBACK_END, start);
+  if (start < 0 || end < 0) return text;
+  return text.slice(0, start) + text.slice(end + SKIN_FALLBACK_END.length);
+}
+
 /** The web profile's @linxin666 scope that the skin packages mirror from. */
 function webSkinScope(home) {
   return join(home, 'profiles', 'web', 'node_modules', '@linxin666');
 }
 
-/** True when the skin center can be mounted: toggle on AND a web profile exists to mirror from. */
+/** The two @linxin666 packages the optional skin center actually mounts. */
+const SKIN_CENTER_PACKAGES = ['dsh-client-ui-skin-center', 'dsh-client-ui-web-ui-settings'];
+
+/** True when the skin center can be mounted: toggle on AND both skin-center packages actually exist in the web profile. */
 function skinCenterMountable(settings, home) {
-  return settings.enableSkinCenter === true && existsSync(webSkinScope(home));
+  if (settings.enableSkinCenter !== true) return false;
+  const scope = webSkinScope(home);
+  return SKIN_CENTER_PACKAGES.every((pkg) => existsSync(join(scope, pkg)));
 }
 
 /** Build the plugin-owned notes-assistant.patch.yml content (embedded base + optional skin center). */
@@ -714,46 +758,18 @@ function syncGlobalPackageLinks(home) {
   const webScope = join(home, 'profiles', 'web', 'node_modules', '@linxin666');
   const obsScope = join(home, 'profiles', PRESET_NAME, 'node_modules', '@linxin666');
   if (!existsSync(webScope)) {
-    // Degraded mode: no web profile to mirror from. The global skin insert
-    // would break this profile's boot, so append a machine-local disable
-    // block to the --patch overlay (re-applied after every plugin-load
-    // refresh; marked so it is never duplicated).
+    // Degraded mode: no web profile to mirror from. The global skin-manager
+    // patch ($DSH_HOME/cordis.patch.yml) inserts the ACTIVE skin into every
+    // profile; disable exactly the skins it references (read at runtime, no
+    // hardcoded list) so a web-profile-less boot survives.
     const overlay = join(home, 'profiles', PRESET_NAME, 'notes-assistant.patch.yml');
     try {
       if (existsSync(overlay)) {
-        const text = readFileSync(overlay, 'utf8');
-        if (!text.includes(SKIN_FALLBACK_START)) {
-          const block = [
-            '',
-            SKIN_FALLBACK_START,
-            // The global skin manager writes the ACTIVE skin (one of the
-            // ui-skin-* packages) into every profile; without a web profile
-            // to mirror from, disable those so boot survives.
-            '- id: ui-skin-blue-fantasy',
-            '  disabled: true',
-            '- id: ui-skin-dragon-heir',
-            '  disabled: true',
-            '- id: ui-skin-miku',
-            '  disabled: true',
-            '- id: ui-skin-minecraft',
-            '  disabled: true',
-            '- id: ui-skin-qq2006',
-            '  disabled: true',
-            '- id: ui-skin-qq98',
-            '  disabled: true',
-            '- id: ui-skin-ths',
-            '  disabled: true',
-            '- id: ui-skin-trading',
-            '  disabled: true',
-            '- id: ui-skin-whale-song',
-            '  disabled: true',
-            '- id: ui-skin-xp',
-            '  disabled: true',
-            SKIN_FALLBACK_END,
-            ''
-          ].join('\n');
-          writeFileSync(overlay, text.replace(/\s+$/, '') + '\n' + block, 'utf8');
-        }
+        let text = readFileSync(overlay, 'utf8');
+        text = stripSkinFallbackBlock(text);
+        const block = buildSkinFallbackBlock(home);
+        if (block !== '') text = text.replace(/\s+$/, '') + block;
+        writeFileSync(overlay, text, 'utf8');
       }
     } catch {
       // best-effort; boot will surface the real error if this fails
@@ -1568,8 +1584,8 @@ class DshObsidianSettingTab extends PluginSettingTab {
           const location = this.plugin.service.location();
           if (location !== null) {
             writeNotesAssistantPatch(this.plugin, location.home);
-            if (value && !existsSync(webSkinScope(location.home))) {
-              new Notice('已开启皮肤中心，但未检测到 web profile（无法镜像 @linxin666 皮肤包），皮肤中心暂不生效。');
+            if (value && !skinCenterMountable(this.plugin.settings, location.home)) {
+              new Notice('已开启皮肤中心，但未检测到完整的 web profile 皮肤包（需 @linxin666/dsh-client-ui-skin-center 与 web-ui-settings），皮肤中心暂不生效。');
             } else {
               new Notice(value ? '皮肤中心已开启，重启 dsh 服务后生效。' : '皮肤中心已关闭，重启 dsh 服务后生效。');
             }

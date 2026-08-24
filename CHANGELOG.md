@@ -18,6 +18,7 @@
 ### Changed
 
 - **皮肤中心改为可选**：Obsidian 设置新增「启用皮肤中心」开关（默认关）。开启后把 `ui-skin-center` + `ui-web-ui-settings` 追加进 `notes-assistant.patch.yml`（仅当存在 web profile 可镜像 `@linxin666` 包时），在 dsh web ui 的「设置 → 插件 → Web UI 插件」里显示皮肤选择 + 背景透明度；关闭则保持默认的零 dsh-web-ui 依赖。
+- **皮肤中心挂载加固 + 动态皮肤禁用**：`skinCenterMountable` 从「web profile 目录存在」收紧为「`dsh-client-ui-skin-center` + `dsh-client-ui-web-ui-settings` 两个具体包都存在」；degrade 模式的皮肤禁用块从硬编码 11 个 skin id 改为运行时读取 `$DSH_HOME/cordis.patch.yml` 动态生成（新增/改名皮肤自动覆盖）；`check-skin-fallback.mjs` 改为断言基础 profile 零 @linxin666 挂载。
 - **Obsidian 启动 dsh 不再自动开浏览器**：插件 spawn dsh 时加 `--no-open`，3180 端口页面不再随服务启动弹出到系统浏览器（页面仍在 Obsidian 右侧栏 iframe 内可用）。
 
 ### Docs
