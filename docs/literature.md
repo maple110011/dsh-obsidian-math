@@ -108,7 +108,7 @@ node scripts/lit-import.mjs --source <源目录> --out <输出目录>           
 
 ## 7. 施行状态与下一步
 
-**已完成（仓库 `literature/`）**：15 条 BibTeX 全部匹配 15 个 PDF，15 篇全部有 MinerU `full.md`；产出 15 张卡、`notes/_README.md`、`index.md`/`.index.json`/`.manifest.json`/`library.bib`，`.raw/` 含 15 份 PDF + full.md + images（约 42MB，511 张图）。已蒸馏 2 篇：`shutovaEvaluatingMemoryStructure2026`、`wangMemTrapBenchBenchmarkingCognitive2026`。
+**已完成（仓库 `literature/`）**：19 条 BibTeX 全部匹配 19 个 PDF，19 篇全部有 MinerU `full.md`；产出 19 张卡、`notes/_README.md`、`notes/retrieval-alignment-2026-08.md`、`index.md`/`.index.json`/`.manifest.json`/`library.bib`，`.raw/` 含 19 份 PDF + full.md + images。19 篇全部已蒸馏（cards + reading 齐全）：前批 14 篇 + `wangMemTrapBenchBenchmarkingCognitive2026` + 本批 4 篇（`yangRetrievalAugmentedLanguageModels2025`=Dual RAG、`huQueryLinkLeveragingQueryMemory2026`、`vakeBridgingQuestionAnswerGap2025`=HyPE、`yuanMemSearcherIterativeMemory2026`）。
 
 **下一步候选（需拍板后再动）**：
 1. **git 处理**：`.raw/` 是约 42MB 二进制（PDF + 图片），建议加入 `.gitignore`（工作区保留、不进 git 历史），或整体纳入版本库做备份——由你定；

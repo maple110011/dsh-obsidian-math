@@ -26,6 +26,10 @@
 | 未读 | [Memory OS of AI Agent](cards/kangMemoryOSAI2025.md) | Kang, Jiazheng 等 | 2025 | Computer Science - Artificial Intelligence |
 | 未读 | [Evaluating Memory Structure in LLM Agents](cards/shutovaEvaluatingMemoryStructure2026.md) | Shutova, Alina 等 | 2026 | Computer Science - Machine Learning |
 | 未读 | [MemTrapBench: Benchmarking Cognitive Traps in LLM Memory Use](cards/wangMemTrapBenchBenchmarkingCognitive2026.md) | Wang, Mengru 等 | 2026 | Computer Science - Artificial Intelligence |
+| 未读 | [Bridging the Question-Answer Gap in Retrieval-Augmented Generation: Hypothetical Prompt Embeddings](cards/vakeBridgingQuestionAnswerGap2025.md) | Vake, Domen 等 | 2025 | Computer Science - Computation and Language |
+| 未读 | [Retrieval-Augmented Language Models are Mimetic Theorem Provers](cards/yangRetrievalAugmentedLanguageModels2025.md) | Yang, Wenjie 等 | 2025 | — |
+| 未读 | [MemSearcher: Iterative Memory Integration for Search Agent via End-to-End Reinforcement Learning](cards/yuanMemSearcherIterativeMemory2026.md) | Yuan, Qianhao 等 | 2026 | — |
+| 未读 | [QueryLink: Leveraging Query-Memory Alignment for Long-Term Reasoning in LLM Agents](cards/huQueryLinkLeveragingQueryMemory2026.md) | Hu, Xuxian 等 | 2026 | — |
 <!-- END AUTO-INDEX -->
 
 ## 使用

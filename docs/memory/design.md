@@ -44,6 +44,8 @@
 - `memory/templates/<slug>.md`：问题模板卡（题型/解法 ↔ 定理关联图），索引注入 ≤600 字符；
 - `memory/notation.md`：记号体系（已采纳/候选/已否决三表 + 修订历史；收集→统一→维护，≤800 字符随提示注入）；
 - `capture-policy.md`：捕获策略（idea/fact/preference × auto/ask/off，frontmatter，用户维护；随系统提示注入，默认 ask/auto/auto 与既有行为一致）；
+- `strategy/<slug>.md`：策略层方法卡（困难→策略→检索目标 + 抽象阶梯 + 反模式），`note_strategy` 按需检索，不逐轮注入；
+- `working.md`：工作记忆草稿（覆写、有未闭合线程才写、≤500 字符注入、空则跳过）；
 - `cache/`：机器生成的对话索引、记忆体检报告与 hook 历史快照（用户勿动）。
 
 ## 3. 注入预算（`math-memory.mjs` 常量）
@@ -58,6 +60,7 @@
 | inbox digest（含提醒候选） | 1200 字符 |
 | 跨会话问答线索 | 最多 6 组 / 3000 字符 |
 | 记忆体检报告（v2） | 1200 字符 |
+| working.md（工作记忆草稿） | 500 字符（空则跳过） |
 
 静态索引即“导航层”（告诉模型有什么）；相关内容按需用 `note_recall` 拉取（检索 v3 S5，不再逐轮注入召回段）。截断策略：`clip()` 从头截断（episodes 保留尾部）。
 
@@ -67,6 +70,7 @@
 
 - 关键词/tag 找笔记 → `note_search`；反链 → `note_links`；
 - v3（检索重构，见 retrieval-v3.md）：统一入口 `note_recall`——BM25 对笔记+全部记忆层一次排序，kind-aware passage，空结果/重试协议；hook 命中带 verified/success_rate/uses + 新近度先验（promote/demote + recency，`hookPrior`）；注入层只保留导航（S5 已移除逐轮召回段）；
+- 策略层（见 strategy-layer.md）：`note_strategy`——方法层检索（difficulty 主匹配 + BM25 对 difficulty/move/abstraction 打分），证明/构造类问题先查策略卡拿到「困难→策略→检索目标」清单，再按清单逐步 `note_recall`（iterative retrieval，≤4 步）；
 - **隐藏目录限制**：Obsidian 的 vault 索引排除所有点号开头的路径段（已核对 1.13.7 源码），`.deepseek` 文件无法经 openLinkText/TFile 打开——记忆面板点击卡片走插件内预览 Modal。
 - 精确事实/原话/日期 → grep episodes → 读命中文件；
 - 类型化事实 → records/index → grep/读记录 → `source` 回证据；
@@ -104,7 +108,7 @@
 
 ## 9. 安全边界（fail-closed）
 
-- 工具面：文件读写/搜索 + 四个笔记工具（note_recall / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；
+- 工具面：文件读写/搜索 + 五个笔记工具（note_recall / note_strategy / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；
 - 写操作被 workspace-write 沙箱限制在 vault 内，交互提权默认禁用（`approval: never`）；
 - 插件自身唯一写的文件在 `cache/`；一切记忆变更走 ctx.fs，无裸 fs 旁路。
 

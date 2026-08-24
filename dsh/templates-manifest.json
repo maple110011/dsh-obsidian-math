@@ -14,5 +14,8 @@
   "inbox-index.md": ".deepseek/inbox/index.md",
   "capture-policy.md": ".deepseek/capture-policy.md",
   "config.md": ".deepseek/config.md",
-  "notation.md": ".deepseek/memory/notation.md"
+  "notation.md": ".deepseek/memory/notation.md",
+  "strategy-readme.md": ".deepseek/strategy/_README.md",
+  "strategy-index.md": ".deepseek/strategy/index.md",
+  "working.md": ".deepseek/working.md"
 }

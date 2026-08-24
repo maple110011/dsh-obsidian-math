@@ -23,7 +23,11 @@ import {
   cjkCharOverlap,
   queryCoverage,
   hookPrior,
-  resolveWorkspaceRoot
+  resolveWorkspaceRoot,
+  strategySurface,
+  strategyMoves,
+  strategyRetrieve,
+  strategyAbstraction
 } from '../dsh/preset/note-tools.mjs';
 import { HOOK_SCHEMA_VERSION } from '../dsh/preset/hook-frontmatter.mjs';
 import {
@@ -240,6 +244,13 @@ check('nav: no per-request recall section', !navSection.includes('本轮记忆�
 check('nav: total memory section is bounded', navSection.length <= MAX_TOTAL_MEMORY_CHARS, `len=${navSection.length}`);
 check('nav: adaptive-mem applicability guard injected', navSection.includes('记忆是候选') && navSection.includes('任务边界') && navSection.includes('信念扭曲'));
 
+// working memory (strategy layer §5): injected only when non-empty.
+writeFileSync(join(root, '.deepseek', 'working.md'), '---\nupdated: 2026-08-24\n---\n\n# 工作记忆（草稿）\n\n- 下一步：查反证法\n');
+const navWorking = buildMemorySection(
+  { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
+  'live-session', { sources: [], entries: [] }, undefined, '');
+check('nav: working memory injected when non-empty', navWorking.includes('工作记忆') && navWorking.includes('查反证法'));
+
 // ── 6b. resolveWorkspaceRoot priority (config > env > cwd) ─────────────────
 check('workspace: config wins over env and cwd', resolveWorkspaceRoot('/cfg', '/env', '/cwd') === resolve('/cfg'));
 check('workspace: env wins over cwd', resolveWorkspaceRoot('', '/env', '/cwd') === resolve('/env'));
@@ -351,6 +362,11 @@ check('classify: skip scaffolding and machine files',
   classifyVaultDoc('.deepseek/memory/records/_README.md') === 'skip' &&
   classifyVaultDoc('.deepseek/memory/episodes/2026-08-15-selftest.md') === 'skip' &&
   classifyVaultDoc('.deepseek/capture-policy.md') === 'skip');
+check('classify: strategy kind + working.md skip',
+  classifyVaultDoc('.deepseek/strategy/definition-proof.md') === 'strategy' &&
+  classifyVaultDoc('.deepseek/strategy/index.md') === 'skip' &&
+  classifyVaultDoc('.deepseek/strategy/_README.md') === 'skip' &&
+  classifyVaultDoc('.deepseek/working.md') === 'skip');
 check('passage: hook card emphasizes hook fields and strips frontmatter',
   (() => { const passage = composePassage('record', { title: '子序列卡', hook: { operator: 'probability', techniques: ['borel-cantelli'] }, body: '---\ntitle: x\n---\n正文……' });
     return passage.includes('borel-cantelli') && passage.includes('probability') && !passage.includes('title: x') && passage.includes('正文……'); })());
@@ -446,6 +462,32 @@ const h3 = buildHookHistory(h2, hookCards, '2026-08-16');
 check('history: same day updates in place', h3.snapshots['.deepseek/memory/records/rec-a.md']?.length === 2 && h3.snapshots['.deepseek/memory/records/rec-a.md'][1].date === '2026-08-16');
 const h4 = buildHookHistory(h3, hookCards, '2026-08-17', 3);
 check('history: per-card cap respected', h4.snapshots['.deepseek/memory/records/rec-a.md']?.length <= 3);
+
+// ── 21. strategy layer (strategy-layer.md) ─────────────────────────────────
+const stratFm = [
+  'difficulty: definition-level-proof',
+  'domain: [analysis, probability]',
+  'problem_type: proof',
+  'strategies:',
+  '  - move: 等价刻画',
+  '    retrieve: [similar-problem, theorem]',
+  '  - move: 反证法',
+  '    retrieve: [similar-problem, proven-path]',
+  'abstraction:',
+  '  concrete: "定义层证明 → 等价刻画"',
+  '  principle: "定义难证时先找等价刻画"',
+  '  generalize: "任何逐点展开繁琐的场景"',
+  'verified: single-source'
+].join('\n');
+check('strategy: surface carries difficulty + moves + abstraction',
+  (() => { const s = strategySurface(stratFm);
+    return s.includes('definition-level-proof') && s.includes('等价刻画') && s.includes('反证法') && s.includes('定义难证时先找等价刻画'); })());
+check('strategy: moves + retrieve + abstraction parsed',
+  (() => { const m = strategyMoves(stratFm); const r = strategyRetrieve(stratFm); const a = strategyAbstraction(stratFm);
+    return m.length === 2 && m[0] === '等价刻画' && r.includes('similar-problem') && r.includes('proven-path') && a.includes('定义层证明 → 等价刻画'); })());
+check('strategy: composePassage uses strategy surface',
+  (() => { const p = composePassage('strategy', { title: '定义层证明破局', strategy: strategySurface(stratFm), body: '# 一句话' });
+    return p.includes('定义层证明破局') && p.includes('等价刻画'); })());
 
 // ── 20. feedback: inapplicable must not degrade the card (MemTrapBench Trauma) ─
 const fbCard = join(recordsDir, 'fb-card.md');

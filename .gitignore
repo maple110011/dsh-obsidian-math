@@ -12,3 +12,9 @@ scripts/deploy-local.log
 
 # literature raw corpus (large binaries; regenerate via scripts/lit-import.mjs)
 literature/.raw/
+
+# benchmark run artifacts (session logs are machine-specific binaries; baseline.json is kept for cross-run comparison)
+scripts/qa/runs/**/sessions/
+
+# benchmark seed-vault cache (machine-generated during test runs; not part of the frozen seed)
+scripts/qa/benchmark-vault/.deepseek/cache/

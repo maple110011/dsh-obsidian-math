@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-23T15:52:42.869Z",
+  "generatedAt": "2026-08-24T01:59:41.230Z",
   "source": "D:\\临时\\agent记忆",
   "out": "literature",
   "bibPath": "D:\\临时\\agent记忆\\collected papers.bib",
@@ -108,6 +108,34 @@
       "mineruDir": "Wang et al. - 2026 - MemTrapBench Benchmarking Cognitive Traps in LLM Memory Use.pdf-646a86b2-5045-4027-87ab-14b08a3715fd",
       "status": "unread",
       "card": "kept"
+    },
+    {
+      "citekey": "vakeBridgingQuestionAnswerGap2025",
+      "pdf": "vake et al. - 2025 - bridging the question-answer gap in retrieval-augmented generation hypothetical prompt embeddings.pdf",
+      "mineruDir": "Vake et al. - 2025 - Bridging the Question-Answer Gap in Retrieval-Augmented Generation Hypothetical Prompt Embeddings.pdf-32ca9fd2-514d-4528-8b3a-37ba1af9049d",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "yangRetrievalAugmentedLanguageModels2025",
+      "pdf": "yang et al. - 2025 - retrieval-augmented language models are mimetic theorem provers.pdf",
+      "mineruDir": "Yang et al. - 2025 - Retrieval-Augmented Language Models are Mimetic Theorem Provers.pdf-ad86c13f-f166-4972-9041-4c6c4bb04dd1",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "yuanMemSearcherIterativeMemory2026",
+      "pdf": "yuan et al. - 2026 - memsearcher iterative memory integration for search agent via end-to-end reinforcement learning.pdf",
+      "mineruDir": "Yuan et al. - 2026 - MemSearcher Iterative Memory Integration for Search Agent via End-to-End Reinforcement Learning.pdf-77fb1bb6-df72-4a74-874f-1f6dbcb1a682",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "huQueryLinkLeveragingQueryMemory2026",
+      "pdf": "hu et al. - 2026 - querylink leveraging query-memory alignment for long-term reasoning in llm agents.pdf",
+      "mineruDir": "Hu et al. - 2026 - QueryLink Leveraging Query-Memory Alignment for Long-Term Reasoning in LLM Agents.pdf-e8554546-0008-4a45-897c-fd3306ac580a",
+      "status": "unread",
+      "card": "created"
     }
   ],
   "warnings": {

@@ -1,0 +1,64 @@
+{
+  "run": {
+    "id": "run-2026-08-24T19-43-17-271Z",
+    "startedAt": "2026-08-24T19:43:17.273Z",
+    "endedAt": "2026-08-24T19:43:17.273Z",
+    "git": {
+      "commit": "cbdc264e1ef464fe06ae27a22c4908157696476b",
+      "dirty": false
+    },
+    "env": {
+      "node": "v24.14.1",
+      "os": "win32-x64",
+      "dsh": "C:\\Users\\小新air15\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js"
+    },
+    "vault": "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault",
+    "config": {
+      "suite": "e2e",
+      "cases": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "检索召回·换说法",
+      "dimension": "检索召回·换说法",
+      "question": "从依测度收敛出发，怎么加强到几乎处处收敛？请先用 note_recall 检索笔记和记忆再回答；末尾一行列出你读过的文件。",
+      "sessionId": "session-566cc30f-96e5-4bc7-a120-a4ec8ee69e98",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_recall",
+          "note_strategy",
+          "read",
+          "glob"
+        ],
+        "filesRead": [
+          "依测度收敛加强到几乎处处收敛 子列 子序列 对角线 Borel-Cantelli",
+          "证明 依测度收敛存在几乎处处收敛的子序列",
+          ".deepseek/memory/records/rec-convergence-strengthening.md",
+          ".deepseek/memory/templates/tpl-convergence.md",
+          ".deepseek/strategy/strat-convergence-strengthening.md",
+          ".deepseek/inbox/memo-subsequence.md",
+          "*收敛*",
+          ".deepseek/memory/episodes/*.md",
+          "数学\\概率论\\从依测度收敛到几乎处处收敛.md",
+          ".deepseek/memory/episodes/2026-08-20-收敛加强.md",
+          ".deepseek/memory/records/index.md",
+          ".deepseek/memory/episodes/index.md"
+        ]
+      },
+      "cost": {
+        "tokens": 24220,
+        "latencyMs": 71405
+      }
+    }
+  ],
+  "summary": {
+    "passRate": "1/1",
+    "totalTokens": 24220,
+    "avgLatencyMs": 71405
+  }
+}

@@ -83,7 +83,7 @@ const MAX_AUDIT_CHARS = 1200;
 // fixed headers/instructions). Keeps the injected section bounded even when
 // every layer is full; the per-layer budgets still govern normal sizing.
 export const MAX_TOTAL_MEMORY_CHARS = 18000;
-const AUDIT_CARD_DIRS = [join(MEMORY_DIR, "memory", "records"), join(MEMORY_DIR, "memory", "templates")];
+const AUDIT_CARD_DIRS = [join(MEMORY_DIR, "memory", "records"), join(MEMORY_DIR, "memory", "templates"), join(MEMORY_DIR, "strategy")];
 const AUDIT_UNUSED_DAYS = 30;
 const AUDIT_UNVERIFIED_DAYS = 60;
 const AUDIT_WEAK_USES = 3;
@@ -1192,6 +1192,15 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   if (auditReport?.report !== undefined && auditReport.report !== "") {
     lines.push("", "### 记忆体检（math-memory 确定性扫描，见 .deepseek/cache/memory-audit.json）", "", auditReport.report,
       "", "体检清单按 AGENTS.md 处理：weak → 读卡改写内容或适用边界（success_rate 由插件自动重估，不要动它；同一张卡改 3 次仍弱则建议归档）；疑似重复 → 合并为一张、旧卡标 superseded（保留证据与 source 链）；unused → 在回复末尾一行向用户建议处置，不自行删除；strong → 相关讨论中把新技巧追加进 techniques；unverified → 保持单源引用，未经用户确认不得提升验证等级。");
+  }
+
+  // Working memory (strategy layer §5): a transient scratch draft, injected
+  // only when non-empty; the whole file is bounded ≤500 chars (its frontmatter
+  // is a single "updated" line). It is a draft, not long-term memory.
+  const working = readMemoryFile(vaultRoot, join(MEMORY_DIR, "working.md"), 500);
+  if (working !== "") {
+    lines.push("", "### 工作记忆（.deepseek/working.md，草稿，非长期记忆）", "", working,
+      "", "这是上一轮未闭合线程的进度草稿，可被本轮推翻；有产出时在本轮末覆写它、闭环则清空（经验缓冲在轮末流入 strategy 层/records，不留在草稿里）。");
   }
 
   return clip(lines.join("\n"), MAX_TOTAL_MEMORY_CHARS);

@@ -1,0 +1,284 @@
+{
+  "run": {
+    "id": "run-2026-08-24T19-50-43-407Z",
+    "startedAt": "2026-08-24T19:50:43.409Z",
+    "endedAt": "2026-08-24T19:50:43.409Z",
+    "git": {
+      "commit": "cbdc264e1ef464fe06ae27a22c4908157696476b",
+      "dirty": false
+    },
+    "env": {
+      "node": "v24.14.1",
+      "os": "win32-x64",
+      "dsh": "C:\\Users\\小新air15\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js"
+    },
+    "vault": "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault",
+    "config": {
+      "suite": "e2e",
+      "cases": 8
+    }
+  },
+  "cases": [
+    {
+      "id": "检索召回·换说法",
+      "dimension": "检索召回·换说法",
+      "question": "从依测度收敛出发，怎么加强到几乎处处收敛？请先用 note_recall 检索笔记和记忆再回答；末尾一行列出你读过的文件。",
+      "sessionId": "session-0a8a08a6-044a-4b78-94b8-dd2b80e38c41",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_recall",
+          "note_strategy",
+          "read",
+          "edit",
+          "ask_user_question"
+        ],
+        "filesRead": [
+          "依测度收敛 加强到 几乎处处收敛 子列 Borel-Cantelli 子序列论证",
+          "证明 依测度收敛 推出 几乎处处收敛 子列 概率测度 Borel-Cantelli",
+          ".deepseek/memory/records/rec-convergence-strengthening.md",
+          ".deepseek/strategy/strat-convergence-strengthening.md",
+          "数学/概率论/从依测度收敛到几乎处处收敛.md",
+          ".deepseek/memory/templates/tpl-convergence.md",
+          ".deepseek/inbox/memo-subsequence.md"
+        ]
+      },
+      "cost": {
+        "tokens": 30028,
+        "latencyMs": 44810
+      }
+    },
+    {
+      "id": "检索召回·抽象层级",
+      "dimension": "检索召回·抽象层级",
+      "question": "我想把一个较弱收敛模式的结论加强到逐点结论，有没有通用的「先取子列再加紧」的路子？请检索后回答。",
+      "sessionId": "session-63797a27-9829-4add-9300-2fa218e370d1",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_strategy",
+          "note_recall",
+          "read",
+          "glob",
+          "edit"
+        ],
+        "filesRead": [
+          "把较弱收敛模式（依测度/弱收敛/依分布）加强到逐点（a.s./点态）结论：先取子列再加紧，紧性来源，对角线法",
+          "较弱收敛加强到逐点结论 先取子列 再加紧 紧性 对角线 依测度收敛到几乎处处收敛子列",
+          ".deepseek/strategy/strat-convergence-strengthening.md",
+          ".deepseek/memory/records/rec-convergence-strengthening.md",
+          "数学/概率论/从依测度收敛到几乎处处收敛.md",
+          "数学/分析学/对角线选取方法.md",
+          ".deepseek/inbox/memo-subsequence.md",
+          ".deepseek/memory/templates/tpl-convergence.md",
+          "统计学/概率论/胎紧与弱收敛.md",
+          ".deepseek/memory/episodes/*.md",
+          ".deepseek/memory/episodes/2026-08-20-收敛加强.md",
+          ".deepseek/memory/records/index.md",
+          ".deepseek/memory/records/rec-learning-state.md"
+        ]
+      },
+      "cost": {
+        "tokens": 60242,
+        "latencyMs": 99791
+      }
+    },
+    {
+      "id": "策略召回",
+      "dimension": "策略召回",
+      "question": "定义层证明很繁琐，有什么破局思路？请先用 note_strategy 找策略卡，再按它给的 move→retrieve 清单走 note_recall。",
+      "sessionId": "session-b1d6cf38-6cd0-4b06-b441-b15c562f0822",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_strategy",
+          "read",
+          "note_recall",
+          "glob",
+          "edit"
+        ],
+        "filesRead": [
+          "定义层证明很繁琐 冗长 直接套定义展开 ε-δ 没完没了 破局思路",
+          ".deepseek/strategy/strat-definition-proof.md",
+          "定义层证明繁琐 逐字展开 ε-δ 冗长 等价刻画 绕开 收敛 子列判据",
+          "证明繁琐 反证法 归谬 收敛定义 假设不成立 Borel-Cantelli 证法",
+          ".deepseek/memory/records/rec-convergence-strengthening.md",
+          "数学/概率论/从依测度收敛到几乎处处收敛.md",
+          ".deepseek/inbox/memo-subsequence.md",
+          ".deepseek/memory/records/index.md",
+          ".deepseek/memory/records/rec-learning-state.md",
+          ".deepseek/memory/episodes/*.md"
+        ]
+      },
+      "cost": {
+        "tokens": 25240,
+        "latencyMs": 77146
+      }
+    },
+    {
+      "id": "证据溯源",
+      "dimension": "证据溯源",
+      "question": "依测度收敛能否加强到几乎处处收敛？回答时请引用记忆卡的来源（source）。末尾列出你读过的文件。",
+      "sessionId": "session-2ca56da4-8551-485b-a1e2-54d4e17cba19",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_strategy",
+          "note_recall",
+          "read",
+          "grep",
+          "note_search",
+          "glob"
+        ],
+        "filesRead": [
+          "证明依测度收敛能否加强到几乎处处收敛，子列论证，Borel-Cantelli，滑动块反例",
+          "依测度收敛 加强 几乎处处收敛 子列 反例 滑动块 Borel-Cantelli",
+          ".deepseek/memory/records/rec-convergence-strengthening.md",
+          ".deepseek/strategy/strat-convergence-strengthening.md",
+          ".deepseek/memory/templates/tpl-convergence.md",
+          ".deepseek/inbox/memo-subsequence.md",
+          ".deepseek/memory/episodes/2026-08-20-收敛加强.md",
+          ".deepseek/memory/theorems",
+          ".deepseek/memory/theorems/index.md",
+          "数学/**/*.md",
+          ".deepseek/memory/records/index.md",
+          "数学\\概率论\\从依测度收敛到几乎处处收敛.md"
+        ]
+      },
+      "cost": {
+        "tokens": 21625,
+        "latencyMs": 87516
+      }
+    },
+    {
+      "id": "防幻觉",
+      "dimension": "防幻觉",
+      "question": "黎曼几何里测地线与曲率张量的关系是什么？请先检索，检索不到就明说库里没有，不要编造。",
+      "sessionId": "session-0205e147-d405-478d-bd43-a9fdfb354cc0",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_recall",
+          "note_search",
+          "grep"
+        ],
+        "filesRead": [
+          "黎曼几何 测地线 曲率张量 关系 截面曲率 Jacobi 场",
+          "测地|曲率张量|Riemann|黎曼|geodesic"
+        ]
+      },
+      "cost": {
+        "tokens": 10436,
+        "latencyMs": 12155
+      }
+    },
+    {
+      "id": "记忆适用性（陷阱）",
+      "dimension": "记忆适用性（陷阱）",
+      "question": "几乎处处收敛是否蕴含依测度收敛？这是一个很直接的问题，请直接回答，不要绕。",
+      "sessionId": "session-018d92f0-164b-43c5-858a-29478877a40b",
+      "verdict": {
+        "pass": false,
+        "failures": [
+          "回答不应包含 子列"
+        ]
+      },
+      "trace": {
+        "toolsUsed": [],
+        "filesRead": []
+      },
+      "cost": {
+        "tokens": 8305,
+        "latencyMs": 10113
+      }
+    },
+    {
+      "id": "跨会话续接（多轮）",
+      "dimension": "跨会话续接（多轮）",
+      "question": "证明：若随机变量列依测度收敛，则存在子列几乎处处收敛。先检索相关技巧，给出证明骨架即可，不用写完整。",
+      "sessionId": "session-cedf7853-61f3-4b8d-9886-791da220dc4e",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_strategy",
+          "note_recall",
+          "read",
+          "glob"
+        ],
+        "filesRead": [
+          "证明依测度收敛蕴含存在子列几乎处处收敛，Borel-Cantelli 快速子列技巧，收敛模式加强",
+          "依测度收敛 存在子列 几乎处处收敛 Borel-Cantelli 快速子列 概率 构造子列",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\数学\\概率论\\从依测度收敛到几乎处处收敛.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\records\\rec-convergence-strengthening.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\strategy\\strat-convergence-strengthening.md",
+          ".deepseek/memory/episodes/*收敛*",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\records\\index.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\inbox\\memo-subsequence.md"
+        ]
+      },
+      "cost": {
+        "tokens": 17471,
+        "latencyMs": 50748
+      }
+    },
+    {
+      "id": "写回/体检",
+      "dimension": "写回/体检",
+      "question": "请记一条 fact 记录：我接下来想学谱理论（spectral theory），重点在谱测度与自伴算子。",
+      "sessionId": "session-1c2d07d5-2683-4d16-84d3-0faadf68ee41",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_recall",
+          "read",
+          "glob",
+          "note_create",
+          "edit"
+        ],
+        "filesRead": [
+          "谱理论 spectral theory 自伴算子 谱测度 学习计划",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\records\\_README.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\episodes\\index.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\episodes\\_README.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\records\\index.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\records\\rec-learning-state.md",
+          ".deepseek/memory/episodes/*.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\profile.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\topics\\index.md",
+          "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault\\.deepseek\\memory\\episodes\\2026-08-20-收敛加强.md",
+          ".deepseek/**/*.md"
+        ]
+      },
+      "cost": {
+        "tokens": 64667,
+        "latencyMs": 42579
+      }
+    }
+  ],
+  "summary": {
+    "passRate": "7/8",
+    "totalTokens": 238014,
+    "avgLatencyMs": 53107
+  }
+}

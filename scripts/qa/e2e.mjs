@@ -3,11 +3,21 @@
 // 流程: 起临时 obsidian web 服务 → 逐题 session.create(cwd=vault, agentPreset=obsidian)
 //       → session.prompt → 轮询 session.history → 断言工具轨迹与回答 → 汇总 PASS/FAIL。
 // 依赖: 本机 node + dsh 安装（DSH_BIN 或默认路径）+ 已配置模型（真实 token 消耗）。
-import { spawn } from "node:child_process";
-import { readFileSync, openSync, rmSync, mkdtempSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync, openSync, rmSync, mkdtempSync, mkdirSync, readdirSync, statSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+
+const root = fileURLToPath(new URL("../..", import.meta.url));
+
+function gitCommit() {
+  try {
+    const r = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
+    return r.status === 0 ? r.stdout.trim() : "unknown";
+  } catch { return "unknown"; }
+}
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -44,13 +54,18 @@ async function waitForService(child, timeoutMs) {
 }
 
 async function rpc(method, payload) {
-  const res = await fetch(`${BASE}/api/${method}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload }),
-    signal: AbortSignal.timeout(90000)
-  });
-  return res.json();
+  try {
+    const res = await fetch(`${BASE}/api/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload }),
+      signal: AbortSignal.timeout(90000)
+    });
+    return res.json();
+  } catch (error) {
+    console.error(`[rpc:${method}]`, error?.cause?.code ?? error?.message ?? error, "| cause:", error?.cause?.message ?? "n/a", "| stack:", (error?.stack ?? "").split("\n").slice(0, 3).join(" "));
+    throw error;
+  }
 }
 
 async function history(sessionId) {
@@ -92,45 +107,53 @@ function estimateTokens(events) {
 async function runCase(index, testCase, serviceLog) {
   const expect = testCase.expect ?? {};
   const timeoutMs = expect.timeoutMs ?? 420000;
+  const startMs = Date.now();
   const created = await rpc("session.create", { cwd: VAULT, agentPreset: "notes-assistant" });
   if (!created?.result?.ok) return { ok: false, note: "session.create failed: " + JSON.stringify(created).slice(0, 200), tokens: 0 };
   const sessionId = created.result.value.sessionId;
-  await rpc("session.prompt", { sessionId, mode: "queue", content: [{ type: "text", text: testCase.question }] });
+  const prompts = [testCase.question, ...(testCase.followup ? [testCase.followup] : [])];
 
-  const deadline = Date.now() + timeoutMs;
   const toolNames = new Set();
   const readTargets = new Set();
   let finalText = "";
   let sawTurnEnd = false;
   let pendingQuestion = false;
-  while (Date.now() < deadline) {
-    await sleep(2000);
-    const entries = await history(sessionId);
-    const unanswered = new Set();
-    for (const entry of entries) {
-      const e = entry.event ?? entry;
-      if (e?.type === "tool/call") {
-        toolNames.add(e.data?.name ?? "?");
-        if (e.data?.name === "ask_user_question") unanswered.add(e.data.callId);
-        if (e.data?.name === "read" || e.data?.name === "note_recall" || e.data?.name === "grep" || e.data?.name === "glob") {
-          try {
-            const a = JSON.parse(e.data.arguments ?? "{}");
-            readTargets.add(String(a.file_path ?? a.path ?? a.pattern ?? a.query ?? ""));
-          } catch { /* ignore */ }
+  for (const prompt of prompts) {
+    await rpc("session.prompt", { sessionId, mode: "queue", content: [{ type: "text", text: prompt }] });
+    const deadline = Date.now() + timeoutMs;
+    let thisTurnEnded = false;
+    let thisPending = false;
+    while (Date.now() < deadline) {
+      await sleep(2000);
+      const entries = await history(sessionId);
+      const unanswered = new Set();
+      for (const entry of entries) {
+        const e = entry.event ?? entry;
+        if (e?.type === "tool/call") {
+          toolNames.add(e.data?.name ?? "?");
+          if (e.data?.name === "ask_user_question") unanswered.add(e.data.callId);
+          if (e.data?.name === "read" || e.data?.name === "note_recall" || e.data?.name === "note_strategy" || e.data?.name === "grep" || e.data?.name === "glob") {
+            try {
+              const a = JSON.parse(e.data.arguments ?? "{}");
+              readTargets.add(String(a.file_path ?? a.path ?? a.pattern ?? a.query ?? ""));
+            } catch { /* ignore */ }
+          }
         }
+        if (e?.type === "tool/result" && e.data?.callId !== undefined) unanswered.delete(e.data.callId);
+        if (e?.type === "assistant/message") {
+          const content = e.data?.message?.content ?? e.data?.content ?? [];
+          const txt = (Array.isArray(content) ? content : []).filter((b) => b?.type === "text").map((b) => b.text).join("");
+          if (txt !== "") finalText = txt;
+        }
+        if (e?.type === "turn/end") thisTurnEnded = true;
       }
-      if (e?.type === "tool/result" && e.data?.callId !== undefined) unanswered.delete(e.data.callId);
-      if (e?.type === "assistant/message") {
-        const content = e.data?.message?.content ?? e.data?.content ?? [];
-        const txt = (Array.isArray(content) ? content : []).filter((b) => b?.type === "text").map((b) => b.text).join("");
-        if (txt !== "") finalText = txt;
-      }
-      if (e?.type === "turn/end") sawTurnEnd = true;
+      // A pending ask_user_question leaves the turn open by design (the agent
+      // waits for the human): a legitimate terminal state for QA.
+      thisPending = unanswered.size > 0;
+      if ((thisTurnEnded || thisPending) && finalText !== "") break;
     }
-    // A pending ask_user_question leaves the turn open by design (the agent
-    // waits for the human): a legitimate terminal state for QA.
-    pendingQuestion = unanswered.size > 0;
-    if ((sawTurnEnd || pendingQuestion) && finalText !== "") break;
+    sawTurnEnd = sawTurnEnd || thisTurnEnded;
+    pendingQuestion = thisPending;
   }
   const usage = realUsage(await history(sessionId));
   const tokens = usage.input + usage.output + usage.reasoning;
@@ -144,6 +167,12 @@ async function runCase(index, testCase, serviceLog) {
   for (const needle of expect.mustNotContain ?? []) if (finalText.includes(needle)) failures.push(`回答不应包含 ${needle}`);
   if (expect.answerNotEmpty === true && finalText.trim() === "") failures.push("回答为空");
   if (!sawTurnEnd && !pendingQuestion) failures.push("轮次未在超时内结束");
+  if (expect.vaultCheck) {
+    try {
+      const content = readFileSync(join(VAULT, expect.vaultCheck.path), "utf8");
+      if (!content.includes(expect.vaultCheck.contains)) failures.push(`会话后 ${expect.vaultCheck.path} 未包含 ${expect.vaultCheck.contains}`);
+    } catch { failures.push(`会话后无法读取 ${expect.vaultCheck.path}`); }
+  }
   if (failures.length === 0) {
     const pendingNote = pendingQuestion ? "（ask_user_question 挂起等待用户答复）" : "";
     log(`[PASS] 案例${index + 1}${pendingNote}（真实 tokens: ${tokens.toLocaleString()} = 输入 ${usage.input.toLocaleString()} + 输出 ${usage.output.toLocaleString()} + 推理 ${usage.reasoning.toLocaleString()}，缓存命中 ${usage.cacheRead.toLocaleString()}）: ${testCase.question.slice(0, 40)}`);
@@ -153,28 +182,85 @@ async function runCase(index, testCase, serviceLog) {
     log("      answer head:", finalText.replace(/\s+/g, " ").slice(0, 120));
     try { log("      service log tail:", readFileSync(serviceLog, "utf8").slice(-600).replace(/\n+/g, " ")); } catch { /* no log */ }
   }
-  return { ok: failures.length === 0, tokens, sessionId };
+  return { ok: failures.length === 0, tokens, sessionId, failures, toolNames: [...toolNames], readTargets: [...readTargets], durationMs: Date.now() - startMs };
 }
 
 const serviceLog = join(tmpDir, "service.log");
-const logFd = openSync(serviceLog, "w");
-const env = { ...process.env, DSH_HOME: HOME, DSH_OBSIDIAN_VAULT: VAULT, DSH_SESSIONS_ROOT: join(HOME, "sessions") };
+const env = { ...process.env, DSH_HOME: HOME, DSH_OBSIDIAN_VAULT: VAULT, DSH_SESSIONS_ROOT: join(tmpDir, "sessions") };
 // The notes-assistant profile loads the whole vault corpus + dialogue index at
 // first prompt; the default Node heap can OOM on a real vault. Give it headroom.
+// Use pipes (not a raw file fd) for stdio: a file fd on Windows destabilized the
+// child's HTTP server (ECONNRESET on the first session.create RPC).
 const child = spawn(process.execPath, ["--max-old-space-size=4096", DSH_BIN, "--profile", "notes-assistant", "--patch", join(HOME, "profiles", "notes-assistant", "notes-assistant.patch.yml"), "--no-open", "--port", String(PORT)], {
-  cwd: VAULT, stdio: ["ignore", logFd, logFd], env, windowsHide: true
+  cwd: VAULT, env, windowsHide: true
 });
+child.stdout.on("data", (d) => { try { writeFileSync(serviceLog, d, { flag: "a" }); } catch { /* ignore */ } });
+child.stderr.on("data", (d) => { try { writeFileSync(serviceLog, d, { flag: "a" }); } catch { /* ignore */ } });
 
 try {
   await waitForService(child, 120000);
   log(`服务就绪 ${BASE}（用例 ${cases.length} 个，将消耗真实模型 tokens）`);
+  const runStartMs = Date.now();
   let pass = 0, totalTokens = 0;
+  const results = [];
   for (let i = 0; i < cases.length; i += 1) {
     const result = await runCase(i, cases[i], serviceLog);
+    results.push(result);
     if (result.ok) pass += 1;
     totalTokens += result.tokens ?? 0;
   }
   log(`\nE2E 结果: ${pass}/${cases.length} PASS，真实 tokens 总消耗 ${totalTokens.toLocaleString()}（来自 DeepSeek API usage）`);
+
+  // baseline.json 快照（docs/memory/benchmark.md §6）：原始痕迹靠 sessionId 引用 session log，
+  // 此处另存元数据 + 判定 + token/延迟，供跨次对比。session log 需另行归档（见手记）。
+  const runId = "run-" + new Date().toISOString().replace(/[:.]/g, "-");
+  const baseline = {
+    run: {
+      id: runId,
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      git: { commit: gitCommit(), dirty: false },
+      env: { node: process.version, os: process.platform + "-" + process.arch, dsh: DSH_BIN },
+      vault: VAULT,
+      config: { suite: "e2e", cases: cases.length }
+    },
+    cases: results.map((r, i) => ({
+      id: cases[i].dimension ?? ("case-" + (i + 1)),
+      dimension: cases[i].dimension ?? "",
+      question: cases[i].question,
+      sessionId: r.sessionId,
+      verdict: { pass: r.ok, failures: r.failures },
+      trace: { toolsUsed: r.toolNames, filesRead: r.readTargets },
+      cost: { tokens: r.tokens, latencyMs: r.durationMs }
+    })),
+    summary: {
+      passRate: `${pass}/${cases.length}`,
+      totalTokens,
+      avgLatencyMs: Math.round(results.reduce((s, r) => s + (r.durationMs ?? 0), 0) / Math.max(1, results.length))
+    }
+  };
+  const runsDir = join(root, "scripts", "qa", "runs", runId);
+  mkdirSync(runsDir, { recursive: true });
+  writeFileSync(join(runsDir, "baseline.json"), JSON.stringify(baseline, null, 2), "utf8");
+  log(`baseline 已写入 ${runsDir}/baseline.json（sessionId 指向 session log，需另行归档以防轮转清理）`);
+
+  // session log 归档：复制本次运行期间新产生的 .jsonl.zstd，防轮转清理（benchmark.md §6 ⚠️）。
+  try {
+    const sessionsRoot = join(HOME, "sessions");
+    const sessionsDir = join(runsDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const copyNew = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) { copyNew(join(dir, e.name)); continue; }
+        if (!e.name.endsWith(".jsonl.zstd")) continue;
+        const p = join(dir, e.name);
+        try { if (statSync(p).mtimeMs > runStartMs) copyFileSync(p, join(sessionsDir, e.name)); } catch { /* skip */ }
+      }
+    };
+    copyNew(sessionsRoot);
+    log(`session log 已归档到 ${sessionsDir}/`);
+  } catch { /* best-effort */ }
+
   process.exitCode = pass === cases.length ? 0 : 1;
 } catch (error) {
   log("[ERROR]", String(error), "| cause:", (error?.cause?.code ?? error?.cause?.message ?? "n/a"));

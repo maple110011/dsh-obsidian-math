@@ -1,0 +1,50 @@
+{
+  "run": {
+    "id": "run-2026-08-24T19-52-44-797Z",
+    "startedAt": "2026-08-24T19:52:44.799Z",
+    "endedAt": "2026-08-24T19:52:44.799Z",
+    "git": {
+      "commit": "cbdc264e1ef464fe06ae27a22c4908157696476b",
+      "dirty": false
+    },
+    "env": {
+      "node": "v24.14.1",
+      "os": "win32-x64",
+      "dsh": "C:\\Users\\小新air15\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js"
+    },
+    "vault": "E:\\software\\ss\\Deepseek-Harness\\dsh-obsidian-math\\scripts\\qa\\benchmark-vault",
+    "config": {
+      "suite": "e2e",
+      "cases": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "记忆适用性（陷阱）",
+      "dimension": "记忆适用性（陷阱）",
+      "question": "几乎处处收敛是否蕴含依测度收敛？这是一个很直接的问题，请直接回答，不要绕。",
+      "sessionId": "session-e946d3fe-416a-40a2-9067-438ccdc3a978",
+      "verdict": {
+        "pass": true,
+        "failures": []
+      },
+      "trace": {
+        "toolsUsed": [
+          "note_recall"
+        ],
+        "filesRead": [
+          "几乎处处收敛 蕴含 依测度收敛 概率空间 有限测度"
+        ]
+      },
+      "cost": {
+        "tokens": 17757,
+        "latencyMs": 36615
+      }
+    }
+  ],
+  "summary": {
+    "passRate": "1/1",
+    "totalTokens": 17757,
+    "avgLatencyMs": 36615
+  }
+}

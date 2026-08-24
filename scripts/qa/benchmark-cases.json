@@ -1,0 +1,82 @@
+[
+  {
+    "dimension": "检索召回·换说法",
+    "question": "从依测度收敛出发，怎么加强到几乎处处收敛？请先用 note_recall 检索笔记和记忆再回答；末尾一行列出你读过的文件。",
+    "expect": {
+      "mustUse": ["note_recall"],
+      "mustRead": [".deepseek/memory/records/rec-convergence-strengthening.md"],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "dimension": "检索召回·抽象层级",
+    "question": "我想把一个较弱收敛模式的结论加强到逐点结论，有没有通用的「先取子列再加紧」的路子？请检索后回答。",
+    "expect": {
+      "mustUse": ["note_recall"],
+      "mustRead": [".deepseek/memory/records/rec-convergence-strengthening.md"],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "dimension": "策略召回",
+    "question": "定义层证明很繁琐，有什么破局思路？请先用 note_strategy 找策略卡，再按它给的 move→retrieve 清单走 note_recall。",
+    "expect": {
+      "mustUse": ["note_strategy"],
+      "mustRead": [".deepseek/strategy/strat-definition-proof.md"],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "dimension": "证据溯源",
+    "question": "依测度收敛能否加强到几乎处处收敛？回答时请引用记忆卡的来源（source）。末尾列出你读过的文件。",
+    "expect": {
+      "mustUse": ["note_recall", "read"],
+      "mustRead": [".deepseek/memory/episodes/2026-08-20-收敛加强.md"],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "dimension": "防幻觉",
+    "question": "黎曼几何里测地线与曲率张量的关系是什么？请先检索，检索不到就明说库里没有，不要编造。",
+    "expect": {
+      "mustUse": ["note_recall"],
+      "mustContain": ["库里没有"],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "dimension": "记忆适用性（陷阱）",
+    "question": "几乎处处收敛是否蕴含依测度收敛？这是一个很直接的问题，请直接回答，不要绕。",
+    "expect": {
+      "mustNotContain": ["不蕴含", "不一定"],
+      "mustContain": ["是", "蕴含"],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "dimension": "跨会话续接（多轮）",
+    "question": "证明：若随机变量列依测度收敛，则存在子列几乎处处收敛。先检索相关技巧，给出证明骨架即可，不用写完整。",
+    "followup": "接着上一步，把证明补完整。",
+    "expect": {
+      "mustUse": ["note_recall"],
+      "mustContain": ["Borel-Cantelli"],
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  },
+  {
+    "dimension": "写回/体检",
+    "question": "请记一条 fact 记录：我接下来想学谱理论（spectral theory），重点在谱测度与自伴算子。",
+    "expect": {
+      "vaultCheck": { "path": ".deepseek/memory/records/index.md", "contains": "谱理论" },
+      "answerNotEmpty": true,
+      "timeoutMs": 420000
+    }
+  }
+]

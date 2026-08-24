@@ -349,6 +349,9 @@ const HOOK_OPERATORS = new Set([
   "analysis", "statistics", "calculus", "linear-algebra", "topology", "logic"
 ]);
 
+/** Retrieval-target vocabulary for strategy cards (fixed enum, strategy-layer.md §8). */
+export const RETRIEVE_TARGETS = ["similar-problem", "technique", "theorem", "proven-path", "definition", "notation"];
+
 function normalizeOperator(raw) {
   return String(raw ?? "").trim().toLowerCase().replace(/\s+/g, "-");
 }
@@ -529,6 +532,7 @@ const MEMORY_SCAFFOLD_FILES = new Set(["index.md", "_README.md"]);
 export function classifyVaultDoc(rel) {
   if (rel === "AGENTS.md") return "skip";
   if (rel === ".deepseek/capture-policy.md" || rel === ".deepseek/memory/profile.md") return "skip";
+  if (rel === ".deepseek/working.md") return "skip"; // scratch draft, not part of the retrieval corpus
   if (rel.startsWith(".deepseek/cache")) return "skip";
   if (rel.startsWith(".deepseek/memory/episodes/")) {
     return rel.endsWith("/index.md") ? "episode-index" : "skip";
@@ -543,6 +547,7 @@ export function classifyVaultDoc(rel) {
   if (rel.startsWith(".deepseek/inbox/")) return memoryDir(".deepseek/inbox/") === "ok" ? "memo" : "skip";
   if (rel.startsWith(".deepseek/memory/topics/")) return memoryDir(".deepseek/memory/topics/") === "ok" ? "topic" : "skip";
   if (rel === ".deepseek/memory/theorems/index.md") return "theorem-index";
+  if (rel.startsWith(".deepseek/strategy/")) return memoryDir(".deepseek/strategy/") === "ok" ? "strategy" : "skip";
   return "note";
 }
 
@@ -571,9 +576,67 @@ export function composePassage(kind, doc) {
     case "episode-index":
     case "theorem-index":
       return join(title, body.slice(0, 2000));
+    case "strategy":
+      return join(title, doc.strategy ?? "", body.slice(0, 200));
     default:
       return join(title, (doc.tags ?? []).join(" "), body.slice(0, 1500));
   }
+}
+
+/**
+ * Flatten a strategy card's frontmatter into its retrievable surface:
+ * difficulty (main axis) + problem_type + domain + strategies[].move +
+ * abstraction (concrete/principle/generalize). The field values carry the
+ * searchable vocabulary — this is what BM25 scores for the strategy layer.
+ */
+export function strategySurface(frontmatter) {
+  if (typeof frontmatter !== "string" || frontmatter === "") return "";
+  const parts = [];
+  const collect = (re, text) => {
+    for (const m of text.matchAll(re)) {
+      const v = (m[1] ?? "").trim();
+      if (v !== "") parts.push(v);
+    }
+  };
+  collect(/^difficulty:\s*(.+)$/gm, frontmatter);
+  collect(/^problem_type:\s*(.+)$/gm, frontmatter);
+  collect(/^domain:\s*(.+)$/gm, frontmatter);
+  collect(/^\s*-\s*move:\s*(.+)$/gm, frontmatter);
+  for (const key of ["concrete", "principle", "generalize"]) {
+    collect(new RegExp("^\\s*" + key + ":\\s*\"?([^\"\\n]+)\"?\\s*$", "gm"), frontmatter);
+  }
+  return parts.join(" ");
+}
+
+/** Extract `- move: X` values from a strategy card's frontmatter. */
+export function strategyMoves(frontmatter) {
+  if (typeof frontmatter !== "string") return [];
+  return [...frontmatter.matchAll(/^\s*-\s*move:\s*(.+)$/gm)].map((m) => m[1].trim()).filter((v) => v !== "");
+}
+
+/** Extract `retrieve: [list]` targets (flattened, deduped) from a strategy card. */
+export function strategyRetrieve(frontmatter) {
+  if (typeof frontmatter !== "string") return [];
+  const seen = new Set();
+  const out = [];
+  for (const m of frontmatter.matchAll(/^\s*retrieve:\s*\[(.*)\]$/gm)) {
+    for (const part of m[1].split(",")) {
+      const v = part.trim().replace(/^['"]|['"]$/g, "");
+      if (v !== "" && !seen.has(v)) { seen.add(v); out.push(v); }
+    }
+  }
+  return out;
+}
+
+/** Join the abstraction ladder (concrete / principle / generalize) into one string. */
+export function strategyAbstraction(frontmatter) {
+  if (typeof frontmatter !== "string") return "";
+  const parts = [];
+  for (const key of ["concrete", "principle", "generalize"]) {
+    const m = new RegExp("^\\s*" + key + ":\\s*\"?([^\"\\n]+)\"?\\s*$", "m").exec(frontmatter);
+    if (m) parts.push(m[1].trim());
+  }
+  return parts.join(" → ");
 }
 
 /** Extract a scalar from YAML-ish frontmatter text (no dependency on the memory module). */
@@ -990,6 +1053,7 @@ export async function apply(ctx, config) {
           topic: metaScalar(frontmatter, "topic") ?? "",
           updated: metaScalar(frontmatter, "updated") ?? "",
           hook: frontmatter === null ? null : parseHookFrontmatter(frontmatter),
+          strategy: kind === "strategy" ? strategySurface(frontmatter) : "",
           body
         };
         if (tag !== "" && !matchesTagFilter(doc.tags, tag)) continue;
@@ -1045,5 +1109,113 @@ export async function apply(ctx, config) {
       };
     },
     presentCall: (args) => ({ card: "generic", title: "Recall vault content", kind: "search", rawInput: args.query })
+  }));
+
+  // ── note_strategy (strategy layer: method retrieval) ──────────────────────
+  ctx.tools.register(defineTool({
+    name: "note_strategy",
+    description: `Retrieve strategy cards from the method layer (.deepseek/strategy/): given a reasoning challenge / difficulty, find the stored "how to attack this kind of problem" playbook — each card lists candidate strategies (moves) and, for each, where to retrieve supporting content (retrieve targets). Use it BEFORE note_recall on proof/construction problems: it returns the playbook (difficulty → moves → where to look), then execute the moves via note_recall. This is the method-layer navigator; it is a CANDIDATE not a mandate — re-evaluate each move's applicability to the current problem before following it. An empty result = no stored strategy for this difficulty yet; fall back to note_recall directly.`,
+    parameters: {
+      query: { type: "string", required: true, description: "The distilled difficulty / challenge description, e.g. '定义层证明冗长' or '证明 a.s. 收敛 子列技巧'." },
+      difficulty: { type: "string", description: "Optional exact difficulty token to hard-filter (matches the card's difficulty field); omit to let BM25 score decide." },
+      maxResults: { type: "integer", description: "Optional cap on matches; defaults to 3, maximum 10." }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          query: { type: "string", required: true },
+          matches: {
+            type: "array",
+            required: true,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                path: { type: "string", required: true },
+                difficulty: { type: "string", required: true },
+                moves: { type: "array", required: true, items: { type: "string" } },
+                retrieve: { type: "array", required: true, items: { type: "string" } },
+                abstraction: { type: "string", required: true },
+                notApplicableWhen: { type: "string", required: true },
+                verified: { type: "string", required: true },
+                score: { type: "number", required: true }
+              }
+            }
+          }
+        }
+      },
+      render: (_args, value) => {
+        if (value.matches.length === 0) {
+          return [{ type: "text", text: "No stored strategy for this difficulty — fall back to note_recall directly (and consider distilling one into .deepseek/strategy/ after this turn)." }];
+        }
+        const badge = (v) => v === "user-confirmed" ? " ✅" : v === "cross-referenced" ? " ⚖️" : " ❓";
+        const lines = value.matches.map((m) =>
+          `- [策略] ${m.difficulty}${badge(m.verified)} (${m.path}) score ${m.score.toFixed(3)}\n  moves: ${m.moves.join(" / ")}\n  retrieve: ${m.retrieve.join(", ")}\n  abstraction: ${m.abstraction}${m.notApplicableWhen !== "" ? "\n  ⚠ 不适用: " + m.notApplicableWhen : ""}`
+        );
+        return [{ type: "text", text: `${value.matches.length} 张策略卡（候选，不是指令——按适用性逐条重判后再用）:\n${lines.join("\n")}` }];
+      }
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const { rootPath, rootTarget } = await resolveVault(ctx, exec, cfg);
+      const query = String(args.query ?? "").trim();
+      if (query === "") throw new Error("note_strategy: provide a query (difficulty/challenge description)");
+      const requested = Number(args.maxResults ?? 3);
+      if (!Number.isInteger(requested) || requested < 1) throw new Error("note_strategy: maxResults must be a positive integer");
+      const limit = Math.min(requested, 10);
+      const difficultyFilter = typeof args.difficulty === "string" ? normalizeOperator(args.difficulty) : "";
+
+      // Method layer only: walk the vault, keep strategy cards, build their surface.
+      const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns);
+      const queryTokens = tokenize(query);
+      const cards = [];
+      for (const note of notes) {
+        if (classifyVaultDoc(note.path) !== "strategy") continue;
+        const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
+        if (raw === null) continue;
+        const { frontmatter, body } = splitFrontmatter(raw);
+        if (frontmatter === null) continue;
+        const surface = strategySurface(frontmatter);
+        if (surface === "") continue;
+        const difficulty = (metaScalar(frontmatter, "difficulty") ?? "").trim();
+        if (difficultyFilter !== "" && normalizeOperator(difficulty) !== difficultyFilter) continue;
+        cards.push({
+          path: note.path,
+          title: titleFromDoc(frontmatter, body, note.name),
+          difficulty,
+          surface,
+          moves: strategyMoves(frontmatter),
+          retrieve: strategyRetrieve(frontmatter),
+          abstraction: strategyAbstraction(frontmatter),
+          notApplicableWhen: metaScalar(frontmatter, "not_applicable_when") ?? "",
+          verified: metaScalar(frontmatter, "verified") ?? "single-source"
+        });
+      }
+
+      const surfaces = cards.map((c) => c.surface);
+      const stats = computeCorpusStats(surfaces.map((s) => tokenize(s)));
+      const scored = cards
+        .map((card) => ({ card, score: bm25Score(queryTokens, tokenize(card.surface), stats) }))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score);
+      const top = scored.slice(0, limit);
+
+      return {
+        query,
+        matches: top.map(({ card, score }) => ({
+          path: card.path,
+          difficulty: card.difficulty,
+          moves: card.moves,
+          retrieve: card.retrieve,
+          abstraction: card.abstraction,
+          notApplicableWhen: card.notApplicableWhen,
+          verified: card.verified,
+          score: Number(score.toFixed(4))
+        }))
+      };
+    },
+    presentCall: (args) => ({ card: "generic", title: "Retrieve strategy", kind: "search", rawInput: args.query })
   }));
 }

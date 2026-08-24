@@ -2,6 +2,38 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 基准 E2E 实测 + 两处修复
+
+- **实测**：基准套 B（8 维度）用 deepseek-v4-flash 跑通，**8/8 PASS**（总 ~256K tokens：input/output 分项 + cacheRead 都记入 baseline）；基线快照与 session log 归档在 `scripts/qa/runs/run-*/`。
+- **修 `e2e.mjs` OOM**：原 `DSH_SESSIONS_ROOT` 指向用户真实 `$DSH_HOME/sessions`，对话索引扫描/解码真实会话日志（含长会话）触发 `JavaScript heap out of memory`；改为指向临时空目录 `tmpDir/sessions`，基准不再扫真实会话（对话索引不属于基准考察范围）。
+- **修 `e2e.mjs` spawn stdio**：从文件 fd（`openSync`）改为 pipe + 事件回写 service.log（更稳；排查 OOM 时顺带）。
+- **修 `benchmark-cases.json` 案例 6 断言**：`mustNotContain ["子列","对角线"]` 过严——agent 用 Egorov 定理正确回答"a.s. 蕴含依测度"，其证明合法提到"子列"，被误判 FAIL；改为 `mustNotContain ["不蕴含","不一定"]`（只拦错误方向）。
+- 实测发现（记录，非阻塞）：案例 1 agent 会先 `ask_user_question`（捕获策略 idea 档 ask 触发），harness 按"合法终态"处理、断言在提问前已满足——后续可考虑在基准中禁用 ask 或给"捕获档位 off"的专用 config。
+
+## 2026-08 · 策略层落地（strategy-layer.md 实现）
+
+- 实现策略层（`strategy-layer.md`）：strategy 模板（`strategy/_README.md` + `strategy/index.md`）+ working.md 模板 + `note_strategy` 工具 + working.md 注入 + AGENTS.md 策略层路由 / iterative retrieval / 策略卡纪律（templates-manifest 注册三份新模板）。
+- `note-tools.mjs`：新增 `RETRIEVE_TARGETS` 枚举、`classifyVaultDoc` 的 strategy 分支（+ working.md skip）、`composePassage` 的 strategy 分支、`strategySurface`/`strategyMoves`/`strategyRetrieve`/`strategyAbstraction` 解析器、`note_strategy` 工具（difficulty 主匹配 + BM25 对 difficulty/move/abstraction 打分）。
+- `math-memory.mjs`：`buildMemorySection` 注入 working.md（≤500 字符、空则跳过）；`AUDIT_CARD_DIRS` 纳入 `strategy/`。
+- 回归 85→90（classify strategy / working 注入 / strategy 解析 ×3）；main.js 重建。
+
+## 2026-08 · 基准搭建（benchmark.md 部分实现）
+
+- 建**仿真 vault** `scripts/qa/benchmark-vault/`（15 文件：抄书式/方法卡/stub/备忘四种风格 + .deepseek 的 records/hook/theorems/templates/episodes/strategy/inbox/notation/profile，冻结 ground truth，只留数学统计）。
+- 新增 `scripts/qa/seed-probe.mjs`（零 token 套 A）：note_recall + note_strategy 双路 ground-truth 断言（8/8 PASS）。
+- 新增 `scripts/qa/benchmark-cases.json`（套 B，6 维度各 1 题：换说法/抽象层级/策略召回/溯源/防幻觉/适用性陷阱）；`e2e.mjs` 扩展写 `qa/runs/<runId>/baseline.json`（git commit + 逐用例 verdict/trace/cost + summary）。
+- `run.mjs` 改为「seed-probe → engine-probe（可选）→ e2e（可选）」。
+- `e2e.mjs` 扩展：多轮（`followup`）+ 会话后 vault 检查（`vaultCheck`）+ session log 归档（复制本次运行新产生的 `.jsonl.zstd` 到 `qa/runs/<runId>/sessions/`）；8 维度用例齐（维度 7 多轮续接、维度 8 写回 vaultCheck）。**待做**：真实 token E2E 实测（留用户本机跑）。
+
+## 2026-08 · 策略层设计规格（strategy-layer.md，提案）
+
+- 入库并蒸馏 4 篇检索对齐文献（Dual RAG / QueryLink / HyPE / MemSearcher，共 19 篇、19 篇全蒸馏），跨论文综合见 `literature/notes/retrieval-alignment-2026-08.md`。
+- 与用户讨论收敛出「策略层」设计，写 `docs/memory/strategy-layer.md`（**提案，待拍板**）：方法层（strategy 卡：difficulty 主轴 + domain 软轴 + move→retrieve + 抽象阶梯 + not_applicable_when）+ 工作记忆（working.md 覆写草稿）+ iterative retrieval（≤1 次 note_strategy + ≤4 步）+ 审计驱动 promote/demote（复用现有 hookPrior）。
+- 核心结论：现有 note_recall 是 document-level retrieval，缺「方法/思路/技巧」的策略层；四个 gap（lexical/semantic/abstraction/procedural）中后两个必须靠新增一层解决，而非继续在检索器上打补丁。
+- 研究用户真实 vault（`D:\Obsidian笔记数据库`）的四种笔记风格（方法卡 / 抄书 / 随手备忘 / 结构化备忘），据此补两条设计：①策略层的「候选沉淀」要把**内嵌技巧 callout + 用户备忘 bullet** 当输入源（不只 hook 字段）；②**用户自留备忘区**与 agent 的 `.deepseek/inbox/` 并存、用途不同，不混为一谈。
+- 写 `docs/memory/benchmark.md`（**提案，待拍板**）：两套分层（引擎探针零 token + 端到端真实 token）、8 维度、仿真 vault（四种风格 + 异构 + 噪声、只留数学统计、冻结 ground truth）、baseline.json 记录格式——解决"ground truth 绑真实 vault 会腐烂"的旧痛点。
+- 未改代码；`docs/memory/README.md` 与 `handoff.md` §7 已登记两个提案为「下一大改」。
+
 ## 2026-08 · 记忆陷阱防御（MemTrapBench + AdaptiveMem 本土化）
 
 - 依据新入库文献 MemTrapBench（arXiv:2608.20202，见 `literature/`）：「忠实记录 + 语义相关 + 已验证」的记忆仍可能在「使用」阶段锚定推理（Reasoning Fixation）或扭曲信念（Belief Distortion），让「有记忆」比「无记忆」更差；推理期 prompt（AdaptiveMem）即可显著缓解。

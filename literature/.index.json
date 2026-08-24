@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-23T15:52:42.867Z",
-  "count": 15,
+  "generatedAt": "2026-08-24T01:59:41.229Z",
+  "count": 19,
   "entries": [
     {
       "citekey": "gaoLeanSearchV2Global2026",
@@ -331,6 +331,92 @@
       "card": "cards/wangMemTrapBenchBenchmarkingCognitive2026.md",
       "fullText": ".raw/wangMemTrapBenchBenchmarkingCognitive2026/full.md",
       "pdf": ".raw/wangMemTrapBenchBenchmarkingCognitive2026/source.pdf"
+    },
+    {
+      "citekey": "vakeBridgingQuestionAnswerGap2025",
+      "title": "Bridging the Question-Answer Gap in Retrieval-Augmented Generation: Hypothetical Prompt Embeddings",
+      "shorttitle": "Bridging the Question-Answer Gap in Retrieval-Augmented Generation",
+      "authors": [
+        "Vake, Domen",
+        "Vičič, Jernej",
+        "Tošić, Aleksandar"
+      ],
+      "year": "2025",
+      "keywords": "Computer Science - Computation and Language, Computer Science - Information Retrieval",
+      "status": "unread",
+      "doi": "10.1109/ACCESS.2025.3589499",
+      "url": "http://arxiv.org/abs/2607.29402",
+      "card": "cards/vakeBridgingQuestionAnswerGap2025.md",
+      "fullText": ".raw/vakeBridgingQuestionAnswerGap2025/full.md",
+      "pdf": ".raw/vakeBridgingQuestionAnswerGap2025/source.pdf"
+    },
+    {
+      "citekey": "yangRetrievalAugmentedLanguageModels2025",
+      "title": "Retrieval-Augmented Language Models are Mimetic Theorem Provers",
+      "shorttitle": "",
+      "authors": [
+        "Yang, Wenjie",
+        "Huang, Ruiyuan",
+        "Guo, Jiaxing",
+        "Lyu, Zicheng",
+        "Xu, Tongshan",
+        "Zhang, Shengzhong",
+        "Du, Lun",
+        "Zheng, Da",
+        "Huang, Zengfeng"
+      ],
+      "year": "2025",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.18653/v1/2025.findings-emnlp.1162",
+      "url": "https://aclanthology.org/2025.findings-emnlp.1162/",
+      "card": "cards/yangRetrievalAugmentedLanguageModels2025.md",
+      "fullText": ".raw/yangRetrievalAugmentedLanguageModels2025/full.md",
+      "pdf": ".raw/yangRetrievalAugmentedLanguageModels2025/source.pdf"
+    },
+    {
+      "citekey": "yuanMemSearcherIterativeMemory2026",
+      "title": "MemSearcher: Iterative Memory Integration for Search Agent via End-to-End Reinforcement Learning",
+      "shorttitle": "MemSearcher",
+      "authors": [
+        "Yuan, Qianhao",
+        "Lou, Jie",
+        "Li, Zichao",
+        "Chen, Jiawei",
+        "Lu, Yaojie",
+        "Lin, Hongyu",
+        "Sun, Le",
+        "Zhang, Debing",
+        "Han, Xianpei"
+      ],
+      "year": "2026",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.18653/v1/2026.findings-acl.736",
+      "url": "https://aclanthology.org/2026.findings-acl.736/",
+      "card": "cards/yuanMemSearcherIterativeMemory2026.md",
+      "fullText": ".raw/yuanMemSearcherIterativeMemory2026/full.md",
+      "pdf": ".raw/yuanMemSearcherIterativeMemory2026/source.pdf"
+    },
+    {
+      "citekey": "huQueryLinkLeveragingQueryMemory2026",
+      "title": "QueryLink: Leveraging Query-Memory Alignment for Long-Term Reasoning in LLM Agents",
+      "shorttitle": "QueryLink",
+      "authors": [
+        "Hu, Xuxian",
+        "Teng, Zhu",
+        "Zhang, Wei",
+        "He, Ming",
+        "Fan, Jianping"
+      ],
+      "year": "2026",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.18653/v1/2026.findings-acl.765",
+      "url": "https://aclanthology.org/2026.findings-acl.765/",
+      "card": "cards/huQueryLinkLeveragingQueryMemory2026.md",
+      "fullText": ".raw/huQueryLinkLeveragingQueryMemory2026/full.md",
+      "pdf": ".raw/huQueryLinkLeveragingQueryMemory2026/source.pdf"
     }
   ]
 }

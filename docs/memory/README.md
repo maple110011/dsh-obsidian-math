@@ -12,10 +12,12 @@
 | [`assessment.md`](assessment.md) | **评估记录**：两轮系统评估的完整结论（问题清单、打分、改进优先级） | 每轮正式评估后追加 |
 | [`v2-proposal.md`](v2-proposal.md) | **改造方案**：hook schema、两级检索、确定性维护 pass、验证等级、记忆控制面；标注实现状态 | 方案定稿/实现状态变化时更新 |
 | [`retrieval-v3.md`](retrieval-v3.md) | **检索 v3 提案**：三篇推理感知检索论文的可迁移机制、Tier A（零成本）/Tier B（可选本地 embedding）设计、成本对照 | 检索设计变更前必读；实现状态随进度更新 |
+| [`strategy-layer.md`](strategy-layer.md) | **策略层提案**：方法层（strategy 卡）+ 工作记忆（working.md）+ iterative retrieval 的完整设计规格 | 拍板后实现；实现状态随进度更新 |
 | [`references.md`](references.md) | **参考文献笔记**：每篇论文的核心结论、可借鉴机制、与我们的映射关系 | 读完新论文后追加 |
 | [`changelog.md`](changelog.md) | **记忆系统专属变更日志**：比仓库根 CHANGELOG 更细的"为什么改、改了什么" | 每次记忆系统改动后追加 |
 | [`control-panel.md`](control-panel.md) | **控制面交互规格**：验证徽标、反馈闭环、记忆面板、捕获策略分级与注入方案评估 | 控制面变更时同步 |
 | [`testing.md`](testing.md) | **QA 方法论 + 本地验收手册**：引擎探针/E2E 用法、boot 冒烟、手动 Obsidian 验证、环境变量对照 | 测试流程/验收步骤变化时更新 |
+| [`benchmark.md`](benchmark.md) | **基准测试设计规格**：两套分层（引擎探针 + 端到端）、8 维度、仿真 vault（seed vault）、baseline.json 记录格式 | 拍板后实现；基准结构变化时更新 |
 | [`handoff.md`](handoff.md) | **交接文档**：现状、坑、决策记录、下一步候选 | 每轮大改收尾时更新 |
 
 ## 核心结论（TL;DR）
@@ -47,4 +49,6 @@
 | 回复质量协议（学习对话原则） | ✅ 已实现（AGENTS.md §8） |
 | 检索 v3 之 embedding 后端（Tier B） | ⬜ 可选（用户暂缓；95MB 本地模型 + hybrid 打分） |
 | 检索 v3 之独立 LLM 重排（A6） | ⬜ 可选（默认关闭；探针不满意时启用） |
-| 质量保障 | ✅ 85 项零 token 回归 + `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |
+| 策略层（方法层 + 工作记忆 + iterative retrieval） | ✅ 已实现（`strategy-layer.md`：note_strategy + working.md + strategy 模板 + AGENTS.md 路由） |
+| 基准测试（引擎探针 + 端到端 + 仿真 vault） | ⬜ 提案（`benchmark.md`，待拍板） |
+| 质量保障 | ✅ 90 项零 token 回归 + `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |

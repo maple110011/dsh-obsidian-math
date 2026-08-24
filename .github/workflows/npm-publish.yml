@@ -1,0 +1,23 @@
+name: Publish to npm
+
+# npm 与 GitHub Release 是两套独立分发：本 workflow 在版本 tag 推送时把
+# `dsh-math-memory`（dsh preset/profile/installer，见 package.json `files`）
+# 发布到 npm registry；Obsidian 插件（main.js/manifest.json/styles.css）由
+# release.yml 发布为 GitHub Release。两者共用同一版本 tag、同一版本号。
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

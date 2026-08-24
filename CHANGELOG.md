@@ -2,18 +2,21 @@
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
-## [0.6.5] - 2026-08-23
+## [0.7.0] - 2026-08-25
 
 ### Added
 
 - **记忆陷阱防御（AdaptiveMem 本土化）**：依据新入库文献 MemTrapBench（arXiv:2608.20202），AGENTS.md §5 新增「记忆适用性（防记忆陷阱）」四风险 + 决策流程，`math-memory.mjs` 每轮注入「记忆是候选不是指令」适用性纪律 + 信念扭曲兜底，`note_recall` 补「读前 2-3 条核实适用性——相关 + 已验证 ≠ 适用于本题」。
 - **`inapplicable` 反馈动作**：新增「🔁 不适用」——「记忆正确但本题不该用」只记 `last_not_applicable` 标记，不降 success_rate/verified（避免一次误用把正确技巧整体降权）。
 - **文献库新增单篇文献 SOP**：`docs/literature.md` 新增「新增单篇文献 SOP」（6 步，供后续 agent 遵循）；入库 MemTrapBench（第 15 篇，已蒸馏）。
+- **策略层（strategy layer）**：新增方法层 `strategy/`（strategy 卡：difficulty 主轴 + domain 软轴 + move→retrieve + 抽象阶梯 + 反模式）+ `note_strategy` 工具 + working.md 工作记忆草稿 + AGENTS.md 策略层路由 / iterative retrieval（≤4 步）；依据 Dual RAG / QueryLink / HyPE / MemSearcher 四篇文献，设计规格见 `docs/memory/strategy-layer.md`。
+- **基准测试（benchmark）**：仿真 vault（`scripts/qa/benchmark-vault/`，冻结 ground truth）+ 零 token 探针（`seed-probe.mjs`）+ 8 维度 E2E 用例（`benchmark-cases.json`）+ baseline.json 记录 + session log 归档；真实 token E2E 8/8 通过（deepseek-v4-flash）。设计规格见 `docs/memory/benchmark.md`。
 
 ### Fixed
 
 - **`lit-import.mjs` 全量覆盖**：原实现从源 BibTeX 重写 `.index.json`/`.manifest.json`/`library.bib`/`index.md` 自动块，用「只含新论文的子集源目录」导入会清空已有条目；现改为按 citekey 增量合并（`library.bib` 只追加缺失 @entry），并验证幂等。
 - **`memoDigest` 缺 helpers 必崩**：`buildMemorySection` 的无 helpers fallback 会因无条件调用 `helpers.tokenize` 抛 TypeError；现仅在可打分时 tokenize，无 helpers 时仍能列出备忘录（零 token 回归 82→83）。
+- **E2E 驱动器 OOM**：`e2e.mjs` 的 `DSH_SESSIONS_ROOT` 指向真实 `$DSH_HOME/sessions`，对话索引扫描/解码真实长会话日志触发 heap OOM；改为指向临时空目录（基准不扫真实会话）。
 
 ### Changed
 

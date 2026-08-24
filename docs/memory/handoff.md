@@ -1,7 +1,7 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、决策、已修坑、未做事项与工作约定。
-> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**版本 0.6.5（2026-08-23）**。
+> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**版本 0.7.0（2026-08-25）**。
 
 ## 1. 项目是什么
 
@@ -34,7 +34,7 @@
 | `docs/dsh-panel-research.md` | dsh web 面板机制调研（客户端契约 / settings.section 槽位 / profile 装配名单 / 宿主路由） |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
-| `scripts/test-memory.mjs` | 零 token 记忆回归（85 项断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 记忆回归（90 项断言，进 `npm test`） |
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测 |
 | `scripts/check-doc-consistency.mjs` | 文档一致性守卫（断言数等数字与代码实测对齐，进 `npm test`） |
 | `scripts/check-rename.mjs` / `check-skin-fallback.mjs` / `check-plugin-id.mjs` | 三个守卫（见 §4 坑） |
@@ -43,7 +43,7 @@
 
 ## 3. 当前状态（2026-08 大改收尾后）
 
-> **增量（本会话）**：文献库入库 MemTrapBench（第 15 篇，已蒸馏），并落地「记忆适用性（防记忆陷阱，AdaptiveMem 本土化）」——AGENTS.md §5 四风险 + 决策流程、`math-memory.mjs` 每轮注入适用性纪律、`note_recall` 适用性提示、`inapplicable` 反馈动作（不降成功率）、`lit-import.mjs` 改增量合并（修全量覆盖 bug）、`docs/literature.md` 补「新增单篇文献 SOP」。回归 83→85。皮肤中心加固：`skinCenterMountable` 收紧为检查两个具体皮肤包，degrade 皮肤禁用块改为运行时读取 `$DSH_HOME/cordis.patch.yml` 动态生成（去硬编码 11 id）。
+> **增量（本会话）**：文献库入库 MemTrapBench（第 15 篇，已蒸馏），并落地「记忆适用性（防记忆陷阱，AdaptiveMem 本土化）」——AGENTS.md §5 四风险 + 决策流程、`math-memory.mjs` 每轮注入适用性纪律、`note_recall` 适用性提示、`inapplicable` 反馈动作（不降成功率）、`lit-import.mjs` 改增量合并（修全量覆盖 bug）、`docs/literature.md` 补「新增单篇文献 SOP」。回归 83→90。皮肤中心加固：`skinCenterMountable` 收紧为检查两个具体皮肤包，degrade 皮肤禁用块改为运行时读取 `$DSH_HOME/cordis.patch.yml` 动态生成（去硬编码 11 id）。又入库并蒸馏 4 篇检索对齐文献（Dual RAG / QueryLink / HyPE / MemSearcher，共 19 篇、19 篇已蒸馏），综合改进见 `literature/notes/retrieval-alignment-2026-08.md`。**策略层已实现**（`strategy-layer.md` 落地）：strategy 模板 + `note_strategy` 工具 + `working.md` 注入 + AGENTS.md 策略层路由/iterative retrieval；回归 +5（strategy 解析/classify/working 注入）。
 
 **本轮改动总账（按阶段）**：
 
@@ -59,7 +59,7 @@
 
 **开关与共存 / 独立设置面板**：总开关 `enabled` + 粒度开关 `dialogueIndex`/`reminders`/`audit`；独立设置面板 = 工作区级 `.deepseek/config.md`（host-agnostic 配置文件）；`--preset-only` 只装 preset；**皮肤中心改为可选**（默认不挂载；Obsidian 设置「启用皮肤中心」开关把 `ui-skin-center` + `ui-web-ui-settings` 追加到 `notes-assistant.patch.yml`，需 web profile 镜像 `@linxin666` 包）。
 
-**QA 状态**：`npm test` 85/85 全绿；engine-probe 12/12 全绿；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。
+**QA 状态**：`npm test` 90/90 全绿；engine-probe 12/12 全绿；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
@@ -95,7 +95,7 @@
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 85 项零 token 回归 + 安装器 e2e + 漂移 + 三守卫 + 文档一致性 + 语法检查
+npm test                        # 90 项零 token 回归 + 安装器 e2e + 漂移 + 三守卫 + 文档一致性 + 语法检查
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile
@@ -111,10 +111,11 @@ node dsh/install.mjs install --dsh-home <home> --preset-only   # 只装 preset �
 
 | 项 | 说明 | 优先级 |
 |---|---|---|
+| **策略层（方法层 + 工作记忆 + iterative retrieval）** | ✅ 已实现（`strategy-layer.md`：strategy 模板 + note_strategy + working.md 注入 + AGENTS.md 路由） | 完成 |
+| **基准测试（benchmark.md）** | ✅ 已实现并实测（8/8，deepseek-v4-flash）：仿真 vault + seed-probe（8/8）+ benchmark-cases（8 维度）+ baseline.json + session log 归档；基线在 `scripts/qa/runs/run-*/` | 完成 |
 | **3 类陷阱压力样例进引擎探针** | 造 Cognitive Bias / Task Boundary / Trauma 的数学版 ground-truth 进 `scripts/qa/engine-probe.mjs`（需绑定真实 vault，vault 内容变化时同步维护） | 中 |
 | **「记忆诱发退化」被动信号** | 有/无记忆对照的答案质量（LLM-judge 打分）作为体检的「固定/扭曲」健康指标（需接 judge，可选增强） | 低 |
 | **note_recall 结构化适用性字段** | 现为 prompt 提醒（描述 + 渲染），可升级为返回可判定的「适用性」弱信号（如跨 operator/主题命中标注） | 低 |
-| **文献库剩余 13 篇蒸馏** | `literature/` 15 篇仅 2 篇 distilled（shutova + memtrapbench）；按 `docs/literature.md` §8 SOP 逐篇研读 + 蒸馏 + 回流记忆 | 中 |
 | **真实 E2E（用户跑）** | `npm run qa:e2e` 需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN（真实 JS 入口）+ 模型余额；本轮已诊断「profile 缺失已装 + OOM 已降 4G + cause 日志」，留用户跑 | 高（发布前） |
 | **Obsidian 本机部署验收** | `deploy-local` 后用户在 Obsidian reload + 命令「在 dsh web 打开记忆面板」实测打开 3080 面板 | 高（发布前） |
 | **dsh session 路径编码 mojibake** | 非 ASCII workspace 路径下 session 目录编码分裂（正确 vs 乱码并存），影响跨工作区 dialogue index；已知未修 | 中 |

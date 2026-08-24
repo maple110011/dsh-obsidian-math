@@ -39,7 +39,7 @@
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignore，机器特定路径；备份 + 三路安装 + 验证） |
 | `scripts/qa/` | **QA 工具链**：`engine-probe.mjs`（零 token 召回断言）、`e2e.mjs`（真实会话验收，含 API 级 token 计量）、`cases.json`、`run.mjs`；方法论见 `docs/memory/testing.md` |
-| `scripts/test-memory.mjs` | 零 token 回归（85 断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 回归（90 断言，进 `npm test`） |
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测 |
 | `scripts/check-doc-consistency.mjs` | 文档一致性守卫：断言数等易漂移数字与代码实测值一致（进 `npm test`） |
 | `scripts/lit-import.mjs` | 文献库导入器：BibTeX + PDF + MinerU markdown → agent/人类双面文献库（见 `docs/literature.md`） |
@@ -69,7 +69,7 @@
 ## 4. 常用命令
 
 ```bash
-npm test                        # 语法 + 85 项回归 + 安装器 e2e（含漂移检测）
+npm test                        # 语法 + 90 项回归 + 安装器 e2e（含漂移检测）
 npm run qa                      # 引擎探针（零 token，12 组召回断言）
 npm run qa:e2e                  # 引擎探针 + 真实会话端到端（烧真实 tokens，含 API 级计量）
 node scripts/build-obsidian.mjs # 重建 main.js（改 dsh/ 或模板后必跑）
