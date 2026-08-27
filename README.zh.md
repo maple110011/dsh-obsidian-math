@@ -9,7 +9,7 @@
 1. **Obsidian 社区插件**（id `dsh-math-assistant`，仓库根 `manifest.json` + `main.js`）：右侧栏嵌入 dsh Web UI、自动检测并启动 dsh 服务、首次运行自动初始化 dsh 侧配置与 vault 模板；另有记忆面板、捕获策略设置与确定性维护。
 2. **dsh 插件**（npm 包 `dsh-math-memory`，`dsh/`）：把同一套 `notes-assistant` agent preset / profile 与 vault 模板安装进 `$DSH_HOME`。
 
-两者写入的 dsh 配置完全相同、幂等。**只装 Obsidian 插件即可使用**；`dsh/install.mjs` 供纯 CLI 场景。
+三种安装方式（原生 bundle / `--direct` 离线拷贝 / Obsidian 内置直写）产出等价配置，靠 owner marker 避免互相覆盖。**只装 Obsidian 插件即可使用**；纯 CLI 用 `dsh-math-memory install`（含 `uninstall`）。
 
 ## 为什么做这个插件
 
@@ -54,7 +54,7 @@
 ```bash
 npm install -g dsh-math-memory
 dsh-math-memory install --vault "D:\\Obsidian笔记数据库"
-dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assistant/notes-assistant.patch.yml"
+dsh --profile notes-assistant --port 3180                  # 启动（原生：bundle 已提供 panel/workspace，无需 --patch）
 ```
 
 插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**皮肤中心开关**（可选 dsh-web-ui 皮肤设置）、**捕获策略三档下拉框**。

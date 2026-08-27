@@ -57,7 +57,7 @@
 
 **身份解耦（早前 Phase 2，已稳定）**：文件更名 `obsidian-*`→`math-memory`/`note-tools`/`math-memory-workspace`；npm 包 `dsh-obsidian-math`→`dsh-math-memory`；profile/preset id `obsidian`→`notes-assistant`；权限预设 `obsidian-locked`→`math-memory-locked`；env 别名 `DSH_WORKSPACE_ROOT`/`DSH_MATH_MEMORY_*`（旧名兼容）。**单仓**（不拆双 git 仓库）。
 
-**开关与共存 / 独立设置面板**：总开关 `enabled` + 粒度开关 `dialogueIndex`/`reminders`/`audit`；独立设置面板 = 工作区级 `.deepseek/config.md`（host-agnostic 配置文件）；`--preset-only` 只装 preset；**皮肤中心改为可选**（默认不挂载；Obsidian 设置「启用皮肤中心」开关把 `ui-skin-center` + `ui-web-ui-settings` 追加到 `notes-assistant.patch.yml`，需 web profile 镜像 `@linxin666` 包）。
+**开关与共存 / 独立设置面板**：总开关 `enabled` + 粒度开关 `dialogueIndex`/`reminders`/`audit`；独立设置面板 = 工作区级 `.deepseek/config.md`（host-agnostic 配置文件）；**皮肤中心改为可选**（默认不挂载；Obsidian 设置「启用皮肤中心」开关把 `ui-skin-center` + `ui-web-ui-settings` 追加到 `notes-assistant.patch.yml`，需 web profile 镜像 `@linxin666` 包）。
 
 **QA 状态**：`npm test` 90/90 全绿；engine-probe 12/12 全绿；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。
 

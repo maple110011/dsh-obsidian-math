@@ -31,12 +31,11 @@
 | `manifest.json` / `main.js` / `styles.css` | Obsidian 社区插件发布物（`main.js` 由构建生成，勿手改） |
 | `obsidian/main.template.js` | 插件源码：服务管理、LinkServer（/open + /feedback）、记忆面板、预览编辑、全局皮肤 patch 兜底（junction 镜像/降级）、设置页（含捕获策略下拉框）、bootstrap |
 | `dsh/preset/` | **agent preset `notes-assistant`**：`preset.yml`（元信息）、`agent.cordis.yml`（装配：最小工具 + 记忆插件配置）、`math-memory.mjs`（记忆注入引擎 + 体检 + 对话索引 + 记号/捕获策略注入）、`note-tools.mjs`（笔记工具：note_recall/note_search/note_create/note_links + BM25 检索引擎） |
-| `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 dsh-web-ui 插件**，保持独立）、`notes-assistant.patch.yml`（workspace 自动注册，插件刷新）、`math-memory-workspace.mjs` |
+| `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 dsh-web-ui 插件**，保持独立）、`notes-assistant.patch.yml`（`--direct`/Obsidian 直写通道的 `--patch` overlay；native 模式由 bundle 提供，不用它）、`math-memory-workspace.mjs` |
 | `dsh/templates/` | **vault 模板**：`AGENTS.md`（工作协议，自动加载）、`profile.md`、`notation.md`（记号体系）、`topics-index.md`、`records-{readme,index}.md`、`theorems-*.md`、`templates-*.md`、`episodes-*.md`、`inbox-*.md`、`capture-policy.md` |
 | `dsh/install.mjs` | npm CLI **编排器**：`install`（原生 `dsh plugin add`）/ `install --direct`（离线扁平拷贝）/ `status` / `uninstall`（分级删除），写 owner marker（`.owner.json` / `.install-manifest.json`） |
 | `dsh/cordis.patch.yml` | **bundle 补丁**（`dsh.bundle.patch` 指向）：往 profile roster `insert` 宿主插件 `dsh-math-memory`，使 `dsh plugin add` 能原生送达全部能力 |
 | `dsh/host/` | **bundle 宿主插件 + 记忆管理核心**：`index.mjs`（启动同步 preset + `/memory-panel` 路由 + workspace 自动注册）、`preset-sync.mjs`（幂等字节比对同步 + owner marker）、`hook-frontmatter.mjs`（`dsh/preset/hook-frontmatter.mjs` 的 re-export）、`memory-admin.mjs`（确定性操作 + 面板数据层）、`math-memory-panel.mjs`（`/memory-panel/*` 路由） |
-| `dsh/postinstall.mjs` | npm 安装后只打印 `dsh plugin add` 指引（不再隐式写 `~/.dsh`） |
 | `dsh/client-panel/` | dsh web 记忆面板：`src/index.jsx` + `build-client.mjs`（esbuild） + `install-into-profile.mjs` |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignore，机器特定路径；备份 + 三路安装 + 验证） |

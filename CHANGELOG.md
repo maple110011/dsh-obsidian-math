@@ -14,7 +14,7 @@
 
 ### Changed
 
-- **`postinstall` 不再自动装**：`npm install -g` 只打印安装指引（符合 dsh-native，`dsh plugin add` 是正规路径）。
+- **移除 `postinstall`**：不再自动装（`dsh plugin add` 是正规路径）；避免 pnpm 11 把 `postinstall` 当 build script 拦截，导致 `dsh plugin add` 失败。
 - **Obsidian bootstrap 写 owner marker**：内置直写流程写 owner=direct marker，与 bundle/npm 通道冲突安全。
 
 ### Docs

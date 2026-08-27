@@ -9,7 +9,7 @@ A **two-component** repository:
 1. **Obsidian community plugin** (id `dsh-math-assistant`, repo-root `manifest.json` + `main.js`): embeds the dsh web UI in the right sidebar, detects and starts the dsh service, bootstraps the dsh-side configuration and vault templates on first run, and hosts the memory panel, capture-policy settings, and deterministic maintenance.
 2. **dsh plugin** (npm package `dsh-math-memory`, `dsh/`): installs the same `notes-assistant` agent preset / profile and vault templates into `$DSH_HOME`.
 
-Both write identical, idempotent configuration. **Installing the Obsidian plugin alone is enough**; `dsh/install.mjs` covers the pure-CLI workflow.
+The three install paths (native bundle / `--direct` offline copy / Obsidian's embedded bootstrap) produce equivalent configuration, kept conflict-free by owner markers. **Installing the Obsidian plugin alone is enough**; the CLI `dsh-math-memory install` (and `uninstall`) covers headless use.
 
 ## Why
 
@@ -54,7 +54,7 @@ Mathematics learning is long-horizon accumulation: notation habits, theoretical 
 ```bash
 npm install -g dsh-math-memory
 dsh-math-memory install --vault "D:\\Obsidian笔记数据库"
-dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assistant/notes-assistant.patch.yml"
+dsh --profile notes-assistant --port 3180                  # start (native: the bundle provides panel/workspace, no --patch needed)
 ```
 
 Plugin settings: port, dsh install dir, DSH_HOME, auto-start, auto-init, auto-archive (>90-day episodes), ribbon button, keep-alive on close, the **skin-center toggle** (optional dsh-web-ui skin settings), and the **capture-policy dropdowns**.
