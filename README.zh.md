@@ -59,6 +59,8 @@ dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assi
 
 插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**皮肤中心开关**（可选 dsh-web-ui 皮肤设置）、**捕获策略三档下拉框**。
 
+> **完整指引**：安装原理、冲突解决（owner marker / `--force` 接管）与卸载（三级删除、`--purge-data` 确认短语）见 [`docs/installation.md`](docs/installation.md)。
+
 ## vault 布局
 
 ```text
@@ -90,7 +92,7 @@ node scripts/deploy-local.mjs     # 本机一键部署
 - **仓库结构**：[ARCHITECTURE.md](ARCHITECTURE.md)——目录职责、双组件数据流、记忆↔检索边界、落地清单。
 - **记忆系统知识库**：[docs/memory/](docs/memory/)——design（实现规格）、retrieval-v3（检索提案）、testing（QA 方法论）、assessment、references（论文笔记）、changelog、handoff。
 - **验收记录**：引擎探针 12/12；真实会话 E2E 共 5 个用例（含「无答案不编造」「改写重试」行为验证）；成本基准题（旧系统同题 17 万 tokens）新系统实测约 2.5 万计费 tokens（缓存命中 68%）。
-- 版本：**0.7.0**（试做型；记忆架构未经长期使用测试，会继续演进）。
+- 版本：**0.7.1**（试做型；记忆架构未经长期使用测试，会继续演进）。
 
 ## 隐私与安全
 

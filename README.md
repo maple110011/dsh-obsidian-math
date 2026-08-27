@@ -59,6 +59,8 @@ dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assi
 
 Plugin settings: port, dsh install dir, DSH_HOME, auto-start, auto-init, auto-archive (>90-day episodes), ribbon button, keep-alive on close, the **skin-center toggle** (optional dsh-web-ui skin settings), and the **capture-policy dropdowns**.
 
+> **Full guide** — installation model, conflict resolution (owner markers / `--force` takeover), and uninstall (three-tier deletion, `--purge-data` confirm phrase) — in [`docs/installation.md`](docs/installation.md).
+
 ## Vault layout
 
 ```text
@@ -90,7 +92,7 @@ node scripts/deploy-local.mjs     # one-shot local deployment
 - **Repository structure**: [ARCHITECTURE.md](ARCHITECTURE.md) — directory responsibilities, the two-component data flow, the memory↔retrieval boundary, and the feature checklist.
 - **Memory knowledge base**: [docs/memory/](docs/memory/) — design (implementation spec), retrieval-v3 (retrieval proposal), testing (QA methodology), assessment, references (paper notes), changelog, handoff.
 - **Acceptance record**: engine probe 12/12; the real-session E2E suite covers 5 cases (including the no-answer honesty and reformulate-retry behaviors); the cost-benchmark question (170K tokens pre-system) now measures ≈25K billed tokens (68% of the prompt served from cache).
-- Version: **0.7.0** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
+- Version: **0.7.1** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
 
 ## Privacy & safety
 

@@ -1,8 +1,9 @@
 {
   "name": "dsh-math-memory",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Obsidian side-panel math memory agent for DeepSeek Harness: layered long-term memory, idea memo with proactive review reminders, unified note_recall retrieval plus dedicated note search/create/backlink tools. Ships as both a dsh plugin and an Obsidian community plugin.",
   "type": "module",
+  "main": "./dsh/host/index.mjs",
   "bin": {
     "dsh-math-memory": "./dsh/install.mjs"
   },
@@ -13,8 +14,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node dsh/install.mjs install --quiet",
-    "test": "node --check dsh/install.mjs && node --check dsh/preset/note-tools.mjs && node --check dsh/preset/math-memory.mjs && node --check dsh/profile/math-memory-workspace.mjs && node --check main.js && node -e \"import('./dsh/preset/math-memory.mjs').then(m=>console.log('preset ok:', m.name))\" && node scripts/test-memory.mjs && node scripts/test-installer.mjs && node scripts/check-rename.mjs && node scripts/check-skin-fallback.mjs && node scripts/check-plugin-id.mjs && node scripts/check-doc-consistency.mjs && node --check scripts/lit-import.mjs && node --check dsh/host/memory-admin.mjs && node --check dsh/host/math-memory-panel.mjs",
+    "test": "node --check dsh/install.mjs && node --check dsh/preset/note-tools.mjs && node --check dsh/preset/math-memory.mjs && node --check dsh/profile/math-memory-workspace.mjs && node --check main.js && node -e \"import('./dsh/preset/math-memory.mjs').then(m=>console.log('preset ok:', m.name))\" && node scripts/test-memory.mjs && node scripts/test-installer.mjs && node scripts/check-rename.mjs && node scripts/check-skin-fallback.mjs && node scripts/check-plugin-id.mjs && node scripts/check-doc-consistency.mjs && node --check scripts/lit-import.mjs && node --check dsh/host/memory-admin.mjs && node --check dsh/host/math-memory-panel.mjs && node --check dsh/host/index.mjs && node --check dsh/host/preset-sync.mjs && node --check dsh/host/hook-frontmatter.mjs && node scripts/test-preset-sync.mjs",
     "qa": "node scripts/qa/run.mjs",
     "qa:e2e": "node scripts/qa/run.mjs --e2e",
     "build:client": "node dsh/client-panel/build-client.mjs"
@@ -37,6 +37,11 @@
   },
   "homepage": "https://github.com/maple110011/dsh-obsidian-math#readme",
   "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh/cordis.patch.yml"
+    }
+  },
   "engines": {
     "node": ">=22.5"
   },

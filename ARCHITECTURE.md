@@ -33,8 +33,10 @@
 | `dsh/preset/` | **agent preset `notes-assistant`**：`preset.yml`（元信息）、`agent.cordis.yml`（装配：最小工具 + 记忆插件配置）、`math-memory.mjs`（记忆注入引擎 + 体检 + 对话索引 + 记号/捕获策略注入）、`note-tools.mjs`（笔记工具：note_recall/note_search/note_create/note_links + BM25 检索引擎） |
 | `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 dsh-web-ui 插件**，保持独立）、`notes-assistant.patch.yml`（workspace 自动注册，插件刷新）、`math-memory-workspace.mjs` |
 | `dsh/templates/` | **vault 模板**：`AGENTS.md`（工作协议，自动加载）、`profile.md`、`notation.md`（记号体系）、`topics-index.md`、`records-{readme,index}.md`、`theorems-*.md`、`templates-*.md`、`episodes-*.md`、`inbox-*.md`、`capture-policy.md` |
-| `dsh/install.mjs` | npm CLI 安装器（`dsh-math-memory install --vault …`），幂等、保留用户编辑 |
-| `dsh/host/` | host-agnostic 记忆管理核心：`memory-admin.mjs`（确定性操作 + 面板数据层）、`math-memory-panel.mjs`（`/memory-panel/*` 路由） |
+| `dsh/install.mjs` | npm CLI **编排器**：`install`（原生 `dsh plugin add`）/ `install --direct`（离线扁平拷贝）/ `status` / `uninstall`（分级删除），写 owner marker（`.owner.json` / `.install-manifest.json`） |
+| `dsh/cordis.patch.yml` | **bundle 补丁**（`dsh.bundle.patch` 指向）：往 profile roster `insert` 宿主插件 `dsh-math-memory`，使 `dsh plugin add` 能原生送达全部能力 |
+| `dsh/host/` | **bundle 宿主插件 + 记忆管理核心**：`index.mjs`（启动同步 preset + `/memory-panel` 路由 + workspace 自动注册）、`preset-sync.mjs`（幂等字节比对同步 + owner marker）、`hook-frontmatter.mjs`（`dsh/preset/hook-frontmatter.mjs` 的 re-export）、`memory-admin.mjs`（确定性操作 + 面板数据层）、`math-memory-panel.mjs`（`/memory-panel/*` 路由） |
+| `dsh/postinstall.mjs` | npm 安装后只打印 `dsh plugin add` 指引（不再隐式写 `~/.dsh`） |
 | `dsh/client-panel/` | dsh web 记忆面板：`src/index.jsx` + `build-client.mjs`（esbuild） + `install-into-profile.mjs` |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignore，机器特定路径；备份 + 三路安装 + 验证） |
@@ -46,6 +48,8 @@
 | `docs/memory/` | **知识库**：README（导航+状态表）、design（当前实现规格）、retrieval-v3（检索提案与状态）、testing（QA 方法论）、assessment（评估轮次）、v2-proposal、references（论文笔记）、changelog（记忆系统细账）、control-panel、handoff（交接） |
 | `docs/literature.md` | **文献库架构规格**：双面分离、文件契约、研读→蒸馏闭环（`scripts/lit-import.mjs` 的实施说明） |
 | `docs/dsh-panel-research.md` | dsh 面板机制调研：noema/aionui 挂载方式，Phase 2 面板路线（官方 `settings.section` 槽位） |
+| `docs/dsh-native-refactor.md` | **评估 + 迁移清单**：dsh 侧交付重构为 dsh-native bundle 模式（capability 走 `dsh plugin`，posture 留安装程序），含完整安装 / 对称卸载 / owner-marker 冲突解决 |
+| `docs/installation.md` | **用户指引**：安装原理（capability/posture 两层）、两条安装路径、冲突解决（owner marker / `--force` 接管）、卸载（三级删除 + 确认短语）、FAQ |
 | `literature/` | **文献库（仓库内维护）**：`cards/` 蒸馏卡 + `reading/` 研读笔记 + `notes/` 跨文献产出 + `.raw/` 原始语料 + `index.md`/`library.bib`；导入器 `scripts/lit-import.mjs`，规格 `docs/literature.md` |
 | `.github/workflows/` | CI（重建 main.js 一致性 + 全测试）、release（tag 触发发布资产） |
 
@@ -69,12 +73,15 @@
 ## 4. 常用命令
 
 ```bash
-npm test                        # 语法 + 90 项回归 + 安装器 e2e（含漂移检测）
+npm test                        # 语法 + 90 项回归 + 安装器 e2e（含漂移检测）+ preset-sync 回归
 npm run qa                      # 引擎探针（零 token，12 组召回断言）
 npm run qa:e2e                  # 引擎探针 + 真实会话端到端（烧真实 tokens，含 API 级计量）
 node scripts/build-obsidian.mjs # 重建 main.js（改 dsh/ 或模板后必跑）
 node scripts/deploy-local.mjs   # 本机部署（vault + DSH_HOME + 插件目录）
-dsh --profile notes-assistant --port 3180 --patch <home>/profiles/notes-assistant/notes-assistant.patch.yml  # 纯 CLI 启动
+dsh-math-memory install --vault <库>          # 原生安装（dsh plugin add + 姿态 + 模板）
+dsh-math-memory install --direct --vault <库> # 离线扁平拷贝
+dsh-math-memory status / uninstall            # 诊断 / 卸载（默认 dry-run）
+dsh --profile notes-assistant                 # 纯 CLI 启动（bundle 已提供 panel/workspace）
 ```
 
 ## 5. 新功能落地清单（改代码时对照）

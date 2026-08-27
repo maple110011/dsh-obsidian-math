@@ -2,6 +2,25 @@
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
+## [0.7.1] - 2026-08-26
+
+### Added
+
+- **dsh-native 分发重构**：dsh 侧交付改为 dsh 原生 bundle 模式——根 `package.json` 声明 `dsh.bundle.patch`，新增 `dsh/cordis.patch.yml`（bundle 补丁）、`dsh/host/index.mjs`（宿主插件：启动同步 preset + 注册 `/memory-panel` 路由 + 自动注册 workspace）、`dsh/host/preset-sync.mjs`（幂等字节比对同步）；现在可 `dsh-math-memory install` 原生安装（写 in-box 骨架 + `dsh plugin add dsh-math-memory`）。
+- **安装程序改造**：`dsh/install.mjs` 重写为薄编排器，新增 `install`（原生 `dsh plugin add`）、`install --direct`（离线扁平拷贝）、`status`、`uninstall` 四个命令。
+- **owner marker 冲突解决**：`.owner.json` / `.install-manifest.json` 记录归属（`npm` bundle 同步 vs `direct` 直写），双向拒绝异主覆盖，`--force` 接管。
+- **对称卸载**：`dsh-math-memory uninstall` 按「可重建 / 不可重建」分级（默认 dry-run；记忆内容仅 `--purge-data` + 确认短语 `DELETE MY MATH MEMORY` 才删）。
+- **用户指引**：`docs/installation.md`（安装原理 / 冲突解决 / 卸载用法）。
+
+### Changed
+
+- **`postinstall` 不再自动装**：`npm install -g` 只打印安装指引（符合 dsh-native，`dsh plugin add` 是正规路径）。
+- **Obsidian bootstrap 写 owner marker**：内置直写流程写 owner=direct marker，与 bundle/npm 通道冲突安全。
+
+### Docs
+
+- `docs/dsh-native-refactor.md`（设计规格 + 迁移清单）、`docs/installation.md`（用户指引）；`ARCHITECTURE.md` §2 补新文件索引。
+
 ## [0.7.0] - 2026-08-25
 
 ### Added

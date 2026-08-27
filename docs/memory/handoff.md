@@ -1,7 +1,7 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、决策、已修坑、未做事项与工作约定。
-> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**版本 0.7.0（2026-08-25）**。
+> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**版本 0.7.1（2026-08-26）**。0.7.1 新增 **dsh-native 分发重构**（bundle + `dsh plugin add` 原生安装、`--direct` 离线拷贝、owner marker 冲突解决、对称 `uninstall`；功能无变化，仅优化安装方式），详见 `docs/dsh-native-refactor.md` 与 `docs/installation.md`。
 
 ## 1. 项目是什么
 
@@ -26,7 +26,7 @@
 | `dsh/profile/` | **profile `notes-assistant`**：fail-closed 沙箱（workspace-write + approval never）；**默认不挂载 dsh-web-ui 插件**（皮肤中心可经 Obsidian 设置开关启用） |
 | `dsh/templates/` | vault 模板：AGENTS.md + 记忆层模板 + `config.md`（独立设置）+ `capture-policy.md` |
 | `dsh/templates-manifest.json` | **模板清单单一事实源**（build/install/bootstrap 三处派生 + 构建漏模板门禁） |
-| `dsh/install.mjs` | CLI 安装器（npm bin `dsh-math-memory`；`--preset-only` 只装 preset） |
+| `dsh/install.mjs` | CLI **编排器**（npm bin `dsh-math-memory`）：`install`（原生 `dsh plugin add`）/ `install --direct`（离线扁平拷贝）/ `status` / `uninstall`；写 owner marker |
 | `dsh/host/memory-admin.mjs` | host-agnostic 记忆管理核心（确定性操作 + 面板数据层；Obsidian 插件经嵌入 loader 复用） |
 | `dsh/host/math-memory-panel.mjs` | **dsh web 宿主面板插件**：inject `webServer`+`workspaceRegistry`，路由 `/memory-panel/*`（state/workspaces/feedback/archive/capture-policy/archive-episodes），loopback-only + `pathInside` 门控 |
 | `dsh/client-panel/` | **dsh web 客户端面板**：React 源码 `src/index.jsx` + esbuild 打包 `build-client.mjs` + 安装 `install-into-profile.mjs` + 产物 `lib/client.js` |
@@ -100,8 +100,8 @@ node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile
 node scripts/deploy-local.mjs   # 本机部署（vault / DSH_HOME / 插件目录）
-dsh --profile notes-assistant --port 3180 --patch <home>/profiles/notes-assistant/notes-assistant.patch.yml --dump-config
-node dsh/install.mjs install --dsh-home <home> --preset-only   # 只装 preset 进主 dsh
+dsh --profile notes-assistant --port 3180   # 原生（bundle 已提供 panel/workspace）；--direct 装时需 --patch notes-assistant.patch.yml
+dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profile（原生，替代旧 --preset-only）
 # 真实 E2E（需模型余额 + 真实 vault + 真实 JS 入口）：
 #   DSH_HOME=<home> DSH_WORKSPACE_ROOT=<vault> DSH_BIN=<.../lib/bin.js> npm run qa:e2e
 # 调试日志：<vault>/.obsidian/plugins/dsh-math-assistant/debug.log

@@ -1,0 +1,12 @@
+# dsh-math-memory bundle patch: inserts the host plugin into the profile
+# roster. Applied as a profile bundle layer (the `dsh.bundle.patch` manifest
+# field) after dsh-base + dsh-web-app; activate with
+#   dsh plugin --profile <name> add @deepseek-ai/dsh-web-app dsh-math-memory
+#
+# The row is a bare plugin by package name: the node half (the package's main
+# export) runs in the host process and, on startup, syncs the bundled
+# `notes-assistant` preset into ~/.dsh/.agent-presets, registers the
+# /memory-panel routes, and auto-registers the vault workspace. No browser half.
+- insert:
+    - id: math-memory-host
+      name: dsh-math-memory

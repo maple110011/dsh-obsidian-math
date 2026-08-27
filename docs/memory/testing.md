@@ -78,7 +78,7 @@ npm run qa   # 引擎探针：12 组 ground-truth 召回断言（需真实 vault
 
 ```bash
 tmp=$(mktemp -d)
-node dsh/install.mjs install --dsh-home "$tmp" --quiet
+node dsh/install.mjs install --direct --dsh-home "$tmp" --quiet
 DSH_HOME="$tmp" dsh --profile notes-assistant --dump-config
 ```
 
@@ -88,17 +88,18 @@ DSH_HOME="$tmp" dsh --profile notes-assistant --dump-config
 
 ```bash
 node scripts/deploy-local.mjs                                            # 本机一键部署（gitignored，含本机路径）
-node dsh/install.mjs install --dsh-home "$DSH_HOME" --vault "<vault>"    # 纯 CLI
-dsh --profile notes-assistant --port 3180 --patch "$DSH_HOME/profiles/notes-assistant/notes-assistant.patch.yml"
+node dsh/install.mjs install --direct --dsh-home "$DSH_HOME" --vault "<vault>"    # 纯 CLI（离线）
+node dsh/install.mjs install --dsh-home "$DSH_HOME" --vault "<vault>"    # 原生（需 pnpm）
+dsh --profile notes-assistant --port 3180   # 原生；--direct 装时需 --patch notes-assistant.patch.yml
 ```
 
-### 6.4 只装 preset（在主 dsh web UI 里用）
+### 6.4 在主 dsh web UI 里用 preset（不建专用 profile）
 
 ```bash
-node dsh/install.mjs install --dsh-home "$DSH_HOME" --preset-only
+dsh plugin --profile web add dsh-math-memory   # 把 bundle 加进主 web profile（原生）
 ```
 
-装完后在主 dsh web UI 新建会话时选「数学笔记助手」preset，并把会话工作区设为笔记目录。注意：`--preset-only` 不装独立 profile，用的是主 dsh 的沙箱/审批（比独立 profile 的 fail-closed 宽松）；记忆文件仍写在工作区（默认 `.deepseek/`）。
+装完后重启 dsh，新建会话时选「数学笔记助手」preset。注意：这样用的是主 dsh 的沙箱/审批（比专用 profile 的 fail-closed 宽松）；旧 `--preset-only` 已移除，由 `dsh plugin add` 取代。
 
 ### 6.5 独立设置面板（host-agnostic config 文件）
 

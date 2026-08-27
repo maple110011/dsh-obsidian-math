@@ -716,6 +716,27 @@ function ensureObsidianPatch(plugin, location) {
   }
 }
 
+// Ownership markers written by the direct (embedded) bootstrap so the CLI
+// installer and the npm bundle can detect a direct-owned install and avoid
+// clobbering it (and vice versa). Mirrors dsh/install.mjs --direct.
+const OWNER_MARKER = '.owner.json';
+const INSTALL_MANIFEST = '.install-manifest.json';
+const OWNER_CHANNEL = 'direct';
+const DIRECT_PROFILE_FILES = [
+  'package.json', 'cordis.yml', 'cordis.patch.yml', 'pnpm-workspace.yaml',
+  'math-memory-workspace.mjs', 'notes-assistant.patch.yml', 'memory-admin.mjs',
+  'math-memory-panel.mjs', 'hook-frontmatter.mjs'
+];
+
+function readOwnerMarker(path) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
+}
+
+function writeOwnerMarker(path, channel, version) {
+  const payload = { owner: channel, version: version ?? '0.0.0', installedAt: new Date().toISOString() };
+  writeFileSync(path, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
 function bootstrapDshConfig(plugin, force = false) {
   const location = plugin.service.location();
   if (location === null) throw new Error('未检测到 dsh。请先在设置中配置 dsh 安装目录。');
@@ -723,6 +744,12 @@ function bootstrapDshConfig(plugin, force = false) {
   const presetRoot = join(home, '.agent-presets', PRESET_NAME);
   const profileRoot = join(home, 'profiles', PRESET_NAME);
   const written = [];
+
+  // Conflict guard: never clobber an npm-bundle-owned preset. --force takes over.
+  const existing = readOwnerMarker(join(presetRoot, OWNER_MARKER));
+  if (!force && existing !== null && existing.owner !== undefined && existing.owner !== OWNER_CHANNEL) {
+    throw new Error(`preset 由「${existing.owner}」通道安装。请先运行 dsh-math-memory uninstall 移除，或点「强制重装 dsh 配置」接管。`);
+  }
 
   // Code always refreshes; user-editable files are preserved unless forced.
   if (ensureFile(join(presetRoot, 'math-memory.mjs'), EMBEDDED_PRESET['math-memory.mjs'], true)) written.push('preset/math-memory.mjs');
@@ -741,6 +768,19 @@ function bootstrapDshConfig(plugin, force = false) {
   if (ensureFile(join(profileRoot, 'memory-admin.mjs'), EMBEDDED_PRESET['host-memory-admin.mjs'], true)) written.push('profile/memory-admin.mjs');
   if (ensureFile(join(profileRoot, 'math-memory-panel.mjs'), EMBEDDED_PRESET['host-math-memory-panel.mjs'], true)) written.push('profile/math-memory-panel.mjs');
   if (ensureFile(join(profileRoot, 'hook-frontmatter.mjs'), EMBEDDED_PRESET['hook-frontmatter.mjs'], true)) written.push('profile/hook-frontmatter.mjs');
+
+  // Record ownership so the npm bundle / CLI installer can detect this direct
+  // install and skip (or be skipped by) it instead of silently clobbering.
+  writeOwnerMarker(join(presetRoot, OWNER_MARKER), OWNER_CHANNEL, plugin.manifest?.version);
+  writeFileSync(join(profileRoot, INSTALL_MANIFEST), JSON.stringify({
+    owner: OWNER_CHANNEL,
+    version: plugin.manifest?.version ?? '0.0.0',
+    installedAt: new Date().toISOString(),
+    profile: PRESET_NAME,
+    posture: DIRECT_PROFILE_FILES,
+    vaults: []
+  }, null, 2) + '\n', 'utf8');
+
   return { home, written };
 }
 
