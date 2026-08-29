@@ -97,6 +97,12 @@
     auditEnabled: true
     auditIntervalMs: 86400000
     auditMaintainHookStats: true
+    # 自动归档（self-correction.md P3）：false = 只建议、不自动移动低效用卡（默认，与「删除由用户决定」一致）；
+    # true = 体检把「零使用 + 长期陈旧(>90天) + 非用户确认」的卡移入 .deepseek/archive/records/（移动而非删除）。
+    autoArchive: false
+    # 自动保存对话（obelisk-comparison.md §5）：true = 每场对话结束后，确定性把整场对话（不含思考）
+    # 写进 .deepseek/memory/episodes/ 证据层，不再只靠模型三写自觉（默认开）。
+    sessionCapture: true
     # 检索 v3（S5）：系统提示只注入导航层（主题/记录/模板/事件索引 = “有什么”），
     # 相关内容按需用 note_recall 拉取，不再逐轮注入 top-k 召回。
     notes:

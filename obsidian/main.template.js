@@ -13,6 +13,7 @@ const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSyn
 const { join, dirname, resolve } = require('path');
 const { homedir } = require('os');
 const { randomBytes } = require('crypto');
+const { zstdDecompressSync } = require('zlib');
 const http = require('http');
 const { createServer } = http;
 
@@ -52,10 +53,11 @@ const MEMORY_ADMIN = (() => {
   const body = source
     .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:fs["'];?\s*$/gm, '')
     .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:path["'];?\s*$/gm, '')
+    .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:zlib["'];?\s*$/gm, '')
     .replace(/^export\s+/gm, '')
-    + '\nreturn { pathInside, setHookField, setTopField, setCapturePolicyMode, applyFeedback, archiveMemoryFile, archiveOldEpisodes, parseMemoryFrontmatter, titleOf, daysSinceText, collectMemoryState, readAuditText, FEEDBACK_MESSAGES };';
-  return new Function('existsSync', 'mkdirSync', 'writeFileSync', 'readFileSync', 'readdirSync', 'statSync', 'renameSync', 'join', body)(
-    existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, join
+    + '\nreturn { pathInside, setHookField, setTopField, setCapturePolicyMode, applyFeedback, archiveMemoryFile, archiveOldEpisodes, parseMemoryFrontmatter, titleOf, daysSinceText, collectMemoryState, readAuditText, FEEDBACK_MESSAGES, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled };';
+  return new Function('existsSync', 'mkdirSync', 'writeFileSync', 'readFileSync', 'readdirSync', 'statSync', 'renameSync', 'join', 'dirname', 'zstdDecompressSync', body)(
+    existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, join, dirname, zstdDecompressSync
   );
 })();
 
@@ -147,6 +149,9 @@ const setTopField = MEMORY_ADMIN.setTopField;
  * editor; the model is still forbidden from touching the file.
  */
 const setCapturePolicyMode = (vault, field, mode) => MEMORY_ADMIN.setCapturePolicyMode(vault, field, mode, typeof EMBEDDED_TEMPLATES['capture-policy.md'] === 'string' ? EMBEDDED_TEMPLATES['capture-policy.md'] : '');
+const setSessionCaptureMode = (vault, enabled) => MEMORY_ADMIN.setSessionCapture(vault, enabled, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
+const runSessionCapture = (vault, sessionsRoot) => MEMORY_ADMIN.runSessionCapture(vault, sessionsRoot, MEMORY_ADMIN.readCaptureState(vault));
+const countUncapturedSessions = (vault, sessionsRoot) => MEMORY_ADMIN.countUncapturedSessions(vault, sessionsRoot);
 
 /** Apply one feedback action to a card file (in place, minimal diff). */
 const applyFeedback = MEMORY_ADMIN.applyFeedback;
@@ -1081,6 +1086,22 @@ class MemoryView extends ItemView {
     return this.app.vault.adapter.getBasePath();
   }
 
+  sessionsRoot() {
+    const home = this.plugin.service?.location?.()?.home ?? detectDshHome(this.plugin.settings, null);
+    return join(home, 'sessions');
+  }
+
+  refreshCaptureBadge(span) {
+    let count = 0;
+    try {
+      count = countUncapturedSessions(this.vaultPath(), this.sessionsRoot());
+    } catch {
+      // a missing sessions dir is not an error worth surfacing
+    }
+    if (span) span.setText(count > 0 ? `${count} 个会话未保存` : '会话已全部保存');
+    return count;
+  }
+
   async onOpen() {
     writeDebugLog('[memory-view] onOpen start');
     const loading = this.contentEl.createDiv({ text: '记忆面板加载中…' });
@@ -1103,6 +1124,20 @@ class MemoryView extends ItemView {
         } catch (error) {
           new Notice(`记忆维护失败：${String(error)}`);
         }
+        this.render();
+      });
+      const capture = toolbar.createEl('button', { text: '立即保存对话' });
+      const captureBadge = toolbar.createEl('span', { cls: 'dsh-memory-meta' });
+      const refreshBadge = () => this.refreshCaptureBadge(captureBadge);
+      refreshBadge();
+      capture.addEventListener('click', () => {
+        try {
+          const result = runSessionCapture(this.vaultPath(), this.sessionsRoot());
+          new Notice(result.captured.length > 0 ? `已保存 ${result.captured.length} 场对话到记忆` : '没有新的对话需要保存');
+        } catch (error) {
+          new Notice(`保存对话失败：${String(error)}`);
+        }
+        refreshBadge();
         this.render();
       });
       this.body = this.contentEl.createDiv({ cls: 'dsh-memory-body' });
@@ -1675,6 +1710,32 @@ class DshObsidianSettingTab extends PluginSettingTab {
     addCaptureSetting('idea', 'ask');
     addCaptureSetting('fact', 'auto');
     addCaptureSetting('preference', 'auto');
+
+    containerEl.createEl('h3', { text: '自动保存对话' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '每场对话结束后，自动把整场对话（不含思考）保存到记忆证据层（.deepseek/memory/episodes/），不再只靠模型自觉三写。写入 .deepseek/config.md。' });
+    const captureVaultRoot = this.plugin.app.vault.adapter.getBasePath();
+    const sessionCaptureOn = (() => {
+      try {
+        const raw = readFileSync(join(captureVaultRoot, '.deepseek', 'config.md'), 'utf8');
+        const { meta } = parseMemoryFrontmatter(raw);
+        return meta.sessionCapture !== 'false';
+      } catch {
+        return true;
+      }
+    })();
+    new Setting(containerEl)
+      .setName('自动保存对话（sessionCapture）')
+      .setDesc('开启 = 每场对话自动保存到记忆；关闭 = 只靠模型按 AGENTS.md 三写。默认开启。')
+      .addToggle((toggle) => toggle
+        .setValue(sessionCaptureOn)
+        .onChange(async (value) => {
+          try {
+            setSessionCaptureMode(captureVaultRoot, value);
+            new Notice(`自动保存对话已${value ? '开启' : '关闭'}`);
+          } catch (error) {
+            new Notice('更新自动保存对话失败：' + String(error));
+          }
+        }));
 
     containerEl.createEl('h3', { text: '配置' });
     const configRow = containerEl.createDiv({ cls: 'dsh-math-assistant-config-actions' });

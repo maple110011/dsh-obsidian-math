@@ -343,6 +343,25 @@ const OVERWRITE_REFUSAL = (rel) => `note_create: note already exists (${rel}); r
 const RECALL_DEFAULT_MAX_RESULTS = 15;
 const RECALL_HARD_MAX_RESULTS = 50;
 
+// Retrieval-v3 scoring blend (self-correction.md P1c): the hook prior is
+// deliberately raised from a token 0.05 so verified/success_rate feedback
+// actually moves ranking (previous effective influence was ~3%).
+const RECALL_BM25_WEIGHT = 0.75;
+const RECALL_CJK_WEIGHT = 0.10;
+const RECALL_PRIOR_WEIGHT = 0.15;
+
+/**
+ * Whether a vault doc may compete in note_recall ranking. Superseded cards and
+ * cards already consolidated into another (duplicate_of) are evidence only —
+ * they stay on disk for grep/read provenance but must not surface as live
+ * candidates (self-correction.md P1a / P4).
+ */
+export function isRecallEligible(status, duplicateOf) {
+  if (String(status ?? "").trim().toLowerCase() === "superseded") return false;
+  if (String(duplicateOf ?? "").trim() !== "") return false;
+  return true;
+}
+
 /** Known operator vocabulary (hard-filter key, stage 1). */
 const HOOK_OPERATORS = new Set([
   "algebra", "number-theory", "geometry", "combinatorics", "probability",
@@ -534,6 +553,7 @@ export function classifyVaultDoc(rel) {
   if (rel === ".deepseek/capture-policy.md" || rel === ".deepseek/memory/profile.md") return "skip";
   if (rel === ".deepseek/working.md") return "skip"; // scratch draft, not part of the retrieval corpus
   if (rel.startsWith(".deepseek/cache")) return "skip";
+  if (rel.startsWith(".deepseek/archive")) return "skip"; // archived = evidence only (self-correction.md P3)
   if (rel.startsWith(".deepseek/memory/episodes/")) {
     return rel.endsWith("/index.md") ? "episode-index" : "skip";
   }
@@ -1054,9 +1074,12 @@ export async function apply(ctx, config) {
           updated: metaScalar(frontmatter, "updated") ?? "",
           hook: frontmatter === null ? null : parseHookFrontmatter(frontmatter),
           strategy: kind === "strategy" ? strategySurface(frontmatter) : "",
+          status: metaScalar(frontmatter, "status") ?? "",
+          duplicateOf: metaScalar(frontmatter, "duplicate_of") ?? "",
           body
         };
         if (tag !== "" && !matchesTagFilter(doc.tags, tag)) continue;
+        if (!isRecallEligible(doc.status, doc.duplicateOf)) continue;
         docs.push(doc);
       }
 
@@ -1067,13 +1090,13 @@ export async function apply(ctx, config) {
       const maxScore = Math.max(1e-9, ...rawScores);
       const priorOf = (doc) => hookPrior(doc.hook, doc.updated);
       const operatorMatch = (doc) => operator === null || (doc.hook !== null && normalizeOperator(doc.hook.operator) === operator);
-      // 0.85 BM25 + 0.10 CJK char containment (bridges 子列/子序列-class
-      // word-form gaps) + 0.05 success/uses prior.
+      // BM25 (dominant, semantic/lexical) + CJK char containment (bridges
+      // 子列/子序列-class word-form gaps) + hook prior (promote/demote).
       const cjkBonus = docs.map((doc, i) => cjkCharOverlap(query, passages[i]));
       const scored = docs.map((doc, i) => ({
         doc,
         i,
-        score: 0.85 * (rawScores[i] / maxScore) + 0.10 * cjkBonus[i] + 0.05 * priorOf(doc),
+        score: RECALL_BM25_WEIGHT * (rawScores[i] / maxScore) + RECALL_CJK_WEIGHT * cjkBonus[i] + RECALL_PRIOR_WEIGHT * priorOf(doc),
         operatorMatch: operatorMatch(doc)
       }));
 
@@ -1181,6 +1204,7 @@ export async function apply(ctx, config) {
         if (surface === "") continue;
         const difficulty = (metaScalar(frontmatter, "difficulty") ?? "").trim();
         if (difficultyFilter !== "" && normalizeOperator(difficulty) !== difficultyFilter) continue;
+        if ((metaScalar(frontmatter, "status") ?? "").trim().toLowerCase() === "superseded") continue;
         cards.push({
           path: note.path,
           title: titleFromDoc(frontmatter, body, note.name),
@@ -1196,11 +1220,22 @@ export async function apply(ctx, config) {
 
       const surfaces = cards.map((c) => c.surface);
       const stats = computeCorpusStats(surfaces.map((s) => tokenize(s)));
+      // Verified prior (self-correction.md P5a): strategy cards share the same
+      // promote/demote semantics as records, so a confirmed strategy ranks
+      // above a single-source one at equal BM25.
+      const verifiedWeight = { "user-confirmed": 1, "cross-referenced": 0.92, "single-source": 0.84 };
       const scored = cards
-        .map((card) => ({ card, score: bm25Score(queryTokens, tokenize(card.surface), stats) }))
+        .map((card) => ({
+          card,
+          score: bm25Score(queryTokens, tokenize(card.surface), stats) * (verifiedWeight[card.verified] ?? 0.9)
+        }))
         .filter((entry) => entry.score > 0)
         .sort((a, b) => b.score - a.score);
       const top = scored.slice(0, limit);
+
+      // Strategy hits feed the same usage stats as records, so the daily audit
+      // can promote candidates (self-correction.md P5b).
+      recordRetrievalStats(rootPath, top.map((entry) => entry.card.path));
 
       return {
         query,

@@ -48,6 +48,7 @@ function MemoryPanel() {
   const [workspaces, setWorkspaces] = useState([]);
   const [q, setQ] = useState("");
   const [tick, setTick] = useState(0);
+  const [cap, setCap] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -58,6 +59,35 @@ function MemoryPanel() {
       } catch { /* no workspaces endpoint yet */ }
     })();
   }, []);
+
+  const refreshCap = async () => {
+    if (root === "") { setCap(null); return; }
+    try {
+      const res = await fetch("/memory-panel/session-capture?root=" + encodeURIComponent(root));
+      const json = await res.json();
+      if (json && json.ok) setCap(json);
+    } catch { /* ignore */ }
+  };
+  useEffect(() => { refreshCap(); }, [root]);
+
+  const toggleCapture = async (enabled) => {
+    await fetch("/memory-panel/session-capture-toggle", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root, enabled })
+    });
+    refreshCap();
+  };
+  const saveNow = async () => {
+    await fetch("/memory-panel/session-capture", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root })
+    });
+    refreshCap();
+    setTick(tick + 1);
+    setQ(q === "" ? " " : "");
+  };
 
   const url = root === "" ? "" : "/memory-panel/state?root=" + encodeURIComponent(root) + "&q=" + encodeURIComponent(q);
   const { data, error } = useJson(url, null);
@@ -88,6 +118,18 @@ function MemoryPanel() {
         </select>
       ) : null}
       <input value={root} placeholder="或手动输入 vault 路径，例如 D:/Obsidian笔记数据库" onChange={(e) => saveRoot(e.target.value)} style={{ width: "100%", marginBottom: "8px" }} />
+      {root !== "" ? (
+        <div style={{ margin: "4px 0 12px", padding: "8px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "4px" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <input type="checkbox" checked={cap?.enabled !== false} onChange={(e) => toggleCapture(e.target.checked)} />
+            自动保存对话
+          </label>
+          <div style={{ fontSize: "12px", color: "var(--dsw-alias-label-dimmed)", margin: "4px 0" }}>
+            未保存：{cap?.count ?? "…"} 个会话
+          </div>
+          <button onClick={saveNow}>立即保存对话</button>
+        </div>
+      ) : null}
       {root === "" ? (
         <div>请选择或输入笔记 vault 路径，面板会记住它。</div>
       ) : error !== "" ? (

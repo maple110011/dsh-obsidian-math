@@ -3,6 +3,8 @@ enabled: true
 dialogueIndex: true
 reminders: true
 audit: true
+autoArchive: false
+sessionCapture: true
 ---
 
 # 记忆系统设置（本工作区）
@@ -14,3 +16,5 @@ audit: true
 - `dialogueIndex`：是否扫描历史会话、生成跨会话问答线索。
 - `reminders`：是否在回复里注入 🔔 备忘录提醒候选。
 - `audit`：是否运行每日确定性记忆体检。
+- `autoArchive`：体检时是否把「零使用 + 长期陈旧（>90 天）+ 非用户确认」的低效用卡自动移入 `.deepseek/archive/records/`（移动而非删除，可逆）。默认 `false`（只建议、不自动归档）。
+- `sessionCapture`：是否自动把每场对话**保存到记忆**（整场对话、不含思考，写进 `.deepseek/memory/episodes/` 证据层，与模型三写解耦）。默认 `true`。

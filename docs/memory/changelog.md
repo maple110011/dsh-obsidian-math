@@ -2,6 +2,45 @@
 
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
+## 2026-08 · 自动保存对话落地（obelisk-comparison.md §5，版本 0.7.3）
+
+- **背景**：对照 Obelisk 定位最大差距「该记的没记」——episodes 证据层此前只靠模型三写自觉，会漏。实证解码真实会话日志确认：思考（reasoning）是独立事件 + assistant 内容块，`contentText` 天然排除；会话有稳定 `id` + 每事件单调 `seq`。
+- **`distillSession`**（`math-memory.mjs`）：加 `seq`/`createdAt` 字段 + `opts.userClip/assistantClip`（dialogue index 维持 500/320，capture 用 4000/4000）。
+- **新增对话保存**（`math-memory.mjs`）：`localDateFromMs` / `planSessionDelta`（按 seq 算增量）/ `renderConversationTail`（尾截断）/ `readCaptureState` / `runSessionCapture`（扫 sessions → 解码 → vault 过滤 → 增量 → 写 `episodes/<date>-<sessionId>.md` → 更新 index → 写 marker）+ `appendEpisodeIndex`。
+- **配置贯通**：`sessionCapture`（默认 true）进 `config.md`/`agent.cordis.yml`/`parseMemoryConfig`/`normalizeConfig`；`MemoryEngine.captureNow()`（节流 60s、fail-closed），在 `apply` 启动时 + `system-prompt/assemble` 时 `setTimeout` fire-and-forget 触发。
+- **粒度**：整场对话（user + assistant 正文，reasoning 排除）；单消息 ≤4000、单会话 ≤24000，尾截断保留最新。
+- **幂等/续接**：marker = `cache/captured-sessions.json`（`schemaVersion` + `session.id → { lastSeq, fingerprint, file }`），只追加 `seq > lastSeq` 的 delta；文件指纹变化即重扫（续接旧会话也补新尾巴）。
+- **回归**：`scripts/test-memory.mjs` 104 → 118 项（distill 排除思考/带 seq、planSessionDelta、尾截断、日期格式、真实 zstd 端到端、vault 过滤、marker、续接增量、capture-toggle 开关往返）；断言数与 README/ARCHITECTURE/handoff/docs-memory-README 同步；版本 0.7.2 → 0.7.3。
+- **双面板 UI 落地**：`memory-admin.mjs` 新增 host-agnostic 捕获核心（`runSessionCapture`/`countUncapturedSessions`/`readCaptureState`/`setSessionCapture`/`readSessionCaptureEnabled`，含 zlib 解码，与 math-memory 同步）；Obsidian 侧 `main.template.js`（MEMORY_ADMIN 加载器注入 `zstdDecompressSync`/`dirname`，设置页「自动保存对话」toggle，MemoryView「立即保存对话」按钮 + 未保存角标）；dsh web 侧 `math-memory-panel.mjs`（`/memory-panel/session-capture` GET/POST + toggle 路由）+ `client-panel`（开关/按钮/角标）。`main.js` 与 `lib/client.js` 已重建。
+
+## 2026-08 · Obelisk 对照与「捕获确定性」提案（obelisk-comparison.md，待拍板）
+
+- **背景**：调研成熟 agent 记忆系统 [Obelisk](https://github.com/tommy0103/obelisk)（SQLite+Litestream 的持久化活动记忆 + 确定性工作流），对照我们的数学语义记忆，定位最大差距。
+- **产出**：新建 `docs/memory/obelisk-comparison.md`（未改代码）：对照表 + 「捕获确定性钩子」具体方案——把「按需三写」补一个确定性会话落盘（复用已有 `$DSH_HOME/sessions/*.jsonl.zstd` 全量日志 → append 进 episodes），幂等 + 三触发候选（session-close 钩子 / Obsidian 启动 sweep / system-prompt 组装增量），评估为 P0。
+- **入库**：`references.md` §11 新增 Obelisk（URL、机制、映射、不适用部分）。
+- **登记**：`README.md` 导航/状态表、`handoff.md` §7 下一步候选同步。
+- **待办**：三点待用户拍板（触发时机 / 落盘粒度 / 是否默认开），拍板后再动代码。
+
+## 2026-08 · 记忆纠错与确定性自维护落地（self-correction.md P1–P5，版本 0.7.2）
+
+- **P1a**（`note-tools.mjs`）：新增 `isRecallEligible()`，`note_recall` 排除 `status: superseded` 与 `duplicate_of` 非空的卡（旧卡只留作证据、不再当活跃候选）；`classifyVaultDoc` 补 `.deepseek/archive` 跳过。
+- **P1b**（`memory-admin.mjs`）：`wrong` 反馈改为 `success_rate = min(×0.5, 0.35)` + 降一级 `verified`（user-confirmed→cross-referenced→single-source）+ 写 `last_wrong`/`needs_review`。
+- **P1c**（`note-tools.mjs`）：检索打分 `0.85/0.10/0.05 → 0.75/0.10/0.15`（命名常量 `RECALL_BM25/CJK/PRIOR_WEIGHT`），纠错信号对排序影响从 ~3% 提到 ~10%。
+- **P2**（`math-memory.mjs`）：体检新增「待重审」段（`needs_review`/`last_wrong` 卡），返回 `pendingReview`。
+- **P3**（`math-memory.mjs` + 配置）：新增 `autoArchive` 开关（默认 off，`config.md`/`agent.cordis.yml`/`parseMemoryConfig`/`normalizeConfig` 贯通）；体检确定性把「零使用 + >90 天陈旧 + 非确认」卡移入 `archive/records/`（`moveCardsToArchive`，移动非删除，索引链接同步改写）。
+- **P4**（`math-memory.mjs`）：体检给重复对的冗余侧确定性写 `duplicate_of: [[保留方]]`（`setTopFieldText`），检索据此去重。
+- **P5**（`note-tools.mjs` + `math-memory.mjs`）：`note_strategy` 加 verified 先验、跳过 superseded、记录命中统计；体检读取策略卡顶层 `uses/success_rate/verified`（hook 缺省回退到顶层）、回写顶层 uses/last_used（`syncTopLevelStatsToCard`）、确定性 `candidate→active`（uses≥3 且 rate≥0.6）。
+- **回归**：`scripts/test-memory.mjs` 90 → 104 项；断言数与 README/ARCHITECTURE/handoff/docs-memory-README 同步；版本 0.7.1 → 0.7.2（package/manifest/package-lock/README/README.zh/handoff/CHANGELOG）。
+- **待办**：真实 E2E 与 Obsidian 本机部署验收仍留用户侧；`autoArchive` 默认 off，用户可自行在 `config.md` 开启。
+
+## 2026-08 · 记忆纠错与确定性自维护提案（self-correction.md，待拍板）
+
+- **背景**：逐行审查记忆系统的纠错链路后，确认四个具体缺口——`superseded` 卡不降权、`❌` 反馈惩罚弱且不降 `verified`、纠错信号在检索里权重只有 5%、语义纠错无确定性兜底；并调研 OpenViking（Volcengine 开源「Self-evolving Context Database」）的强度/遗忘/巩固模型。
+- **产出**：新建 `docs/memory/self-correction.md`（提案，未改代码），五条改动方案 + 评估与取舍：P1 纠错进检索三件套（superseded 排除 / wrong 降 verified+惩罚更陡 / hookPrior 权重 0.05→0.15）、P2 待重审清单、P3 低效用卡确定性自动归档（默认 off）、P4 duplicate_of 标记 + 检索去重、P5 strategy 卡纳入统一生命周期。
+- **入库**：`references.md` §10 新增 OpenViking（URL、机制、映射、不适用部分）。
+- **登记**：`handoff.md` §7 下一步候选、`README.md` 导航/状态表、`design.md` §10 已知局限同步。
+- **待办**：两条争议点待用户拍板（`❌` 是否降 `verified`、自动归档默认开关），拍板后再动代码。
+
 ## 2026-08 · 基准 E2E 实测 + 两处修复
 
 - **实测**：基准套 B（8 维度）用 deepseek-v4-flash 跑通，**8/8 PASS**（总 ~256K tokens：input/output 分项 + cacheRead 都记入 baseline）；基线快照与 session log 归档在 `scripts/qa/runs/run-*/`。

@@ -1,6 +1,6 @@
 # 参考文献笔记
 
-> 记忆系统相关的论文阅读笔记。每篇包含：URL、核心结论、可借鉴机制、与我们的映射、不适用的部分。读完新论文后按同样格式追加。
+> 记忆系统相关的论文/系统阅读笔记。每篇包含：URL、核心结论、可借鉴机制、与我们的映射、不适用的部分。读完新论文/系统后按同样格式追加。
 
 ---
 
@@ -92,6 +92,37 @@
   - 分步 sketch → 我们的零 token 版本：模型在自身生成里先给证明草图，对每个外部结果步骤分别 note_recall（已有「子目标分解计划」原语的强化）；
   - 检索质量传播到证明成功率（20% vs 16% vs 4%）→ 支持优先投检索而非其它。
 - 不适用：其每轮 sketch/filter/judge 的多 LLM 调用与 8B embedder/reranker 均超本项目 token/部署预算。
+---
+
+## 10. OpenViking（Volcengine 开源系统，非论文）
+
+- 来源：https://github.com/volcengine/OpenViking ；文档 https://docs.openviking.ai/zh/getting-started/01-introduction
+- 定位：Self-evolving Context Database for AI Agents——统一 **Agent Memory / Knowledge RAG / Skills** 三种上下文到一个库、一套检索。
+- 核心机制（我们关心/可借鉴的）：
+  1. **记忆强度 + 遗忘曲线**：每段记忆带强度值，被引用/确认 → 强化；长期不用 → 衰减；低于阈值 → 真正遗忘/归档（不是只提示）。
+  2. **巩固（consolidation）**：相关/重复记忆自动合并、抽象成更高层知识。
+  3. **冲突更新**：新事实与旧记忆矛盾时主动纠正/更新旧记忆。
+  4. **Memory / Knowledge / Skills 共享同一套强度与检索生命周期**。
+- 与我们的映射：我们有强度信号（`hook.uses/success_rate/last_used` + 每日体检的「低效用归档候选」「疑似重复」），但都停在「检测/建议」，执行靠 prompt——OpenViking 的启示是把「遗忘/合并/纠正」从建议升级为确定性动作。
+- 吸收落点：见 `docs/memory/self-correction.md`（P1a/P1b/P1c 纠错进检索；P3 自动归档；P4 duplicate_of 合并；P5 strategy 统一生命周期；P2 待重审清单）。
+- 不适用的部分：OpenViking 的强度是黑盒服务内部状态、带外部服务/数据库；我们坚持「记忆 = vault 里的 markdown + 可见 frontmatter 字段」，只把强度做成字段 + 检索权重，不引入外部服务、不引入数据库。
+
+---
+
+## 11. Obelisk（开源系统，非论文）
+
+- 来源：https://github.com/tommy0103/obelisk ；作者博客 https://obeli.sk/blog/taming-ai-assisted-code/ ；第三方：https://www.it-boltwise.de/sqlite-statt-cloud-queues-obelisk-setzt-auf-langlebige-ki-workflows-mit-loglitestream.html
+- 定位：Every past session, subagent, and workflow — queryable by your agent。通用 agent 的**持久化活动记忆 + 确定性工作流**。
+- 核心机制（能确认）：
+  1. **记忆单位 = session / subagent / workflow**（「agent 做过什么」的活动轨迹），不是「用户的知识」。
+  2. **存储 = SQLite + Litestream（S3 备份）**：事务、崩溃安全、可 SQL 查询、跨重启不丢。
+  3. **自动、全量、append-only 捕获**，不依赖模型自觉写。
+  4. 通过 MCP 暴露给任意 agent（跨 Claude Code 等）。
+- （推断、未核实：是否有 embedding 语义召回、是否做记忆蒸馏/遗忘/验证门控。）
+- 与我们的映射：我们靠三写协议（模型按需自觉写 episodes）会漏记；而 `$DSH_HOME/sessions/*.jsonl.zstd` 其实已有全量会话日志（dialogue index 在扫它）——离「全量保存」只差把日志确定性写进 episodes。
+- 吸收落点：见 `docs/memory/obelisk-comparison.md`——「自动保存对话」（0.7.3 已实现引擎：整场对话、尾截断、seq 增量、vault 过滤、`sessionCapture` 开关）。
+- 不适用的部分：SQLite 替换 markdown（vault 文件是特性不是缺陷）；多 agent/子代理记忆；「活动轨迹全量可回放」本身（我们要的是语义蒸馏，不是操作日志）。
+
 ## 待读清单（后续追加）
 
 - arXiv:2606.24775 原文细读（当前只有二手摘要）；

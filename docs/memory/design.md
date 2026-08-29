@@ -115,3 +115,5 @@
 ## 10. 已知局限（详见 assessment.md）
 
 检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板有两套入口：Obsidian 侧 ItemView（浏览/搜索/编辑/反馈/归档）与 dsh web ui 的 `settings.section` 面板（`dsh/client-panel/`，主 dsh web 3080 上使用）。
+
+纠错链路（0.7.2 起，详见 `self-correction.md`）：① `superseded` / `duplicate_of` 卡在 `note_recall` 中**已排除**；② `❌` 反馈**已**把 `success_rate` 封顶 0.35 并降一级 `verified`（写 `needs_review`/`last_wrong`）；③ `hookPrior` 检索权重**已**从 5% 提到 15%（`verified`/`success_rate` 对排序影响 ≈10%）；④ 语义对错**仍无全自动确定性校验**——体检新增「待重审」清单（确定性检测 + 模型读 `source` 证据链执行），但内容正确性的最终判断仍依赖模型与用户反馈（插件不调模型是设计红线）。

@@ -2,6 +2,33 @@
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
 
+## [0.7.3] - 2026-08
+
+### Added
+
+- **自动保存对话（session capture）**：每场对话结束后，确定性把**整场对话**（所有用户消息 + assistant 正文，**不含思考**）写进 `.deepseek/memory/episodes/` 证据层，不再只靠模型三写自觉——补上「该记的没记」这一最大失忆来源（依据 Obelisk 对照，见 `docs/memory/obelisk-comparison.md`）。
+  - 粒度：单消息 ≤ 4000 字符、单会话 ≤ 24000 字符，**尾截断**（保留最新）。
+  - 幂等：`cache/captured-sessions.json` 按 session 记 `lastSeq` + 文件指纹，只追加增量——**续接旧会话也能正确补新尾巴**。
+  - 过滤：只保存 cwd 在本 vault 内的会话；日期归属会话发生日。
+  - 触发：dsh 启动 + 每次新会话组装时 fire-and-forget（节流 60s，绝不阻塞 prompt）。
+  - 开关：`.deepseek/config.md` `sessionCapture: true`（默认开）。
+- **双面板 UI**：Obsidian 记忆面板 + dsh web 记忆面板都加了「自动保存对话」开关（写 `config.md`）、「立即保存对话」按钮与「N 个会话未保存」角标；`memory-admin.mjs` 增加 host-agnostic 的 `runSessionCapture`/`countUncapturedSessions`/`setSessionCapture`/`readSessionCaptureEnabled`（Obsidian 嵌入 loader 与 dsh web host 路由共用）。
+- 零 token 回归 104 → 118 项。
+
+## [0.7.2] - 2026-08
+
+### Changed
+
+- **纠错信号真正进入检索（self-correction.md P1）**：`note_recall` 排除 `superseded` 与 `duplicate_of` 卡（「写时保留」的旧卡不再当活跃候选浮到前列）；`❌` 反馈改为「成功率减半且封顶 0.35 + 验证等级降一级 + 写 `needs_review`/`last_wrong`」；检索打分 hook 先验权重 0.05 → 0.15（BM25 0.85 → 0.75），让 ✅/❌ 反馈真正改变排名。
+
+### Added
+
+- **待重审清单（P2）**：每日体检新增「待重审」段，列出被 ❌ 标记的卡，供模型读 `source` 证据链重判对错。
+- **低效用卡自动归档（P3，默认 off）**：新增 `autoArchive` 开关（`.deepseek/config.md` / `agent.cordis.yml`），开启后体检把「零使用 + 长期陈旧(>90 天) + 非用户确认」的卡移入 `.deepseek/archive/records/`（移动而非删除、可逆）。
+- **重复合并确定性一步（P4）**：体检给重复对的冗余侧确定性写 `duplicate_of` 链接，检索据此去重。
+- **策略卡统一生命周期（P5）**：`note_strategy` 加验证等级先验并记录命中统计；体检读取策略卡顶层 `uses/success_rate/verified` 并确定性 `candidate → active`。
+- 零 token 回归 90 → 104 项。
+
 ## [0.7.1] - 2026-08-26
 
 ### Added

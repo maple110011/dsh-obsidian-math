@@ -91,6 +91,23 @@ const AUDIT_WEAK_RATE = 0.4;
 const AUDIT_STRONG_RATE = 0.8;
 const AUDIT_DUP_JACCARD = 0.7;
 const AUDIT_CARD_SCAFFOLD = new Set(["index.md", "_README.md"]);
+// Self-correction thresholds (self-correction.md P3/P5b).
+const AUTO_ARCHIVE_UNUSED_DAYS = 90;
+const PROMOTE_USES = 3;
+const PROMOTE_RATE = 0.6;
+// Dialogue capture (obelisk-comparison.md): deterministically persist the full
+// conversation (user + assistant text, no reasoning) into the episodes layer.
+const CAPTURE_FILE = join(CACHE_DIR, "captured-sessions.json");
+const CAPTURE_SCHEMA_VERSION = 1;
+const CAPTURE_USER_CLIP = 4000;
+const CAPTURE_ASSISTANT_CLIP = 4000;
+const CAPTURE_MAX_SESSION_CHARS = 24000;
+const CAPTURE_THROTTLE_MS = 60000;
+// Scan ALL session logs for capture (unlike the dialogue index's 20-file
+// window): the per-session marker keeps each run cheap — only sessions whose
+// fingerprint changed get decoded and written, so scanning the full history is
+// just a metadata walk. A high bound covers any realistic personal history.
+const CAPTURE_SCAN_LIMIT = 100000;
 
 // ── zstd session-log decoding ───────────────────────────────────────────────
 
@@ -181,27 +198,31 @@ function clip(text, maxChars) {
 
 /**
  * Walk one decoded session into a compact entry:
- * `{ id, title, cwd, messages: [{ role, text, time }] }`.
+ * `{ id, title, cwd, createdAt, messages: [{ role, text, time, seq }] }`.
  * Plugin-injected user messages (runtime-context snapshots, approval notices)
  * are skipped; only real human turns (`source.kind === "user"`) count.
+ * Reasoning blocks are excluded via `contentText` (it only keeps `text` blocks).
+ * `opts.userClip`/`opts.assistantClip` let the dialogue index keep its tight
+ * budgets while the capture pass keeps a much larger per-message budget.
  */
-export function distillSession(events) {
-  const entry = { id: undefined, title: undefined, cwd: undefined, messages: [] };
+export function distillSession(events, { userClip = 500, assistantClip = 320 } = {}) {
+  const entry = { id: undefined, title: undefined, cwd: undefined, createdAt: undefined, messages: [] };
   for (const event of events) {
     if (event?.type === "session" && typeof event.id === "string") {
       entry.id = event.id;
       entry.cwd = typeof event.cwd === "string" ? event.cwd : entry.cwd;
+      entry.createdAt = typeof event.createdAt === "number" ? event.createdAt : entry.createdAt;
     } else if (event?.type === "session/title" && typeof event.data?.title === "string") {
       entry.title = event.data.title;
     } else if (event?.type === "user/message" && event.data?.source?.kind === "user") {
       const text = contentText(event.data.content);
       if (text !== "") {
-        entry.messages.push({ role: "user", text: clip(text, 500), time: event.time ?? 0 });
+        entry.messages.push({ role: "user", text: clip(text, userClip), time: event.time ?? 0, seq: event.seq });
       }
     } else if (event?.type === "assistant/message") {
       const text = contentText(event.data?.message?.content);
       if (text !== "") {
-        entry.messages.push({ role: "assistant", text: clip(text, 320), time: event.time ?? 0 });
+        entry.messages.push({ role: "assistant", text: clip(text, assistantClip), time: event.time ?? 0, seq: event.seq });
       }
     }
   }
@@ -315,6 +336,155 @@ export function buildDialogueIndex(sessionsRoot, maxEntries, maxChars, maxFiles 
   };
 }
 
+// ── dialogue capture (obelisk-comparison.md) ─────────────────────────────────
+// Deterministically persist the full conversation (user + assistant text, no
+// reasoning) of each finished session into the episodes evidence layer, so the
+// durable memory no longer relies on the model's self-disciplined three-write.
+// Incremental: a per-session `lastSeq` marker means only the delta since the
+// last capture is appended — which also handles the user resuming an old
+// session (the log grows, we append just the new tail).
+
+/** Date (local YYYY-MM-DD) from a millisecond timestamp; today when invalid. */
+export function localDateFromMs(ms) {
+  const d = Number.isFinite(ms) && ms > 0 ? new Date(ms) : new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Decide what (if anything) to append for one session. Pure — no IO.
+ * Returns `{ delta, lastSeq }` where `delta` is the messages with seq strictly
+ * greater than the prior `lastSeq`, or null when there is nothing new.
+ */
+export function planSessionDelta(entry, prior) {
+  const messages = [...(entry?.messages ?? [])].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  if (messages.length === 0) return null;
+  const lastSeq = Number.isFinite(prior?.lastSeq) ? prior.lastSeq : -1;
+  const delta = messages.filter((m) => (m.seq ?? 0) > lastSeq);
+  if (delta.length === 0) return null;
+  return { delta, lastSeq: delta[delta.length - 1].seq ?? 0 };
+}
+
+/**
+ * Render a conversation, keeping the TAIL within `maxChars` (drop the earliest
+ * messages first — later discussion is closer to what the user wants). Returns
+ * `null` when nothing fits.
+ */
+export function renderConversationTail(messages, maxChars) {
+  const kept = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const line = `${messages[i].role === "user" ? "用户" : "助手"}：${messages[i].text ?? ""}`;
+    if (used + line.length > maxChars) break;
+    kept.push(line);
+    used += line.length + 1;
+  }
+  return kept.length === 0 ? null : kept.reverse().join("\n");
+}
+
+/** Load the capture marker (best-effort); a missing/corrupt/stale file is fresh. */
+function readCaptureState(root) {
+  const path = join(root, CAPTURE_FILE);
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    if (parsed !== null && typeof parsed === "object" &&
+        parsed.schemaVersion === CAPTURE_SCHEMA_VERSION &&
+        parsed.sessions !== null && typeof parsed.sessions === "object") {
+      return parsed;
+    }
+  } catch {
+    // missing/corrupt: start fresh
+  }
+  return { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {} };
+}
+
+/**
+ * Deterministically persist finished sessions into episodes. Walks the session
+ * logs, compares each against the capture marker (by file fingerprint), and
+ * only decodes/appends sessions that grew or are new. Vault containment filter
+ * keeps other workspaces out. Best-effort: a failure on one session must not
+ * stop the rest. Returns `{ captured, state }`; writes the marker itself.
+ */
+export function runSessionCapture(root, sessionsRoot, state = undefined) {
+  const next = state !== undefined && state !== null && typeof state === "object" && state.schemaVersion === CAPTURE_SCHEMA_VERSION
+    ? { schemaVersion: state.schemaVersion, sessions: { ...(state.sessions ?? {}) } }
+    : { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {} };
+  const captured = [];
+  for (const log of findSessionLogs(sessionsRoot, CAPTURE_SCAN_LIMIT)) {
+    let events;
+    try {
+      events = decodeZstdSessionLog(readFileSync(log.path));
+    } catch {
+      continue;
+    }
+    const entry = distillSession(events, { userClip: CAPTURE_USER_CLIP, assistantClip: CAPTURE_ASSISTANT_CLIP });
+    if (entry.id === undefined || entry.messages.length === 0) continue;
+    if (!pathIsInside(root, entry.cwd ?? "")) continue; // only THIS vault's sessions
+    const fingerprint = `${log.path}|${log.mtimeMs}|${log.size}`;
+    const prior = next.sessions[entry.id];
+    if (prior !== undefined && prior.fingerprint === fingerprint) continue; // unchanged
+    const plan = planSessionDelta(entry, prior);
+    if (plan === null) {
+      next.sessions[entry.id] = { lastSeq: prior?.lastSeq ?? -1, fingerprint, file: prior?.file ?? "" };
+      continue;
+    }
+    const body = renderConversationTail(plan.delta, CAPTURE_MAX_SESSION_CHARS);
+    if (body === null) {
+      next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: prior?.file ?? "" };
+      continue;
+    }
+    const date = localDateFromMs(entry.createdAt);
+    const stem = `${date}-${entry.id}`;
+    const rel = join(MEMORY_DIR, "memory", "episodes", `${stem}.md`);
+    const abs = join(root, rel);
+    try {
+      const isNew = prior?.file === undefined || prior.file === "";
+      if (isNew) {
+        mkdirSync(dirname(abs), { recursive: true });
+        const header = [
+          `# ${entry.title ?? entry.id}`,
+          "",
+          `> sessionId: ${entry.id} · 自动保存对话 · ${date}`,
+          "",
+          "## 对话（不含思考）",
+          ""
+        ].join("\n");
+        writeFileSync(abs, `${header}${body}\n`, "utf8");
+      } else {
+        // Append only the delta; never rewrite the whole file.
+        const existing = existsSync(abs) ? readFileSync(abs, "utf8") : "";
+        const sep = existing.endsWith("\n") ? "" : "\n";
+        writeFileSync(abs, `${existing}${sep}${body}\n`, "utf8");
+      }
+      appendEpisodeIndex(root, stem, entry.title ?? entry.id);
+      captured.push({ id: entry.id, rel, lastSeq: plan.lastSeq });
+      next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: rel };
+    } catch {
+      // best-effort; leave the marker untouched so it retries next time
+    }
+  }
+  try {
+    mkdirSync(join(root, CACHE_DIR), { recursive: true });
+    writeFileSync(join(root, CAPTURE_FILE), JSON.stringify(next, null, 2), "utf8");
+  } catch {
+    // marker persistence is best-effort
+  }
+  return { captured, state: next };
+}
+
+/** Add a capture file to episodes/index.md (idempotent, one line per session). */
+function appendEpisodeIndex(root, stem, title) {
+  const indexPath = join(root, MEMORY_DIR, "memory", "episodes", "index.md");
+  const line = `- [[${stem}|${title}]]`;
+  try {
+    let text = existsSync(indexPath) ? readFileSync(indexPath, "utf8") : "";
+    if (text.includes(`[[${stem}`)) return; // already indexed
+    if (text !== "" && !text.endsWith("\n")) text += "\n";
+    writeFileSync(indexPath, `${text}${line}\n`, "utf8");
+  } catch {
+    // index update is best-effort
+  }
+}
+
 // ── durable vault memory files ──────────────────────────────────────────────
 
 function readMemoryFile(root, relativePath, maxChars) {
@@ -400,7 +570,7 @@ export function parseMemoryConfig(text) {
   if (match === null) return null;
   const config = {};
   for (const line of match[1].split(/\r?\n/)) {
-    const pair = /^(enabled|dialogueIndex|reminders|audit):\s*(true|false)\s*$/i.exec(line.trim());
+    const pair = /^(enabled|dialogueIndex|reminders|audit|autoArchive|sessionCapture):\s*(true|false)\s*$/i.exec(line.trim());
     if (pair !== null) config[pair[1]] = pair[2].toLowerCase() === "true";
   }
   return Object.keys(config).length === 0 ? null : config;
@@ -598,6 +768,87 @@ function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
 }
 
 /**
+ * Set a top-level (non-indented) frontmatter field, appending when absent.
+ * Mirrors memory-admin.mjs setTopField so the preset stays dependency-free.
+ */
+function setTopFieldText(frontmatterText, field, value) {
+  const lines = frontmatterText.split(/\r?\n/);
+  let seen = false;
+  const pattern = new RegExp("^" + field + ":");
+  const updated = lines.map((line) => {
+    if (!/^\s/.test(line) && pattern.test(line)) { seen = true; return field + ": " + value; }
+    return line;
+  });
+  if (!seen) updated.push(field + ": " + value);
+  return updated.join(frontmatterText.includes("\r\n") ? "\r\n" : "\n");
+}
+
+/**
+ * Best-effort sync of usage stats into a strategy card's TOP-LEVEL frontmatter
+ * (strategy cards carry uses/last_used at the top level, not in a hook block).
+ */
+function syncTopLevelStatsToCard(filePath, effectiveUses, lastUsed) {
+  let text;
+  try {
+    text = readFileSync(filePath, "utf8");
+  } catch {
+    return;
+  }
+  const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
+  if (fmMatch === null) return;
+  let fm = fmMatch[1];
+  fm = setTopFieldText(fm, "uses", String(effectiveUses));
+  if (lastUsed !== "") fm = setTopFieldText(fm, "last_used", lastUsed);
+  if (fm === fmMatch[1]) return;
+  try {
+    writeFileSync(filePath, text.replace(fmMatch[1], fm), "utf8");
+  } catch {
+    // advisory only
+  }
+}
+
+/**
+ * Move low-utility cards into `.deepseek/archive/records/` (move, never
+ * delete) and rewrite the records index links so provenance survives. Returns
+ * the moved entries. Best-effort: a failure on one card must not stop the rest.
+ */
+function moveCardsToArchive(root, targets) {
+  const archiveDir = join(root, MEMORY_DIR, "archive", "records");
+  const moved = [];
+  for (const card of targets) {
+    if (typeof card?.filePath !== "string" || !existsSync(card.filePath)) continue;
+    const stem = String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "");
+    if (stem === "") continue;
+    try {
+      mkdirSync(archiveDir, { recursive: true });
+      let dest = join(archiveDir, `${stem}.md`);
+      let suffix = 1;
+      while (existsSync(dest)) { suffix += 1; dest = join(archiveDir, `${stem}-${suffix}.md`); }
+      renameSync(card.filePath, dest);
+      moved.push({ rel: card.rel, stem, archivedStem: suffix === 1 ? stem : `${stem}-${suffix}` });
+    } catch {
+      // leave in place on any maintenance failure
+    }
+  }
+  if (moved.length > 0) {
+    const indexPath = join(root, MEMORY_DIR, "memory", "records", "index.md");
+    if (existsSync(indexPath)) {
+      try {
+        let indexText = readFileSync(indexPath, "utf8");
+        for (const item of moved) {
+          indexText = indexText.replaceAll(`[[${item.stem}|`, `[[archive/${item.archivedStem}|`);
+          indexText = indexText.replaceAll(`[[${item.stem}]]`, `[[archive/${item.archivedStem}]]`);
+        }
+        writeFileSync(indexPath, indexText, "utf8");
+      } catch {
+        // index update is best-effort
+      }
+    }
+  }
+  return moved;
+}
+
+/**
  * Scan every memory card once, merge the note_recall hit statistics, and
  * classify cards into ISM-style buckets: strong / weak / unused / duplicate
  * candidates / unverified. Pure function of the vault's files — no model.
@@ -638,12 +889,17 @@ export function buildAuditReport(root, helpers) {
       const rel = join(dir, file).replace(/\\/g, "/");
       const statEntry = stats[rel] ?? {};
       const statUses = Number.isFinite(statEntry.uses) ? statEntry.uses : 0;
-      const baseUses = Number.isFinite(Number(hook?.uses)) ? Number(hook.uses) : 0;
+      // Strategy cards carry verified/success_rate/uses at the TOP level (no
+      // hook block); records/templates carry them inside hook. Read both so the
+      // audit and promote work uniformly across card types (self-correction P5).
+      const baseUses = Number.isFinite(Number(hook?.uses)) ? Number(hook.uses)
+        : (Number.isFinite(Number(meta.uses)) ? Number(meta.uses) : 0);
       const uses = Math.max(0, Math.trunc(baseUses + statUses));
       const lastUsed = typeof statEntry.last_used === "string" && statEntry.last_used !== ""
         ? statEntry.last_used
-        : (typeof hook?.last_used === "string" ? hook.last_used : "");
-      const successRate = Number.isFinite(Number(hook?.success_rate)) ? Number(hook.success_rate) : null;
+        : (typeof hook?.last_used === "string" ? hook.last_used : (typeof meta.last_used === "string" ? meta.last_used : ""));
+      const successRate = Number.isFinite(Number(hook?.success_rate)) ? Number(hook.success_rate)
+        : (Number.isFinite(Number(meta.success_rate)) ? Number(meta.success_rate) : null);
       const days = daysSinceLocal(meta.updated ?? "");
       cards.push({
         rel,
@@ -655,11 +911,15 @@ export function buildAuditReport(root, helpers) {
         uses,
         lastUsed,
         successRate,
-        verified: typeof hook?.verified === "string" ? hook.verified : null,
+        verified: typeof hook?.verified === "string" ? hook.verified
+          : (typeof meta.verified === "string" ? meta.verified : null),
         days,
         updated: meta.updated ?? "",
         source: meta.source ?? "",
-        related: meta.related ?? ""
+        related: meta.related ?? "",
+        needsReview: String(meta.needs_review ?? "").toLowerCase() === "true",
+        lastWrong: meta.last_wrong ?? "",
+        duplicateOf: meta.duplicate_of ?? ""
       });
     }
   }
@@ -671,9 +931,17 @@ export function buildAuditReport(root, helpers) {
   if (helpers.maintainHookStats !== false) {
     let mergedAny = false;
     for (const card of cards) {
-      if (card.hook === null) continue; // no block-style hook: nothing to sync
       const statEntry = stats[card.rel] ?? {};
-      if (Number.isFinite(statEntry.uses) && statEntry.uses > 0) mergedAny = true;
+      const hasStat = Number.isFinite(statEntry.uses) && statEntry.uses > 0;
+      if (card.hook === null) {
+        // Strategy cards carry uses/last_used at the top level (no hook block).
+        if (card.type === "strategy") {
+          if (hasStat) mergedAny = true;
+          syncTopLevelStatsToCard(card.filePath, card.uses, card.lastUsed);
+        }
+        continue;
+      }
+      if (hasStat) mergedAny = true;
       syncHookStatsToCard(card.filePath, card.uses, card.lastUsed);
     }
     // Reset the per-period counters (card hits AND the passive "__meta__"
@@ -783,6 +1051,33 @@ export function buildAuditReport(root, helpers) {
     }
   }
 
+  // Deterministic duplicate_of marking (self-correction.md P4): the redundant
+  // side of a duplicate pair gets a top-level `duplicate_of` link so retrieval
+  // can de-duplicate. Content merge stays the model's job (keep the richer
+  // evidence/source), so we never auto-supersede here.
+  const keptStems = new Set();
+  for (const pair of duplicates) {
+    const pickRedundant = (x, y) => {
+      if (x.uses !== y.uses) return x.uses < y.uses ? x : y;
+      if ((x.updated ?? "") !== (y.updated ?? "")) return (x.updated ?? "") < (y.updated ?? "") ? x : y;
+      return x.rel > y.rel ? x : y;
+    };
+    const redundant = pickRedundant(pair.a, pair.b);
+    const kept = redundant === pair.a ? pair.b : pair.a;
+    keptStems.add(kept.rel);
+    if (redundant.duplicateOf !== "") continue; // already marked
+    try {
+      const text = readFileSync(redundant.filePath, "utf8");
+      const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
+      if (fmMatch === null) continue;
+      const keptStem = kept.rel.split("/").at(-1).replace(/\.md$/, "");
+      const rewritten = setTopFieldText(fmMatch[1], "duplicate_of", `[[${keptStem}]]`);
+      if (rewritten !== fmMatch[1]) writeFileSync(redundant.filePath, text.replace(fmMatch[1], rewritten), "utf8");
+    } catch {
+      // best-effort; never break the audit
+    }
+  }
+
   // ── heat/utility + antipatterns (memory-review 2026-08) ────────────────────
   // Heat-based utility (MACLA prune × MemoryOS heat × ISM promote/demote):
   // 0.5 × verified strength + 0.3 × usage frequency + 0.2 × recency (90-day).
@@ -806,8 +1101,46 @@ export function buildAuditReport(root, helpers) {
     ((card.successRate !== null && card.successRate <= AUDIT_WEAK_RATE && card.uses >= AUDIT_WEAK_USES) ||
      (card.type === "artifact" && /反例|障碍|失败|mistake|antipattern|avoid/i.test(card.title))));
 
+  // Pending re-review (self-correction.md P2): cards flagged by a ❌ feedback.
+  // Key on needs_review ONLY — it is the actionable flag the model clears after
+  // re-verifying; last_wrong is an informational timestamp that must NOT keep a
+  // card in the list forever. Detection only; the model performs the actual
+  // re-verification per AGENTS.md by reading the source chain.
+  const pendingReview = cards.filter((card) => card.needsReview === true);
+
+  // Auto-archive targets (self-correction.md P3): the strict safe subset —
+  // active, never user-confirmed, zero-use, long-stale, not the kept side of a
+  // duplicate. Detection always runs; the move happens only when
+  // helpers.autoArchive is true (off by default).
+  const autoArchiveTargets = cards.filter((card) =>
+    card.status === "active" &&
+    card.verified !== "user-confirmed" &&
+    card.uses === 0 &&
+    card.days !== null && card.days > AUTO_ARCHIVE_UNUSED_DAYS &&
+    !keptStems.has(card.rel));
+  let archived = [];
+  if (helpers.autoArchive === true && autoArchiveTargets.length > 0) {
+    archived = moveCardsToArchive(root, autoArchiveTargets);
+  }
+
+  // Deterministic promote (self-correction.md P5b): a candidate strategy card
+  // that has been used enough and succeeds often enough becomes active.
+  for (const card of cards) {
+    if (card.status !== "candidate" || card.type !== "strategy") continue;
+    if (card.uses < PROMOTE_USES || card.successRate === null || card.successRate < PROMOTE_RATE) continue;
+    try {
+      const text = readFileSync(card.filePath, "utf8");
+      const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
+      if (fmMatch === null) continue;
+      const rewritten = setTopFieldText(fmMatch[1], "status", "active");
+      if (rewritten !== fmMatch[1]) writeFileSync(card.filePath, text.replace(fmMatch[1], rewritten), "utf8");
+    } catch {
+      // best-effort
+    }
+  }
+
   const lines = [];
-  const counts = { cards: cards.length, strong: strong.length, weak: weak.length, unused: unused.length, duplicates: duplicates.length, unverified: unverified.length, antipatterns: antipatterns.length, archiveCandidates: archiveCandidates.length };
+  const counts = { cards: cards.length, strong: strong.length, weak: weak.length, unused: unused.length, duplicates: duplicates.length, unverified: unverified.length, antipatterns: antipatterns.length, archiveCandidates: archiveCandidates.length, pendingReview: pendingReview.length, autoArchived: archived.length };
   if (cards.length > 0) {
     lines.push(`记忆体检（${today}，共 ${cards.length} 张卡）`);
     if (structural.missingSource.length + structural.brokenLinks.length + structural.notInIndex.length > 0) {
@@ -824,8 +1157,14 @@ export function buildAuditReport(root, helpers) {
     if (antipatterns.length > 0) {
       lines.push("- 反模式（失败经验，供提炼「要避免的错误」）: " + antipatterns.slice(0, 3).map((card) => "[[" + card.rel.replace(/.md$/, "") + "|" + card.title + "]]").join("、"));
     }
+    if (pendingReview.length > 0) {
+      lines.push("- 待重审（被 ❌ 标记，读 source 证据链重判对错后清除 needs_review）: " + pendingReview.slice(0, 3).map((card) => "[[" + card.rel.replace(/.md$/, "") + "|" + card.title + "]]").join("、"));
+    }
     if (archiveCandidates.length > 0) {
       lines.push("- 低效用归档候选（0.5×可靠性+0.3×频次+0.2×新近度）: " + archiveCandidates.map(({ card, utility }) => "[[" + card.rel.replace(/.md$/, "") + "|" + card.title + "]](" + utility + ")").join("、") + "——向用户建议处置，不自行删除。");
+    }
+    if (archived.length > 0) {
+      lines.push("- 已自动归档 " + archived.length + " 张低效用卡（零使用 + 长期陈旧 + 非确认）: " + archived.map((item) => item.stem).slice(0, 3).join("、"));
     }
     for (const [label, items, formatter] of [
       ["strong（可 reinforce）", strong.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
@@ -853,6 +1192,9 @@ export function buildAuditReport(root, helpers) {
     },
     antipatterns: antipatterns.map((card) => card.rel),
     archiveCandidates: archiveCandidates.map(({ card, utility }) => ({ rel: card.rel, title: card.title, utility })),
+    pendingReview: pendingReview.map((card) => card.rel),
+    autoArchiveTargets: autoArchiveTargets.map((card) => ({ rel: card.rel, filePath: card.filePath, title: card.title })),
+    archived: archived.map((item) => item.rel),
     passive,
     report: clip(lines.join("\n"), MAX_AUDIT_CHARS)
   };
@@ -1231,11 +1573,13 @@ function normalizeConfig(config) {
   const dialogueIndexEnabled = config.dialogueIndex !== false;
   const remindersEnabled = config.reminders !== false;
   const auditMaintainHookStats = config.auditMaintainHookStats !== false;
+  const autoArchive = config.autoArchive === true;
+  const sessionCapture = config.sessionCapture !== false;
   const auditIntervalMs = Number.isFinite(config.auditIntervalMs) && config.auditIntervalMs >= 0
     ? config.auditIntervalMs
     : DEFAULT_AUDIT_INTERVAL_MS;
   if (!isAbsolute(sessionsRoot)) throw new TypeError("math-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, auditIntervalMs };
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, autoArchive, sessionCapture, auditIntervalMs };
 }
 
 function fingerprint(logs) {
@@ -1281,10 +1625,36 @@ class MemoryEngine {
   #fingerprint = "";
   #builtAt = 0;
   #auditCache = new Map();
+  #lastCaptureAt = 0;
 
   constructor(config, helpers = {}) {
     this.#config = normalizeConfig(config);
     this.#helpers = helpers;
+  }
+
+  /**
+   * Fire-and-forget dialogue capture (obelisk-comparison.md §5): persist
+   * finished sessions into the episodes layer. Throttled so the assemble-path
+   * trigger never does real work more than once a minute, and the marker makes
+   * each call a cheap metadata scan unless a session actually grew. Never
+   * throws — a capture failure must not break boot or prompt assembly.
+   */
+  captureNow() {
+    const config = this.#config;
+    if (!config.sessionCapture) return;
+    const now = Date.now();
+    if (now - this.#lastCaptureAt < CAPTURE_THROTTLE_MS) return;
+    this.#lastCaptureAt = now;
+    try {
+      const vaultRoot = this.#helpers.resolveWorkspaceRoot
+        ? this.#helpers.resolveWorkspaceRoot(config.vaultRoot, process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT, "")
+        : "";
+      if (vaultRoot === "") return;
+      const state = readCaptureState(vaultRoot);
+      runSessionCapture(vaultRoot, config.sessionsRoot, state);
+    } catch {
+      // advisory; never break the prompt
+    }
   }
 
   cachePathFor(vaultRoot) {
@@ -1331,7 +1701,7 @@ class MemoryEngine {
    * Deterministic memory health report for one vault, at most once per
    * auditIntervalMs (default 24h). Reuses the on-disk report when fresh.
    */
-  auditReportFor(vaultRoot, enabled = this.#config.auditEnabled) {
+  auditReportFor(vaultRoot, enabled = this.#config.auditEnabled, autoArchive = this.#config.autoArchive) {
     const config = this.#config;
     if (!enabled) return undefined;
     const cached = this.#auditCache.get(vaultRoot);
@@ -1349,7 +1719,7 @@ class MemoryEngine {
     }
     let report;
     try {
-      report = buildAuditReport(vaultRoot, { ...this.#helpers, maintainHookStats: config.auditMaintainHookStats });
+      report = buildAuditReport(vaultRoot, { ...this.#helpers, maintainHookStats: config.auditMaintainHookStats, autoArchive });
     } catch {
       return cached; // a failed audit must never break prompt assembly
     }
@@ -1383,7 +1753,7 @@ class MemoryEngine {
       }
       const currentSessionId = agent?.session?.id;
       const dialogueIndex = (ws.dialogueIndex ?? config.dialogueIndexEnabled) ? this.getDialogueIndex(vaultRoot) : { sources: [], entries: [] };
-      const auditReport = this.auditReportFor(vaultRoot, ws.audit ?? config.auditEnabled);
+      const auditReport = this.auditReportFor(vaultRoot, ws.audit ?? config.auditEnabled, ws.autoArchive ?? config.autoArchive);
       const query = latestUserText(agent);
       const memoText = memoDigest(vaultRoot, MAX_INBOX_CHARS, query, this.#helpers, ws.reminders ?? config.remindersEnabled);
       return buildMemorySection({ ...config, vaultRoot }, currentSessionId, dialogueIndex, auditReport, memoText);
@@ -1418,12 +1788,20 @@ export async function apply(ctx, config) {
     const assembled = await next();
     if (context?.agent === undefined) return assembled;
     const text = await engine.sectionForAgent(context.agent);
+    // Dialogue capture (obelisk-comparison.md §5): fire-and-forget, throttled,
+    // marker-idempotent. Runs off the assemble path so it never blocks the
+    // prompt; the per-session lastSeq marker keeps it a cheap no-op most times.
+    setTimeout(() => engine.captureNow(), 0);
     if (text === "") return assembled;
     return {
       ...assembled,
       sections: [...assembled.sections, { name: "dsh-math:memory", text }]
     };
   });
+
+  // Startup sweep: persist any sessions left over from the previous process
+  // (the assemble trigger only fires once a session actually starts).
+  setTimeout(() => engine.captureNow(), 0);
 
   // Apply the dedicated note tools (note_search / note_create / note_links /
   // note_recall) on the same context — reuse the module imported above.

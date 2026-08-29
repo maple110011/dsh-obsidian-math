@@ -7,7 +7,8 @@
 import {
   existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 
 export const FEEDBACK_MESSAGES = {
   confirm: '已确认 ✅ 该记忆升级为 user-confirmed（成功率提至 ≥0.9）',
@@ -102,14 +103,33 @@ export function applyFeedback(filePath, action) {
     const next = Math.max(Number.isFinite(current) ? current : 0, 0.9);
     const rated = setHookField(frontmatter, 'success_rate', String(next));
     if (rated !== null) frontmatter = rated;
+    // A ✅ confirm resolves any prior ❌: clear the re-review flag so the card
+    // leaves the pending-review list (self-correction.md P2).
+    frontmatter = setTopField(frontmatter, 'needs_review', 'false');
   } else if (action === 'wrong') {
+    // Demote (self-correction.md P1b): a ❌ means the card's CONTENT is wrong
+    // (unlike `inapplicable`, which is context-only). Halve success_rate but
+    // cap it below the weak threshold (0.4) so the next audit actually
+    // re-evaluates; downgrade the verification level one step so a
+    // user-confirmed card does not keep its ✅ badge; and flag needs_review
+    // for the deterministic re-review list (self-correction.md P2).
     const rateMatch = /^(\s*)success_rate:\s*([0-9.]+)\s*$/m.exec(frontmatter);
     const current = rateMatch === null ? 0.5 : parseFloat(rateMatch[2]);
     const base = Number.isFinite(current) ? current : 0.5;
-    const next = Math.max(0.05, Math.round(base * 0.5 * 100) / 100);
+    const next = Math.min(Math.max(0.05, Math.round(base * 0.5 * 100) / 100), 0.35);
     const rated = setHookField(frontmatter, 'success_rate', String(next));
     if (rated === null) return { ok: false, message: '该卡片没有 hook 块' };
     frontmatter = rated;
+    const verifiedMatch = /^(\s*)verified:\s*["']?(user-confirmed|cross-referenced|single-source)["']?\s*$/m.exec(frontmatter);
+    if (verifiedMatch !== null && verifiedMatch[2] === 'user-confirmed') {
+      frontmatter = frontmatter.replace(verifiedMatch[0], `${verifiedMatch[1]}verified: cross-referenced`);
+    } else if (verifiedMatch !== null && verifiedMatch[2] === 'cross-referenced') {
+      frontmatter = frontmatter.replace(verifiedMatch[0], `${verifiedMatch[1]}verified: single-source`);
+    }
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    frontmatter = setTopField(frontmatter, 'last_wrong', today);
+    frontmatter = setTopField(frontmatter, 'needs_review', 'true');
   } else if (action === 'inapplicable') {
     // "Not applicable to this context" is NOT evidence the card is wrong:
     // leave success_rate/verified/status untouched so a correct technique is
@@ -375,4 +395,320 @@ export function readAuditText(path) {
     // no report yet
   }
   return '';
+}
+
+// ── dialogue capture (obelisk-comparison.md §5) ──────────────────────────────
+// Host-agnostic session-capture core so the UI (Obsidian panel / dsh web panel)
+// can "save this conversation now" and show "N unsaved". Mirrors the same logic
+// inside dsh/preset/math-memory.mjs runSessionCapture (the auto-capture path);
+// keep the two in sync. Self-contained: only node:fs/path/zlib.
+
+const MEMORY_DIR = '.deepseek';
+const CAPTURE_FILE = join(MEMORY_DIR, 'cache', 'captured-sessions.json');
+const CAPTURE_SCHEMA_VERSION = 1;
+const CAPTURE_USER_CLIP = 4000;
+const CAPTURE_ASSISTANT_CLIP = 4000;
+const CAPTURE_MAX_SESSION_CHARS = 24000;
+const CAPTURE_SCAN_LIMIT = 100000;
+const ZSTD_MAGIC = 4247762216; // little-endian 28 B5 2F FD
+
+function captureClip(text, maxChars) {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars).replace(/\s+\S*$/, '')} …`;
+}
+
+function captureContentText(content) {
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n')
+    .trim();
+}
+
+function scanZstdFrames(buffer) {
+  const frames = [];
+  let offset = 0;
+  while (offset < buffer.length) {
+    const start = offset;
+    if (buffer.length - offset < 4) return frames;
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) {
+      throw new Error(`session-capture: bad zstd frame magic at byte ${offset}`);
+    }
+    offset += 4;
+    if (offset === buffer.length) return frames;
+    const descriptor = buffer.readUInt8(offset);
+    offset += 1;
+    if ((descriptor & 24) !== 0) throw new Error(`session-capture: reserved zstd frame-header bit at byte ${offset - 1}`);
+    const contentSizeFlag = descriptor >>> 6;
+    const singleSegment = (descriptor & 32) !== 0;
+    const hasChecksum = (descriptor & 4) !== 0;
+    const dictionaryFlag = descriptor & 3;
+    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag;
+    const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : (1 << contentSizeFlag);
+    const remainingHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes;
+    if (buffer.length - offset < remainingHeaderBytes) return frames;
+    offset += remainingHeaderBytes;
+    for (;;) {
+      if (buffer.length - offset < 3) return frames;
+      const blockHeader = buffer.readUIntLE(offset, 3);
+      offset += 3;
+      const lastBlock = (blockHeader & 1) !== 0;
+      const blockType = (blockHeader >>> 1) & 3;
+      const blockSize = blockHeader >>> 3;
+      if (blockType === 3) throw new Error(`session-capture: reserved zstd block type at byte ${offset - 3}`);
+      const payloadBytes = blockType === 1 ? 1 : blockSize;
+      if (buffer.length - offset < payloadBytes) return frames;
+      offset += payloadBytes;
+      if (lastBlock) break;
+    }
+    if (hasChecksum) {
+      if (buffer.length - offset < 4) return frames;
+      offset += 4;
+    }
+    frames.push([start, offset]);
+  }
+  return frames;
+}
+
+function decodeSessionLog(buffer) {
+  const events = [];
+  for (const [start, end] of scanZstdFrames(buffer)) {
+    let text;
+    try {
+      text = zstdDecompressSync(buffer.subarray(start, end)).toString('utf8');
+    } catch {
+      continue;
+    }
+    for (const line of text.split('\n')) {
+      if (line.trim() === '') continue;
+      try {
+        events.push(JSON.parse(line));
+      } catch {
+        // ignore malformed lines
+      }
+    }
+  }
+  return events;
+}
+
+function findSessionLogs(sessionsRoot, maxFiles) {
+  const found = [];
+  const walk = (dir) => {
+    let children;
+    try {
+      children = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const child of children) {
+      const path = join(dir, child.name);
+      if (child.isDirectory()) walk(path);
+      else if (child.isFile() && child.name.endsWith('.jsonl.zstd')) {
+        try {
+          const stats = statSync(path);
+          found.push({ path, mtimeMs: stats.mtimeMs, size: stats.size });
+        } catch {
+          // gone while walking
+        }
+      }
+    }
+  };
+  walk(sessionsRoot);
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return found.slice(0, maxFiles);
+}
+
+function distillSession(events, { userClip = 500, assistantClip = 320 } = {}) {
+  const entry = { id: undefined, title: undefined, cwd: undefined, createdAt: undefined, messages: [] };
+  for (const event of events) {
+    if (event?.type === 'session' && typeof event.id === 'string') {
+      entry.id = event.id;
+      entry.cwd = typeof event.cwd === 'string' ? event.cwd : entry.cwd;
+      entry.createdAt = typeof event.createdAt === 'number' ? event.createdAt : entry.createdAt;
+    } else if (event?.type === 'session/title' && typeof event.data?.title === 'string') {
+      entry.title = event.data.title;
+    } else if (event?.type === 'user/message' && event.data?.source?.kind === 'user') {
+      const text = captureContentText(event.data.content);
+      if (text !== '') entry.messages.push({ role: 'user', text: captureClip(text, userClip), time: event.time ?? 0, seq: event.seq });
+    } else if (event?.type === 'assistant/message') {
+      const text = captureContentText(event.data?.message?.content);
+      if (text !== '') entry.messages.push({ role: 'assistant', text: captureClip(text, assistantClip), time: event.time ?? 0, seq: event.seq });
+    }
+  }
+  return entry;
+}
+
+function localDateFromMs(ms) {
+  const d = Number.isFinite(ms) && ms > 0 ? new Date(ms) : new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function planSessionDelta(entry, prior) {
+  const messages = [...(entry?.messages ?? [])].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  if (messages.length === 0) return null;
+  const lastSeq = Number.isFinite(prior?.lastSeq) ? prior.lastSeq : -1;
+  const delta = messages.filter((m) => (m.seq ?? 0) > lastSeq);
+  if (delta.length === 0) return null;
+  return { delta, lastSeq: delta[delta.length - 1].seq ?? 0 };
+}
+
+function renderConversationTail(messages, maxChars) {
+  const kept = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const line = `${messages[i].role === 'user' ? '用户' : '助手'}：${messages[i].text ?? ''}`;
+    if (used + line.length > maxChars) break;
+    kept.push(line);
+    used += line.length + 1;
+  }
+  return kept.length === 0 ? null : kept.reverse().join('\n');
+}
+
+export function readCaptureState(root) {
+  const path = join(root, CAPTURE_FILE);
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    if (parsed !== null && typeof parsed === 'object' &&
+        parsed.schemaVersion === CAPTURE_SCHEMA_VERSION &&
+        parsed.sessions !== null && typeof parsed.sessions === 'object') {
+      return parsed;
+    }
+  } catch {
+    // missing/corrupt: fresh
+  }
+  return { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {} };
+}
+
+function appendEpisodeIndex(root, stem, title) {
+  const indexPath = join(root, MEMORY_DIR, 'memory', 'episodes', 'index.md');
+  const line = `- [[${stem}|${title}]]`;
+  try {
+    let text = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : '';
+    if (text.includes(`[[${stem}`)) return;
+    if (text !== '' && !text.endsWith('\n')) text += '\n';
+    writeFileSync(indexPath, `${text}${line}\n`, 'utf8');
+  } catch {
+    // best-effort
+  }
+}
+
+export function runSessionCapture(root, sessionsRoot, state = undefined) {
+  const next = state !== undefined && state !== null && typeof state === 'object' && state.schemaVersion === CAPTURE_SCHEMA_VERSION
+    ? { schemaVersion: state.schemaVersion, sessions: { ...(state.sessions ?? {}) } }
+    : { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {} };
+  const captured = [];
+  for (const log of findSessionLogs(sessionsRoot, CAPTURE_SCAN_LIMIT)) {
+    let events;
+    try {
+      events = decodeSessionLog(readFileSync(log.path));
+    } catch {
+      continue;
+    }
+    const entry = distillSession(events, { userClip: CAPTURE_USER_CLIP, assistantClip: CAPTURE_ASSISTANT_CLIP });
+    if (entry.id === undefined || entry.messages.length === 0) continue;
+    if (!pathInside(root, entry.cwd ?? '')) continue;
+    const fingerprint = `${log.path}|${log.mtimeMs}|${log.size}`;
+    const prior = next.sessions[entry.id];
+    if (prior !== undefined && prior.fingerprint === fingerprint) continue;
+    const plan = planSessionDelta(entry, prior);
+    if (plan === null) {
+      next.sessions[entry.id] = { lastSeq: prior?.lastSeq ?? -1, fingerprint, file: prior?.file ?? '' };
+      continue;
+    }
+    const body = renderConversationTail(plan.delta, CAPTURE_MAX_SESSION_CHARS);
+    if (body === null) {
+      next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: prior?.file ?? '' };
+      continue;
+    }
+    const date = localDateFromMs(entry.createdAt);
+    const stem = `${date}-${entry.id}`;
+    const rel = join(MEMORY_DIR, 'memory', 'episodes', `${stem}.md`);
+    const abs = join(root, rel);
+    try {
+      const isNew = prior?.file === undefined || prior.file === '';
+      if (isNew) {
+        mkdirSync(dirname(abs), { recursive: true });
+        const header = [
+          `# ${entry.title ?? entry.id}`,
+          '',
+          `> sessionId: ${entry.id} · 自动保存对话 · ${date}`,
+          '',
+          '## 对话（不含思考）',
+          ''
+        ].join('\n');
+        writeFileSync(abs, `${header}${body}\n`, 'utf8');
+      } else {
+        const existing = existsSync(abs) ? readFileSync(abs, 'utf8') : '';
+        const sep = existing.endsWith('\n') ? '' : '\n';
+        writeFileSync(abs, `${existing}${sep}${body}\n`, 'utf8');
+      }
+      appendEpisodeIndex(root, stem, entry.title ?? entry.id);
+      captured.push({ id: entry.id, rel, lastSeq: plan.lastSeq });
+      next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: rel };
+    } catch {
+      // best-effort; leave the marker untouched so it retries next time
+    }
+  }
+  try {
+    mkdirSync(join(root, MEMORY_DIR, 'cache'), { recursive: true });
+    writeFileSync(join(root, CAPTURE_FILE), JSON.stringify(next, null, 2), 'utf8');
+  } catch {
+    // marker persistence is best-effort
+  }
+  return { captured, state: next };
+}
+
+/** Count in-vault sessions that still have uncaptured messages (for the panel badge). */
+export function countUncapturedSessions(root, sessionsRoot) {
+  const state = readCaptureState(root);
+  let count = 0;
+  for (const log of findSessionLogs(sessionsRoot, CAPTURE_SCAN_LIMIT)) {
+    let events;
+    try {
+      events = decodeSessionLog(readFileSync(log.path));
+    } catch {
+      continue;
+    }
+    const entry = distillSession(events, { userClip: CAPTURE_USER_CLIP, assistantClip: CAPTURE_ASSISTANT_CLIP });
+    if (entry.id === undefined || entry.messages.length === 0) continue;
+    if (!pathInside(root, entry.cwd ?? '')) continue;
+    const fingerprint = `${log.path}|${log.mtimeMs}|${log.size}`;
+    const prior = state.sessions[entry.id];
+    if (prior !== undefined && prior.fingerprint === fingerprint) continue;
+    if (planSessionDelta(entry, prior) === null) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * Toggle `.deepseek/config.md` `sessionCapture` (host side, minimal frontmatter
+ * diff; also refreshes nothing else). The panel switches call this.
+ */
+export function setSessionCapture(root, enabled, fallbackTemplate = '') {
+  const configPath = join(root, MEMORY_DIR, 'config.md');
+  let text;
+  if (existsSync(configPath)) {
+    text = readFileSync(configPath, 'utf8');
+  } else {
+    text = fallbackTemplate;
+    if (text === '') throw new Error('config template missing');
+  }
+  const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (fmMatch === null) throw new Error('config.md 没有 frontmatter');
+  let frontmatter = setTopField(fmMatch[1], 'sessionCapture', enabled ? 'true' : 'false');
+  writeFileSync(configPath, text.replace(fmMatch[1], frontmatter), 'utf8');
+}
+
+/** Read whether session capture is enabled (missing config → default on). */
+export function readSessionCaptureEnabled(root) {
+  const configPath = join(root, MEMORY_DIR, 'config.md');
+  try {
+    const raw = readFileSync(configPath, 'utf8');
+    const { meta } = parseMemoryFrontmatter(raw, () => null);
+    return meta.sessionCapture !== 'false';
+  } catch {
+    return true;
+  }
 }

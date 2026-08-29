@@ -6,9 +6,10 @@
 // quality is tracked through passive usage signals instead (see
 // docs/memory/v2-proposal.md §6).
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { zstdCompressSync } from 'node:zlib';
 
 import {
   parseHookFrontmatter,
@@ -27,7 +28,8 @@ import {
   strategySurface,
   strategyMoves,
   strategyRetrieve,
-  strategyAbstraction
+  strategyAbstraction,
+  isRecallEligible
 } from '../dsh/preset/note-tools.mjs';
 import { HOOK_SCHEMA_VERSION } from '../dsh/preset/hook-frontmatter.mjs';
 import {
@@ -41,9 +43,14 @@ import {
   parseMemoryConfig,
   memoryConfigText,
   buildHookHistory,
-  MAX_TOTAL_MEMORY_CHARS
+  MAX_TOTAL_MEMORY_CHARS,
+  distillSession,
+  planSessionDelta,
+  renderConversationTail,
+  localDateFromMs,
+  runSessionCapture
 } from '../dsh/preset/math-memory.mjs';
-import { applyFeedback } from '../dsh/host/memory-admin.mjs';
+import { applyFeedback, setSessionCapture, readSessionCaptureEnabled } from '../dsh/host/memory-admin.mjs';
 
 const results = [];
 function check(name, condition, detail = '') {
@@ -510,6 +517,162 @@ const fbResult = applyFeedback(fbCard, 'inapplicable');
 const fbAfter = readFileSync(fbCard, 'utf8');
 check('feedback: inapplicable marks context but keeps success_rate/verified',
   fbResult.ok === true && /success_rate:\s*0.8/.test(fbAfter) && /verified:\s*user-confirmed/.test(fbAfter) && fbAfter.includes('last_not_applicable'));
+
+// ── 22. self-correction (P1a/P1b/P2/P3/P4/P5) ───────────────────────────────
+// P1a/P4: superseded and duplicate_of cards are evidence only, not candidates.
+check('eligible: superseded card excluded', isRecallEligible('superseded', '') === false);
+check('eligible: duplicate_of card excluded', isRecallEligible('active', '[[rec-b]]') === false);
+check('eligible: normal card eligible', isRecallEligible('active', '') === true && isRecallEligible('', '') === true);
+check('classify: archive tree skipped', classifyVaultDoc('.deepseek/archive/records/rec-x.md') === 'skip');
+
+// P4: duplicate_of written deterministically on the redundant side (rec-c is
+// the lower-uses side of the rec-b/rec-c pair detected in section 4).
+const recCAfter = readFileSync(join(recordsDir, 'rec-c.md'), 'utf8');
+check('audit: duplicate_of written on redundant card', recCAfter.includes('duplicate_of:') && recCAfter.includes('rec-b'));
+
+// P1b: wrong feedback demotes harder and flags re-review.
+const wrongCard = join(recordsDir, 'wrong-card.md');
+writeFileSync(wrongCard, card([
+  '---',
+  'id: wrong-card',
+  'type: fact',
+  'status: active',
+  'updated: 2026-08-10',
+  'title: 待重审错误卡',
+  'hook:',
+  '  operator: probability',
+  '  success_rate: 0.9',
+  '  verified: user-confirmed',
+  '---',
+  '',
+  '# 待重审错误卡'
+]));
+const wrongRes = applyFeedback(wrongCard, 'wrong');
+const wrongAfter = readFileSync(wrongCard, 'utf8');
+check('feedback: wrong caps success_rate at 0.35', wrongRes.ok === true && /success_rate:\s*0.35/.test(wrongAfter));
+check('feedback: wrong downgrades verified one level', /verified:\s*cross-referenced/.test(wrongAfter) && !/verified:\s*user-confirmed/.test(wrongAfter));
+check('feedback: wrong flags needs_review + last_wrong', wrongAfter.includes('needs_review: true') && wrongAfter.includes('last_wrong:'));
+
+// P2: pending-re-review list in the audit.
+const p2Report = buildAuditReport(root, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+check('audit: pending review lists needs_review card', (p2Report.pendingReview ?? []).includes('.deepseek/memory/records/wrong-card.md'));
+check('audit: report carries 待重审 line', p2Report.report.includes('待重审'));
+// confirm resolves a prior ❌ (clears the re-review flag).
+const confirmRes = applyFeedback(wrongCard, 'confirm');
+const confirmAfter = readFileSync(wrongCard, 'utf8');
+check('feedback: confirm clears needs_review', confirmRes.ok === true && /needs_review:\s*false/.test(confirmAfter));
+
+// P5: strategy cards read top-level uses/success_rate and get promoted.
+mkdirSync(join(root, '.deepseek', 'strategy'), { recursive: true });
+writeFileSync(join(root, '.deepseek', 'strategy', 'strat-x.md'), card([
+  '---',
+  'type: strategy',
+  'status: candidate',
+  'difficulty: definition-level-proof',
+  'domain: [analysis]',
+  'provenance: agent',
+  'verified: single-source',
+  'uses: 5',
+  'success_rate: 0.8',
+  'updated: 2026-08-10',
+  '---',
+  '',
+  '# 定义层证明破局'
+]));
+buildAuditReport(root, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+const stratXAfter = readFileSync(join(root, '.deepseek', 'strategy', 'strat-x.md'), 'utf8');
+check('strategy: candidate promoted to active at uses>=3 + rate>=0.6', /^status:\s*active/m.test(stratXAfter));
+
+// P3: auto-archive moves the strict safe subset (off unless autoArchive:true).
+const archCard = join(recordsDir, 'arch-card.md');
+writeFileSync(archCard, card([
+  '---',
+  'id: arch-card',
+  'type: fact',
+  'status: active',
+  'updated: 2026-01-01',
+  'title: 应归档卡',
+  'hook:',
+  '  operator: number-theory',
+  '  uses: 0',
+  '---',
+  '',
+  '# 应归档卡'
+]));
+const p3Report = buildAuditReport(root, { parseHookFrontmatter, tokenize, maintainHookStats: false, autoArchive: true });
+check('auto-archive: target detected in report', (p3Report.autoArchiveTargets ?? []).some((t) => t.rel.includes('arch-card.md')));
+check('auto-archive: card moved out of records/', !existsSync(archCard) && existsSync(join(root, '.deepseek', 'archive', 'records', 'arch-card.md')));
+
+// ── 23. dialogue capture (obelisk-comparison.md) ────────────────────────────
+// Pure helpers first.
+const fakeEvents = [
+  { type: 'session', id: 's1', cwd: root, createdAt: 1787600000000 },
+  { type: 'user/message', seq: 1, time: 1000, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'Q1' }] } },
+  { type: 'assistant/message', seq: 2, time: 2000, data: { message: { content: [{ type: 'reasoning', text: '思考' }, { type: 'text', text: 'A1' }] } } },
+  { type: 'user/message', seq: 3, time: 3000, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'Q2' }] } },
+  { type: 'assistant/message', seq: 4, time: 4000, data: { message: { content: [{ type: 'text', text: 'A2' }] } } }
+];
+const capEntry = distillSession(fakeEvents, { userClip: 4000, assistantClip: 4000 });
+check('capture: distill keeps full conversation, drops reasoning, carries seq',
+  capEntry.messages.length === 4 && !capEntry.messages.map((m) => m.text).join('|').includes('思考') && capEntry.messages.every((m) => Number.isFinite(m.seq)) && capEntry.createdAt === 1787600000000);
+check('capture: planSessionDelta returns only seq > lastSeq', (() => {
+  const p = planSessionDelta(capEntry, { lastSeq: 2 });
+  return p !== null && p.delta.length === 2 && p.delta[0].seq === 3 && p.lastSeq === 4;
+})());
+check('capture: planSessionDelta null when nothing new', planSessionDelta(capEntry, { lastSeq: 4 }) === null);
+check('capture: renderConversationTail keeps the tail', (() => {
+  const t = renderConversationTail([{ role: 'user', text: '早' }, { role: 'assistant', text: '中' }, { role: 'user', text: '晚' }], 10);
+  return t !== null && t.includes('晚') && t.includes('中') && !t.includes('早');
+})());
+check('capture: localDateFromMs formats local date', /^\d{4}-\d{2}-\d{2}$/.test(localDateFromMs(1787600000000)));
+
+// End-to-end: real zstd session logs → episode files + marker.
+const sessionsDir = join(root, 'sessions');
+mkdirSync(sessionsDir, { recursive: true });
+const mkLog = (id, cwd, events) => zstdCompressSync(Buffer.from(events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8'));
+const captureBase = (id) => ({ type: 'session', id, cwd: root, createdAt: Date.now() - 86400000 });
+writeFileSync(join(sessionsDir, 's1.jsonl.zstd'), mkLog('session-cap-1', root, [
+  captureBase('session-cap-1'),
+  { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '如何从依测度收敛到 a.s.' }] } },
+  { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'reasoning', text: '内部思考' }, { type: 'text', text: '用子列论证' }] } } }
+]));
+writeFileSync(join(sessionsDir, 's2.jsonl.zstd'), mkLog('session-cap-2', join(root, '..'), [
+  { type: 'session', id: 'session-cap-2', cwd: join(root, '..'), createdAt: Date.now() },
+  { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '不该进来的会话' }] } }
+]));
+
+const capResult = runSessionCapture(root, sessionsDir);
+const capState = JSON.parse(readFileSync(join(root, '.deepseek', 'cache', 'captured-sessions.json'), 'utf8'));
+const epDir = join(root, '.deepseek', 'memory', 'episodes');
+const epFiles = readdirSync(epDir).filter((f) => f.includes('session-cap-1'));
+check('capture: in-vault session persisted to its own episode file', epFiles.length === 1);
+check('capture: full conversation stored, reasoning excluded', (() => {
+  const t = epFiles.length === 1 ? readFileSync(join(epDir, epFiles[0]), 'utf8') : '';
+  return t.includes('依测度收敛') && t.includes('子列论证') && !t.includes('内部思考');
+})());
+check('capture: marker records lastSeq', capState.sessions?.['session-cap-1']?.lastSeq === 2);
+check('capture: outside-vault session skipped', !('session-cap-2' in (capState.sessions ?? {})) && !capResult.captured.some((c) => c.id === 'session-cap-2'));
+
+// Resume: same session grows → only the delta is appended.
+writeFileSync(join(sessionsDir, 's1.jsonl.zstd'), mkLog('session-cap-1', root, [
+  captureBase('session-cap-1'),
+  { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '如何从依测度收敛到 a.s.' }] } },
+  { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: '用子列论证' }] } } },
+  { type: 'user/message', seq: 3, time: 3, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '再问：反例呢？' }] } },
+  { type: 'assistant/message', seq: 4, time: 4, data: { message: { content: [{ type: 'text', text: '反例见测度收敛不蕴含 a.s.' }] } } }
+]));
+const capResult2 = runSessionCapture(root, sessionsDir);
+const capState2 = JSON.parse(readFileSync(join(root, '.deepseek', 'cache', 'captured-sessions.json'), 'utf8'));
+const epText2 = readFileSync(join(epDir, epFiles[0]), 'utf8');
+check('capture: resume appends only the delta', capState2.sessions?.['session-cap-1']?.lastSeq === 4 && capResult2.captured.length === 1);
+check('capture: resume adds new turn without duplicating old', epText2.includes('反例见测度收敛') && epText2.split('用子列论证').length === 2);
+
+// ── 24. session-capture toggle (UI round-trip through config.md) ────────────
+check('capture-toggle: defaults on when field absent', readSessionCaptureEnabled(root) === true);
+setSessionCapture(root, false);
+check('capture-toggle: writes false', readSessionCaptureEnabled(root) === false && readFileSync(join(root, '.deepseek', 'config.md'), 'utf8').includes('sessionCapture: false'));
+setSessionCapture(root, true);
+check('capture-toggle: writes true back', readSessionCaptureEnabled(root) === true);
 
 rmSync(root, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok).length;

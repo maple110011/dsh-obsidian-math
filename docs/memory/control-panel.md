@@ -35,8 +35,8 @@
 
 | action | 确定性效果 |
 |---|---|
-| `confirm` | `hook.verified → user-confirmed`；`success_rate → max(现有, 0.9)` |
-| `wrong` | `success_rate → max(0.05, 现有 × 0.5)`（Demote，体检的 weak 检测随之生效） |
+| `confirm` | `hook.verified → user-confirmed`；`success_rate → max(现有, 0.9)`；并清除 `needs_review`（一个 ✅ 确认消解先前的 ❌） |
+| `wrong` | `success_rate → min(现有 × 0.5, 0.35)`（一次 ❌ 必落 weak 区）+ `verified` 降一级（user-confirmed→cross-referenced→single-source）+ 写 `needs_review: true` 与 `last_wrong` |
 | `stale` | 顶层 `status → superseded`（不删除，保留证据） |
 | `forget` | 文件移入 `.deepseek/archive/records/`（从不硬删除） |
 
@@ -90,7 +90,7 @@
 
 ## 5. 与现有机制的衔接
 
-- 反馈 = 体检信号源：`wrong` 降 success_rate → 次日体检进入 weak 清单 → 模型按 AGENTS.md 改写或建议归档；
+- 反馈 = 体检信号源：`wrong` 降 success_rate（封顶 0.35）+ 写 `needs_review` → 次日体检进入 weak 清单与「待重审」清单 → 模型按 AGENTS.md 读 source 证据链重判或改写；
 - `confirm` = 验证等级升级的唯一确定性通道（模型无权自升）；
 - `forget` 走归档目录，与“agent 无删除工具、档案永不硬删”的既有原则一致；
 - 反馈写入由插件执行，不经模型、不产生工具调用，用户点击即生效。
