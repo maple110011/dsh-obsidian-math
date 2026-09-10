@@ -541,7 +541,276 @@ export function cjkCharOverlap(queryText, docText) {
 
 // ── memory v3 S1: unified recall corpus (retrieval-v3.md) ───────────────────
 
+/**
+ * Score strategy cards against a challenge query.
+ *
+ * Shared with the QA probes: `note_strategy`'s ranking is BM25 over the card's
+ * surface, multiplied by a verified-level weight (self-correction.md P5a), and
+ * only positive scores are returned. Cards come from
+ * {@link buildRecallDoc} filtered to `kind === "strategy"`.
+ */
+export function rankStrategyCards(cards, query, options = {}) {
+  const { difficulty = "", limit = 3 } = options;
+  const filter = difficulty === "" ? "" : normalizeOperator(difficulty);
+  const queryTokens = tokenize(query);
+  const kept = [];
+  for (const card of cards) {
+    if (card.kind !== "strategy" || card.strategy === "") continue;
+    const cardDifficulty = normalizeOperator(card.difficulty ?? "");
+    if (filter !== "" && cardDifficulty !== filter) continue;
+    if (String(card.status ?? "").trim().toLowerCase() === "superseded") continue;
+    kept.push(card);
+  }
+  const surfaces = kept.map((card) => card.strategy);
+  const stats = computeCorpusStats(surfaces.map((surface) => tokenize(surface)));
+  const verifiedWeight = { "user-confirmed": 1, "cross-referenced": 0.92, "single-source": 0.84 };
+  const scored = kept
+    .map((card) => ({
+      card,
+      score: bm25Score(queryTokens, tokenize(card.strategy), stats) * (verifiedWeight[card.hook?.verified] ?? 0.9)
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  // The strategy layer is where `not_applicable_when` originally lived, so the
+  // same applicability gate applies here (docs/design-intake-2026-09-10.md §1).
+  const excluded = [];
+  const eligible = [];
+  for (const entry of scored) {
+    const hits = entry.card.boundary === "" ? [] : boundaryHits(query, entry.card.boundary);
+    if (hits.length === 0) { eligible.push(entry); continue; }
+    excluded.push({ card: entry.card, hits });
+  }
+  return {
+    difficulty: filter,
+    matches: eligible.slice(0, Math.min(10, Math.max(1, limit))).map(({ card, score }) => ({
+      path: card.rel,
+      title: card.title,
+      difficulty: normalizeOperator(card.difficulty ?? ""),
+      verified: card.hook?.verified ?? "single-source",
+      score: Number(score.toFixed(4))
+    })),
+    excluded: excluded.map(({ card, hits }) => ({
+      path: card.rel,
+      title: card.title,
+      boundary: card.boundary,
+      boundaryHits: hits
+    }))
+  };
+}
+
 const MEMORY_SCAFFOLD_FILES = new Set(["index.md", "_README.md"]);
+
+/**
+ * Build one recall-corpus document from a path plus its raw text.
+ *
+ * Part of the shared pipeline `note_recall` AND the QA probes call, so the
+ * probes exercise the shipped ranking instead of re-deriving it. (They used to
+ * re-implement the score formula; it silently diverged when the hook prior
+ * landed — docs/project-assessment-2026-09-10.md §2 P1-4.)
+ */
+export function buildRecallDoc(rel, raw) {
+  const kind = classifyVaultDoc(rel);
+  if (kind === "skip") return null;
+  const { frontmatter, body } = splitFrontmatter(raw);
+  const name = rel.split("/").at(-1) ?? rel;
+  const hook = frontmatter === null ? null : parseHookFrontmatter(frontmatter);
+  return {
+    kind,
+    rel,
+    title: titleFromDoc(frontmatter, body, name),
+    tags: kind === "note" ? noteTags({ frontmatter, body }) : [],
+    topic: metaScalar(frontmatter, "topic") ?? "",
+    updated: metaScalar(frontmatter, "updated") ?? "",
+    hook,
+    strategy: kind === "strategy" ? strategySurface(frontmatter) : "",
+    status: metaScalar(frontmatter, "status") ?? "",
+    duplicateOf: metaScalar(frontmatter, "duplicate_of") ?? "",
+    difficulty: metaScalar(frontmatter, "difficulty") ?? "",
+    // Applicability boundary (R1 `anti_conditions`, see docs/design-intake-2026-09-10.md
+    // §1): the conditions under which this card must NOT be applied. Read from the
+    // top-level key the strategy layer already uses, or from inside the hook block.
+    boundary: metaScalar(frontmatter, "not_applicable_when")
+      ?? (typeof hook?.not_applicable_when === "string" ? hook.not_applicable_when : "")
+      ?? "",
+    rawFrontmatter: frontmatter ?? "",
+    body
+  };
+}
+
+/**
+ * Split an applicability boundary into the SHORT phrases that make it decidable.
+ *
+ * A boundary is written as prose (`成本非二次（无内积化）或 μ 非绝对连续（映射形式
+ * 不成立…）时，第 3-4 格需改`). Whole-text token overlap against a query is
+ * uselessly small for such a string, so we keep only the short comma-separated
+ * fragments — those are the discriminative ones (`非绝对连续`) — and drop the
+ * long explanatory ones. Keyword-list style boundaries (`非绝对连续、成本非二次`)
+ * survive this unchanged, so both spellings work.
+ */
+export function boundarySegments(text, maxLength = 12) {
+  return String(text ?? "")
+    .split(/[、，,；;。()（）\[\]【】/]|或者|或|时|时需|不要|不能/)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter((part) => part.length >= 2 && part.length <= maxLength);
+}
+
+/** The boundary fragments the query actually mentions, in boundary order. */
+export function boundaryHits(query, boundary, maxLength = 12) {
+  const text = String(query ?? "").replace(/\s+/g, " ").trim();
+  if (text === "") return [];
+  return boundarySegments(boundary, maxLength).filter((segment) => text.includes(segment));
+}
+
+/**
+ * Navigation index documents carry the *map*, not the evidence, so they are
+ * demoted in the ranking. Without this the episodes index outranked the notes
+ * it points at on several real queries: it lists every episode title, so it
+ * matches almost any CJK query on raw character overlap alone.
+ */
+const KIND_CORPUS_WEIGHT = { "episode-index": 0.4, "theorem-index": 0.7 };
+
+/**
+ * The one ranking pipeline: filter → passage → BM25 → blend weights → sort.
+ *
+ * `note_recall` and the QA probes both call this. `docs` are
+ * {@link buildRecallDoc} results; pass `passages`/`docTokens` to reuse a corpus
+ * across queries.
+ *
+ * @returns `{ mode, operator, matches, passages, docTokens }`
+ */
+export function rankRecallDocuments(docs, query, options = {}) {
+  const { tag = "", operator = null, limit = RECALL_DEFAULT_MAX_RESULTS, passages: givenPassages, docTokens: givenTokens, viewPool = "bag" } = options;
+  const safeLimit = Math.min(Math.max(1, Number.isFinite(limit) ? Math.trunc(limit) : RECALL_DEFAULT_MAX_RESULTS), RECALL_HARD_MAX_RESULTS);
+  const queryTokens = tokenize(query);
+
+  const kept = [];
+  for (const doc of docs) {
+    if (tag !== "" && !matchesTagFilter(doc.tags ?? [], tag)) continue;
+    if (!isRecallEligible(doc.status, doc.duplicateOf)) continue;
+    kept.push(doc);
+  }
+
+  const passages = givenPassages ?? kept.map((doc) => composePassage(doc.kind, doc));
+  const docTokens = givenTokens ?? passages.map((passage) => tokenize(passage));
+  const corpusStats = computeCorpusStats(docTokens);
+  const docTokenSets = docTokens.map((tokens) => new Set(tokens));
+  // Multi-view max-pool (experimental, GraphMemix §multi-view): score every named
+  // view with its own length statistics and keep the best one per document, so a
+  // short exact-title match is not diluted by a long body. IDF still comes from
+  // the bag corpus, so only the per-view length normalization differs.
+  const maxPooled = viewPool === "max"
+    ? (() => {
+        const viewsByDoc = kept.map((doc) => composePassageViews(doc.kind, doc));
+        const viewCount = Math.max(0, ...viewsByDoc.map((views) => views.length));
+        const tokenColumns = [];
+        const statsColumns = [];
+        const textColumns = [];
+        for (let v = 0; v < viewCount; v += 1) {
+          const texts = viewsByDoc.map((views) => views[v]?.text ?? "");
+          const tokens = texts.map((text) => tokenize(text));
+          textColumns.push(texts);
+          tokenColumns.push(tokens);
+          statsColumns.push(computeCorpusStats(tokens));
+        }
+        return {
+          raw: kept.map((doc, i) => {
+            let best = 0;
+            for (let v = 0; v < viewCount; v += 1) {
+              if (tokenColumns[v][i].length === 0) continue;
+              best = Math.max(best, bm25Score(queryTokens, tokenColumns[v][i], statsColumns[v]));
+            }
+            return best;
+          }),
+          cjk: kept.map((doc, i) => {
+            let best = 0;
+            for (let v = 0; v < viewCount; v += 1) best = Math.max(best, cjkCharOverlap(query, textColumns[v][i]));
+            return best;
+          }),
+          views: viewsByDoc
+        };
+      })()
+    : null;
+  const rawScores = maxPooled === null
+    ? kept.map((doc, i) => bm25Score(queryTokens, docTokens[i], corpusStats))
+    : maxPooled.raw;
+  const maxScore = Math.max(1e-9, ...rawScores);
+  const priorOf = (doc) => hookPrior(doc.hook, doc.updated);
+  const operatorMatch = (doc) => operator === null || (doc.hook !== null && normalizeOperator(doc.hook.operator) === operator);
+  // BM25 (dominant, semantic/lexical) + CJK char containment (bridges
+  // 子列/子序列-class word-form gaps) + hook prior (promote/demote), then the
+  // per-kind corpus weight for navigation indices.
+  const cjkBonus = maxPooled === null
+    ? kept.map((doc, i) => cjkCharOverlap(query, passages[i]))
+    : maxPooled.cjk;
+  const scored = kept.map((doc, i) => ({
+    doc,
+    i,
+    score: (RECALL_BM25_WEIGHT * (rawScores[i] / maxScore)
+      + RECALL_CJK_WEIGHT * cjkBonus[i]
+      + RECALL_PRIOR_WEIGHT * priorOf(doc)) * (KIND_CORPUS_WEIGHT[doc.kind] ?? 1),
+    operatorMatch: operatorMatch(doc)
+  }));
+
+  let pool = scored;
+  let operatorFallback = false;
+  if (operator !== null) {
+    if (scored.some((entry) => entry.operatorMatch)) pool = scored.filter((entry) => entry.operatorMatch);
+    else operatorFallback = true;
+  }
+  pool = [...pool].sort((a, b) => b.score - a.score);
+
+  // Applicability gate (R1 anti-conditions): a card whose own boundary phrases
+  // appear in the query is NOT offered as a candidate. It is reported instead of
+  // silently dropped — a silent false negative would hide a memory the user has,
+  // and an unexplained one is indistinguishable from "not found" (design-intake
+  // §4 risk 2). Excluded entries never consume a result slot.
+  const boundaryHitsOf = (entry) => (entry.doc.boundary === "" ? [] : boundaryHits(query, entry.doc.boundary));
+  const excluded = [];
+  const eligible = [];
+  for (const entry of pool) {
+    const hits = boundaryHitsOf(entry);
+    if (hits.length === 0) { eligible.push(entry); continue; }
+    excluded.push({ entry, hits });
+  }
+  const top = eligible.slice(0, safeLimit);
+
+  return {
+    mode: operatorFallback ? "fallback" : "unified",
+    operator,
+    // Reported so a caller (and the QA A/B) can tell which pooling produced the
+    // ranking above — declared state, never an assumption.
+    viewPool: maxPooled === null ? "bag" : "max",
+    passages,
+    docTokens,
+    docTokenSets,
+    matches: top.map(({ doc, score, i }) => ({
+      path: doc.rel,
+      kind: doc.kind,
+      title: doc.title,
+      snippet: snippetForPassage(passages[i], queryTokens),
+      verified: typeof doc.hook?.verified === "string" ? doc.hook.verified : null,
+      hookOperator: typeof doc.hook?.operator === "string" ? doc.hook.operator : null,
+      uses: Math.max(0, Math.trunc(hookNumber(doc.hook, "uses", 0))),
+      successRate: Number.isFinite(Number(doc.hook?.success_rate)) ? Number(doc.hook.success_rate) : null,
+      score: Number(score.toFixed(4)),
+      coverage: Number(queryCoverage(queryTokens, docTokenSets[i]).toFixed(2)),
+      // Carried so callers can act on the card without re-joining the corpus.
+      hook: doc.hook,
+      boundary: doc.boundary ?? ""
+    })),
+    // Boundary-excluded cards, with the phrase that triggered the exclusion. The
+    // caller reports them; it must not silently pretend they do not exist.
+    excluded: excluded.map(({ entry, hits }) => ({
+      path: entry.doc.rel,
+      kind: entry.doc.kind,
+      title: entry.doc.title,
+      boundary: entry.doc.boundary,
+      boundaryHits: hits,
+      score: Number(entry.score.toFixed(4))
+    }))
+  };
+}
 
 /**
  * Classify a vault-relative path into the unified corpus kinds. Scaffold and
@@ -575,6 +844,10 @@ export function classifyVaultDoc(rel) {
  * Kind-aware retrieval passage (LeanSearch kind-aware passages, localized):
  * hook cards emphasize hook fields, memos/notes emphasize body heads, index
  * kinds keep their line-based content. Frontmatter is excluded.
+ *
+ * This is the product passage, unchanged since retrieval v3 landed: the token
+ * stream it produces is what every existing ranking, snippet and probe result
+ * was measured on, so it must not be reordered casually.
  */
 export function composePassage(kind, doc) {
   const hookText = [doc.hook?.operator, doc.hook?.pattern, doc.hook?.techniques, doc.hook?.applications, doc.hook?.heuristics, doc.hook?.quantity]
@@ -601,6 +874,55 @@ export function composePassage(kind, doc) {
     default:
       return join(title, (doc.tags ?? []).join(" "), body.slice(0, 1500));
   }
+}
+
+/**
+ * The SAME passage split into named views (title / keywords / body), for the
+ * multi-view max-pool experiment (`rankRecallDocuments(…, { viewPool: "max" })`).
+ *
+ * Why separate views: one concatenated bag length-normalizes as a whole, so a
+ * card whose TITLE matches the query exactly can lose to a card that merely
+ * mentions the words often in a long body. GraphMemix (arXiv:2608.26983) scores
+ * each view separately and keeps the best — see docs/memory/retrieval-v3.md §7.
+ *
+ * This function is deliberately NOT a refactor of `composePassage`: the bag is
+ * frozen (it is what every earlier measurement ran on), so the view split lives
+ * beside it and only the probe's A/B compares them.
+ */
+export function composePassageViews(kind, doc) {
+  const hookText = [doc.hook?.operator, doc.hook?.pattern, doc.hook?.techniques, doc.hook?.applications, doc.hook?.heuristics, doc.hook?.quantity]
+    .filter((part) => Array.isArray(part) ? part.length > 0 : typeof part === "string" && part !== "")
+    .flat()
+    .join(" ");
+  const body = String(doc.body ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---/, "").trim();
+  const title = String(doc.title ?? "");
+  const topic = String(doc.topic ?? "");
+  const viewsWith = (keywordText, bodyLimit, bodyPrefix = "") => [
+    { name: "title", text: title },
+    { name: "keywords", text: keywordText },
+    { name: "body", text: joinParts(bodyPrefix, body.slice(0, bodyLimit)) }
+  ];
+  // The view split carries exactly the fields the bag carries (so the A/B
+  // isolates POOLING, not extra evidence): title | keywords | body.
+  switch (kind) {
+    case "record":
+    case "template":
+      return viewsWith(topic, 800, hookText);
+    case "memo":
+      return viewsWith(topic, 1500);
+    case "topic":
+    case "episode-index":
+    case "theorem-index":
+      return viewsWith("", 2000);
+    case "strategy":
+      return viewsWith(doc.strategy ?? "", 200);
+    default:
+      return viewsWith((doc.tags ?? []).join(" "), 1500);
+  }
+}
+
+function joinParts(...parts) {
+  return parts.filter((part) => part !== "").join(" ");
 }
 
 /**
@@ -1018,11 +1340,29 @@ export async function apply(ctx, config) {
                 coverage: { type: "number", required: true }
               }
             }
+          },
+          excluded: {
+            type: "array",
+            required: true,
+            description: "Candidates withheld by their own applicability boundary (not_applicable_when), with the phrase that matched.",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                path: { type: "string", required: true },
+                title: { type: "string", required: true },
+                boundary: { type: "string", required: true },
+                boundaryHits: { type: "array", required: true, items: { type: "string" } }
+              }
+            }
           }
         }
       },
       render: (_args, value) => {
-        if (value.matches.length === 0) return [{ type: "text", text: "No relevant content found — treat this as a signal to reformulate the query or change approach." }];
+        const withheld = value.excluded.length === 0 ? "" : `\n另有 ${value.excluded.length} 条因**适用边界**被排除（不是"没找到"；若确实需要，先读原文判断边界是否真的成立）：\n${value.excluded.map((item) => `- ${item.title} (${item.path}) — 命中边界「${item.boundaryHits.join("、")}」`).join("\n")}`;
+        if (value.matches.length === 0) {
+          return [{ type: "text", text: `No relevant content found — treat this as a signal to reformulate the query or change approach.${withheld}` }];
+        }
         const kindLabel = { note: "笔记", record: "记忆卡", template: "模板", memo: "备忘录", topic: "主题", "episode-index": "事件", "theorem-index": "定理" };
         const lines = value.matches.map((match) => {
           const extra = [
@@ -1035,7 +1375,7 @@ export async function apply(ctx, config) {
           return `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path}) score ${match.score.toFixed(3)}${extra === "" ? "" : " · " + extra}\n  ${match.snippet}`;
         });
         const weak = value.matches.filter((match) => match.coverage < 0.35).length;
-        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实适用性后再使用——相关 + 已验证 ≠ 适用于本题；${weak} 条 coverage<0.35 属弱信号，多为词面巧合）:\n${lines.join("\n")}` }];
+        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实适用性后再使用——相关 + 已验证 ≠ 适用于本题；${weak} 条 coverage<0.35 属弱信号，多为词面巧合）:\n${lines.join("\n")}${withheld}` }];
       }
     },
     isConcurrencySafe: () => true,
@@ -1054,82 +1394,24 @@ export async function apply(ctx, config) {
         throw new Error(`note_recall: maxResults must be a positive integer`);
       }
       const limit = Math.min(requested, RECALL_HARD_MAX_RESULTS);
-      const queryTokens = tokenize(query);
 
       // One walk covers notes AND memory (no .deepseek exclusion here).
       const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns);
       const docs = [];
       for (const note of notes) {
-        const kind = classifyVaultDoc(note.path);
-        if (kind === "skip") continue;
         const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
         if (raw === null) continue;
-        const { frontmatter, body } = splitFrontmatter(raw);
-        const doc = {
-          kind,
-          rel: note.path,
-          title: titleFromDoc(frontmatter, body, note.name),
-          tags: kind === "note" ? noteTags({ frontmatter, body }) : [],
-          topic: metaScalar(frontmatter, "topic") ?? "",
-          updated: metaScalar(frontmatter, "updated") ?? "",
-          hook: frontmatter === null ? null : parseHookFrontmatter(frontmatter),
-          strategy: kind === "strategy" ? strategySurface(frontmatter) : "",
-          status: metaScalar(frontmatter, "status") ?? "",
-          duplicateOf: metaScalar(frontmatter, "duplicate_of") ?? "",
-          body
-        };
-        if (tag !== "" && !matchesTagFilter(doc.tags, tag)) continue;
-        if (!isRecallEligible(doc.status, doc.duplicateOf)) continue;
-        docs.push(doc);
+        const doc = buildRecallDoc(note.path, raw);
+        if (doc !== null) docs.push(doc);
       }
 
-      const passages = docs.map((doc) => composePassage(doc.kind, doc));
-      const corpusStats = computeCorpusStats(passages.map((passage) => tokenize(passage)));
-      const docTokenSets = passages.map((passage) => new Set(tokenize(passage)));
-      const rawScores = docs.map((doc, i) => bm25Score(queryTokens, tokenize(passages[i]), corpusStats));
-      const maxScore = Math.max(1e-9, ...rawScores);
-      const priorOf = (doc) => hookPrior(doc.hook, doc.updated);
-      const operatorMatch = (doc) => operator === null || (doc.hook !== null && normalizeOperator(doc.hook.operator) === operator);
-      // BM25 (dominant, semantic/lexical) + CJK char containment (bridges
-      // 子列/子序列-class word-form gaps) + hook prior (promote/demote).
-      const cjkBonus = docs.map((doc, i) => cjkCharOverlap(query, passages[i]));
-      const scored = docs.map((doc, i) => ({
-        doc,
-        i,
-        score: RECALL_BM25_WEIGHT * (rawScores[i] / maxScore) + RECALL_CJK_WEIGHT * cjkBonus[i] + RECALL_PRIOR_WEIGHT * priorOf(doc),
-        operatorMatch: operatorMatch(doc)
-      }));
-
-      let pool = scored;
-      let operatorFallback = false;
-      if (operator !== null) {
-        if (scored.some((entry) => entry.operatorMatch)) pool = scored.filter((entry) => entry.operatorMatch);
-        else operatorFallback = true;
-      }
-      pool.sort((a, b) => b.score - a.score);
-      const top = pool.slice(0, limit);
+      const ranked = rankRecallDocuments(docs, query, { tag, operator, limit });
 
       // Hook stats migration (memory v3): the unified entry records hits for
       // hook cards; the daily audit merges them back into uses/last_used.
-      recordRetrievalStats(rootPath, top.filter((entry) => entry.doc.hook !== null).map((entry) => entry.doc.rel));
+      recordRetrievalStats(rootPath, ranked.matches.filter((match) => match.hook !== null).map((match) => match.path));
 
-      return {
-        query,
-        mode: operatorFallback ? "fallback" : "unified",
-        operator,
-        matches: top.map(({ doc, score, i }) => ({
-          path: doc.rel,
-          kind: doc.kind,
-          title: doc.title,
-          snippet: snippetForPassage(passages[i], queryTokens),
-          verified: typeof doc.hook?.verified === "string" ? doc.hook.verified : null,
-          hookOperator: typeof doc.hook?.operator === "string" ? doc.hook.operator : null,
-          uses: Math.max(0, Math.trunc(hookNumber(doc.hook, "uses", 0))),
-          successRate: Number.isFinite(Number(doc.hook?.success_rate)) ? Number(doc.hook.success_rate) : null,
-          score: Number(score.toFixed(4)),
-          coverage: Number(queryCoverage(queryTokens, docTokenSets[i]).toFixed(2))
-        }))
-      };
+      return { query, mode: ranked.mode, operator: ranked.operator, matches: ranked.matches, excluded: ranked.excluded };
     },
     presentCall: (args) => ({ card: "generic", title: "Recall vault content", kind: "search", rawInput: args.query })
   }));
@@ -1166,18 +1448,34 @@ export async function apply(ctx, config) {
                 score: { type: "number", required: true }
               }
             }
+          },
+          excluded: {
+            type: "array",
+            required: true,
+            description: "Strategy cards withheld by their own not_applicable_when boundary, with the matched phrase.",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                path: { type: "string", required: true },
+                title: { type: "string", required: true },
+                boundary: { type: "string", required: true },
+                boundaryHits: { type: "array", required: true, items: { type: "string" } }
+              }
+            }
           }
         }
       },
       render: (_args, value) => {
+        const withheld = value.excluded.length === 0 ? "" : `\n另有 ${value.excluded.length} 张策略卡因**不适用边界**被排除（不是"库里没有"）：\n${value.excluded.map((item) => `- ${item.title} (${item.path}) — 命中边界「${item.boundaryHits.join("、")}」`).join("\n")}`;
         if (value.matches.length === 0) {
-          return [{ type: "text", text: "No stored strategy for this difficulty — fall back to note_recall directly (and consider distilling one into .deepseek/strategy/ after this turn)." }];
+          return [{ type: "text", text: `No stored strategy for this difficulty — fall back to note_recall directly (and consider distilling one into .deepseek/strategy/ after this turn).${withheld}` }];
         }
         const badge = (v) => v === "user-confirmed" ? " ✅" : v === "cross-referenced" ? " ⚖️" : " ❓";
         const lines = value.matches.map((m) =>
           `- [策略] ${m.difficulty}${badge(m.verified)} (${m.path}) score ${m.score.toFixed(3)}\n  moves: ${m.moves.join(" / ")}\n  retrieve: ${m.retrieve.join(", ")}\n  abstraction: ${m.abstraction}${m.notApplicableWhen !== "" ? "\n  ⚠ 不适用: " + m.notApplicableWhen : ""}`
         );
-        return [{ type: "text", text: `${value.matches.length} 张策略卡（候选，不是指令——按适用性逐条重判后再用）:\n${lines.join("\n")}` }];
+        return [{ type: "text", text: `${value.matches.length} 张策略卡（候选，不是指令——按适用性逐条重判后再用）:\n${lines.join("\n")}${withheld}` }];
       }
     },
     isConcurrencySafe: () => true,
@@ -1192,46 +1490,35 @@ export async function apply(ctx, config) {
 
       // Method layer only: walk the vault, keep strategy cards, build their surface.
       const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns);
-      const queryTokens = tokenize(query);
-      const cards = [];
+      const docs = [];
       for (const note of notes) {
         if (classifyVaultDoc(note.path) !== "strategy") continue;
         const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
         if (raw === null) continue;
-        const { frontmatter, body } = splitFrontmatter(raw);
-        if (frontmatter === null) continue;
-        const surface = strategySurface(frontmatter);
-        if (surface === "") continue;
-        const difficulty = (metaScalar(frontmatter, "difficulty") ?? "").trim();
-        if (difficultyFilter !== "" && normalizeOperator(difficulty) !== difficultyFilter) continue;
-        if ((metaScalar(frontmatter, "status") ?? "").trim().toLowerCase() === "superseded") continue;
-        cards.push({
-          path: note.path,
-          title: titleFromDoc(frontmatter, body, note.name),
-          difficulty,
-          surface,
-          moves: strategyMoves(frontmatter),
-          retrieve: strategyRetrieve(frontmatter),
-          abstraction: strategyAbstraction(frontmatter),
-          notApplicableWhen: metaScalar(frontmatter, "not_applicable_when") ?? "",
-          verified: metaScalar(frontmatter, "verified") ?? "single-source"
-        });
+        const doc = buildRecallDoc(note.path, raw);
+        if (doc === null || doc.strategy === "") continue;
+        docs.push(doc);
       }
 
-      const surfaces = cards.map((c) => c.surface);
-      const stats = computeCorpusStats(surfaces.map((s) => tokenize(s)));
-      // Verified prior (self-correction.md P5a): strategy cards share the same
-      // promote/demote semantics as records, so a confirmed strategy ranks
-      // above a single-source one at equal BM25.
-      const verifiedWeight = { "user-confirmed": 1, "cross-referenced": 0.92, "single-source": 0.84 };
-      const scored = cards
-        .map((card) => ({
-          card,
-          score: bm25Score(queryTokens, tokenize(card.surface), stats) * (verifiedWeight[card.verified] ?? 0.9)
-        }))
-        .filter((entry) => entry.score > 0)
-        .sort((a, b) => b.score - a.score);
-      const top = scored.slice(0, limit);
+      const ranked = rankStrategyCards(docs, query, { difficulty: difficultyFilter, limit });
+      const byPath = new Map(docs.map((doc) => [doc.rel, doc]));
+      const top = ranked.matches.map(({ path, score }) => {
+        const doc = byPath.get(path);
+        return {
+          card: {
+            path,
+            title: doc.title,
+            difficulty: doc.difficulty,
+            surface: doc.strategy,
+            moves: strategyMoves(doc.rawFrontmatter),
+            retrieve: strategyRetrieve(doc.rawFrontmatter),
+            abstraction: strategyAbstraction(doc.rawFrontmatter),
+            notApplicableWhen: metaScalar(doc.rawFrontmatter, "not_applicable_when") ?? "",
+            verified: doc.hook?.verified ?? "single-source"
+          },
+          score
+        };
+      });
 
       // Strategy hits feed the same usage stats as records, so the daily audit
       // can promote candidates (self-correction.md P5b).
@@ -1248,7 +1535,8 @@ export async function apply(ctx, config) {
           notApplicableWhen: card.notApplicableWhen,
           verified: card.verified,
           score: Number(score.toFixed(4))
-        }))
+        })),
+        excluded: ranked.excluded
       };
     },
     presentCall: (args) => ({ card: "generic", title: "Retrieve strategy", kind: "search", rawInput: args.query })

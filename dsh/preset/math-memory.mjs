@@ -8,9 +8,10 @@
  *      one-line digest of `.deepseek/inbox/*`). These are maintained BY THE
  *      MODEL through the ordinary file tools, per the vault's AGENTS.md.
  *   2. Distills a small dialogue index from this machine's past dsh session
- *      logs (session.jsonl.zstd files under `$DSH_HOME/sessions/`) — recent user
- *      questions plus short assistant conclusions — so a brand-new session
- *      no longer starts from zero.
+ *      logs (`session.jsonl.zstd`, plus the V3 `session.v3.jsonl.zstd` files
+ *      dsh >= 0.1.5 writes when it migrates a session) under
+ *      `$DSH_HOME/sessions/` — recent user questions plus short assistant
+ *      conclusions — so a brand-new session no longer starts from zero.
  *   3. Runs a deterministic memory health check (memory v2, informed by
  *      arXiv:2606.31191 ISM): scans records/templates/inbox frontmatter and
  *      hook fields at most once per day per vault, writes
@@ -24,17 +25,22 @@
  * hook-stats sync described above (opt-out via auditMaintainHookStats: false);
  * its own cache files live at `<vault>/.deepseek/cache/*`.
  *
- * Session logs are concatenated Zstandard frames (one JSONL batch per frame).
- * Node >= 22.5 provides zstd through node:zlib; on older runtimes the
- * dialogue index is skipped and only vault memory files are injected.
+ * Session logs are concatenated Zstandard frames (one JSONL batch per frame) —
+ * unchanged between the V2 and V3 session data formats introduced by dsh
+ * 0.1.5, so the frame scanner and event readers below work on both. Node >=
+ * 22.5 provides zstd through node:zlib; on older runtimes the dialogue index is
+ * skipped and only vault memory files are injected.
  */
 
 import * as zlib from "node:zlib";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   statSync,
   writeFileSync
@@ -78,6 +84,12 @@ const AUDIT_FILE = join(CACHE_DIR, "memory-audit.json");
 const RETRIEVAL_STATS_FILE = join(CACHE_DIR, "retrieval-stats.json");
 const DEFAULT_AUDIT_INTERVAL_MS = 86400000; // 24h
 const MAX_AUDIT_CHARS = 1200;
+// Bumped whenever the audit JSON's shape changes in a way a reader (the memory
+// panels, memory-admin.mjs) must know about. 1 = flat `report` string only;
+// 2 = structured `counts/decisions/thresholds/sections/structural` + the
+// checklist/human split. Readers must treat a missing/older version as
+// "text only" instead of guessing at absent fields.
+export const AUDIT_SCHEMA_VERSION = 2;
 // Hard total cap for the assembled memory section — a final safety bound on
 // top of the per-layer budgets above (which sum to ~14.6K content chars plus
 // fixed headers/instructions). Keeps the injected section bounded even when
@@ -157,6 +169,98 @@ export function scanZstdFrames(buffer) {
   return frames;
 }
 
+/**
+ * Bytes read from the head of a session log to reach its header frame. The
+ * harness writes a small checksummed header frame first, so the opening 64 KiB
+ * always holds the whole `{type:"session", id, cwd, …}` line. Reading every
+ * header in a 389-log store costs ~0.6 s, against ~34 s to decode every log —
+ * and decoding them is what made a memory-panel open freeze the whole app.
+ */
+const SESSION_HEAD_BYTES = 65536;
+/** Bound on the per-revision header verdict cache (see isVaultSessionLog). */
+const SESSION_HEADER_CACHE_MAX = 4096;
+
+/**
+ * Read ONE session log's header line without decoding the whole file.
+ *
+ * Only `{ type, id, cwd }` is needed to decide whether a log belongs to this
+ * vault. Decoding every log just to learn that threw away ~98% of the work on a
+ * real store (the vault owned 40 of 389 logs). Returns null when the head holds
+ * no complete frame, the first line is not JSON, or the file is unreadable.
+ */
+function readSessionHeader(path) {
+  let fd;
+  try {
+    if (typeof zlib.zstdDecompressSync !== "function") return null;
+    fd = openSync(path, "r");
+    const size = statSync(path).size;
+    const want = Math.min(SESSION_HEAD_BYTES, size);
+    if (want <= 0) return null;
+    const head = Buffer.allocUnsafe(want);
+    const read = readSync(fd, head, 0, want, 0);
+    const bounds = scanZstdFrames(head.subarray(0, read));
+    if (bounds.length === 0) return null;
+    const text = zlib.zstdDecompressSync(head.subarray(bounds[0][0], bounds[0][1])).toString("utf8");
+    for (const line of text.split("\n")) {
+      if (line.trim() === "") continue;
+      const parsed = JSON.parse(line);
+      return parsed !== null && typeof parsed === "object" ? parsed : null;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // already closed
+      }
+    }
+  }
+}
+
+/**
+ * Memoised "does this log belong to `root`" verdict, keyed by file revision
+ * (`path|mtimeMs|size`). The map lives for the process lifetime, which is what
+ * keeps the per-turn cost a Map hit instead of a store walk; a grown log has a
+ * new key and is re-read.
+ */
+const sessionHeaderCache = new Map();
+
+function isVaultSessionLog(root, log) {
+  if (root === "") return true;
+  const key = `${log.path}|${log.mtimeMs}|${log.size}`;
+  const cached = sessionHeaderCache.get(key);
+  if (cached !== undefined) return cached;
+  const header = readSessionHeader(log.path);
+  const cwd = header !== null && header.type === "session" && typeof header.cwd === "string" ? header.cwd : null;
+  if (sessionHeaderCache.size >= SESSION_HEADER_CACHE_MAX) sessionHeaderCache.clear();
+  const verdict = cwd !== null && pathIsInside(root, cwd);
+  sessionHeaderCache.set(key, verdict);
+  return verdict;
+}
+
+/**
+ * The newest session logs belonging to `vaultRoot`, newest first.
+ *
+ * The vault filter is applied BEFORE the `maxFiles` slice. Selecting the newest
+ * `maxFiles` logs across every project and filtering afterwards (the previous
+ * behaviour) both decoded other workspaces' conversations and could leave the
+ * index empty whenever a busier project owned the newest files.
+ */
+function vaultSessionLogs(sessionsRoot, vaultRoot, maxFiles) {
+  const all = findSessionLogs(sessionsRoot, CAPTURE_SCAN_LIMIT);
+  if (vaultRoot === "") return all.slice(0, maxFiles);
+  const kept = [];
+  for (const log of all) {
+    if (!isVaultSessionLog(vaultRoot, log)) continue;
+    kept.push(log);
+    if (kept.length >= maxFiles) break;
+  }
+  return kept;
+}
+
 /** Decode one full session artifact into its JSONL event objects. */
 export function decodeZstdSessionLog(buffer) {
   const events = [];
@@ -206,12 +310,18 @@ function clip(text, maxChars) {
  * budgets while the capture pass keeps a much larger per-message budget.
  */
 export function distillSession(events, { userClip = 500, assistantClip = 320 } = {}) {
-  const entry = { id: undefined, title: undefined, cwd: undefined, createdAt: undefined, messages: [] };
+  const entry = { id: undefined, title: undefined, cwd: undefined, createdAt: undefined, origin: undefined, isSubagent: false, messages: [] };
   for (const event of events) {
     if (event?.type === "session" && typeof event.id === "string") {
       entry.id = event.id;
       entry.cwd = typeof event.cwd === "string" ? event.cwd : entry.cwd;
       entry.createdAt = typeof event.createdAt === "number" ? event.createdAt : entry.createdAt;
+      // V3-only onboarding fields. They are what makes "this conversation is a
+      // delegated child" decidable at all — a V2 header has neither, so a V2
+      // subagent session stays indistinguishable and is kept.
+      entry.origin = typeof event.origin === "string" ? event.origin : entry.origin;
+      entry.isSubagent = event.origin === "subagent"
+        || (Number.isFinite(event.delegationDepth) && event.delegationDepth > 0);
     } else if (event?.type === "session/title" && typeof event.data?.title === "string") {
       entry.title = event.data.title;
     } else if (event?.type === "user/message" && event.data?.source?.kind === "user") {
@@ -230,6 +340,84 @@ export function distillSession(events, { userClip = 500, assistantClip = 320 } =
 }
 
 // ── session root walking ────────────────────────────────────────────────────
+
+/**
+ * The identity of the session an artifact belongs to.
+ *
+ * Since dsh 0.1.5 (session data format V3) ONE session can own two artifacts in
+ * the same directory: the V2 original `session.jsonl.zstd` and the migrated
+ * `session.v3.jsonl.zstd`. The migration generates the new file while KEEPING
+ * the old one (upstream: "版本迁移生成新版日志并保留原文件"), so the pair is a
+ * durable state, not a transition — and both names end in `.jsonl.zstd`, so the
+ * walker below would otherwise treat one conversation as two.
+ *
+ * Real layout: `<sessionsRoot>/<projectKey>/<session-id>/session[.v3].jsonl.zstd`
+ * — the file name is the constant, the session directory carries the identity.
+ * So the key is the first ancestor directory above the file that is not the
+ * generic root itself. In a flat `<id>.jsonl.zstd` store (tests, hand-made
+ * fixtures) there is no such ancestor and the file stem serves as the key.
+ *
+ * Deriving the key from the PATH — never from file contents — is deliberate:
+ * the walker must stay able to reject other workspaces without decoding a
+ * single log (see the header-read note above).
+ */
+export function sessionLogKey(path) {
+  const segments = String(path).split(/[\\/]/).filter((s) => s !== "");
+  const stem = (name) => {
+    let value = String(name);
+    while (value.includes(".")) {
+      const next = value.replace(/\.[^.]+$/, "");
+      if (next === value) break;
+      value = next;
+    }
+    return value;
+  };
+  for (let i = segments.length - 2; i >= 0; i -= 1) {
+    const candidate = segments[i];
+    if (/^sessions?$/i.test(candidate)) break; // the generic root: stop looking
+    const key = stem(candidate);
+    if (key !== "") return key;
+  }
+  const file = segments[segments.length - 1];
+  return file === undefined ? "" : stem(file);
+}
+
+/**
+ * Collapse same-session artifacts to ONE authoritative log each.
+ *
+ * Two discriminators, in order:
+ *   1. the `.v3.` variant label — the migrated artifact is the live one, and it
+ *      is the authoritative version even when its mtime ties with the original
+ *      (the migration can write both inside one filesystem timestamp tick);
+ *   2. mtime, newest first — the only signal available when a session directory
+ *      somehow holds two artifacts of the same flavour.
+ *
+ * The result stays mtime-descending, which is what every caller's `maxFiles`
+ * window assumes. Dedup happens BEFORE any slice, so `maxFiles` keeps meaning
+ * "at most N sessions".
+ */
+export function selectAuthoritativeLogs(logs) {
+  const best = new Map();
+  const flat = [];
+  for (const log of logs) {
+    const key = sessionLogKey(log.path);
+    if (!key) {
+      flat.push(log);
+      continue;
+    }
+    const current = best.get(key);
+    if (current === undefined || isNewerArtifact(log, current)) best.set(key, log);
+  }
+  return [...flat, ...best.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/** True when `candidate` should replace `incumbent` as the authoritative artifact. */
+function isNewerArtifact(candidate, incumbent) {
+  const candidateV3 = /\.v3\./.test(candidate.path);
+  const incumbentV3 = /\.v3\./.test(incumbent.path);
+  if (candidateV3 !== incumbentV3) return candidateV3;
+  return candidate.mtimeMs > incumbent.mtimeMs;
+}
 
 /** Recursively list session artifacts, newest first, bounded by `maxFiles`. */
 export function findSessionLogs(sessionsRoot, maxFiles = MAX_LOG_FILES) {
@@ -255,8 +443,9 @@ export function findSessionLogs(sessionsRoot, maxFiles = MAX_LOG_FILES) {
     }
   };
   walk(sessionsRoot);
-  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return found.slice(0, maxFiles);
+  // One session = one artifact (see selectAuthoritativeLogs), which also
+  // returns the list mtime-descending for the `maxFiles` window.
+  return selectAuthoritativeLogs(found).slice(0, maxFiles);
 }
 
 /**
@@ -266,7 +455,10 @@ export function findSessionLogs(sessionsRoot, maxFiles = MAX_LOG_FILES) {
 export function buildDialogueIndex(sessionsRoot, maxEntries, maxChars, maxFiles = MAX_LOG_FILES, vaultRoot = "") {
   const sources = [];
   const sessions = [];
-  for (const log of findSessionLogs(sessionsRoot, maxFiles)) {
+  // Vault-filtered BEFORE decoding (and before the maxFiles slice): decoding
+  // every project's logs to discard ~98% of them was the single most expensive
+  // thing on the prompt-assembly path.
+  for (const log of vaultSessionLogs(sessionsRoot, vaultRoot, maxFiles)) {
     let buffer;
     try {
       buffer = readFileSync(log.path);
@@ -404,12 +596,30 @@ function readCaptureState(root) {
  * keeps other workspaces out. Best-effort: a failure on one session must not
  * stop the rest. Returns `{ captured, state }`; writes the marker itself.
  */
-export function runSessionCapture(root, sessionsRoot, state = undefined) {
+export function runSessionCapture(root, sessionsRoot, state = undefined, opts = {}) {
+  const { captureSubagents = false } = opts;
   const next = state !== undefined && state !== null && typeof state === "object" && state.schemaVersion === CAPTURE_SCHEMA_VERSION
-    ? { schemaVersion: state.schemaVersion, sessions: { ...(state.sessions ?? {}) } }
-    : { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {} };
+    ? { schemaVersion: state.schemaVersion, sessions: { ...(state.sessions ?? {}) }, scanned: { ...(state.scanned ?? {}) } }
+    : { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {}, scanned: {} };
   const captured = [];
+  // Per-log scan cache: `scanned[logPath] = { fp, inVault, pending }` at the
+  // given `path|mtimeMs|size` revision. A log is decoded only when it is new,
+  // has grown, or is known to still hold an unwritten delta — so another
+  // workspace's conversations are read once and then never again, instead of
+  // being fully decompressed on every capture pass.
+  const scanned = next.scanned;
+  let dirty = false;
   for (const log of findSessionLogs(sessionsRoot, CAPTURE_SCAN_LIMIT)) {
+    const fingerprint = `${log.path}|${log.mtimeMs}|${log.size}`;
+    const record = scanned[log.path];
+    if (record !== undefined && record.fp === fingerprint && !(record.inVault === true && record.pending === true)) continue;
+    // Cheap gate: only this vault's sessions are ever captured.
+    const header = readSessionHeader(log.path);
+    if (header !== null && (header.type !== "session" || typeof header.id !== "string" || !pathIsInside(root, header.cwd ?? ""))) {
+      scanned[log.path] = { fp: fingerprint, inVault: false, pending: false };
+      dirty = true;
+      continue;
+    }
     let events;
     try {
       events = decodeZstdSessionLog(readFileSync(log.path));
@@ -417,19 +627,32 @@ export function runSessionCapture(root, sessionsRoot, state = undefined) {
       continue;
     }
     const entry = distillSession(events, { userClip: CAPTURE_USER_CLIP, assistantClip: CAPTURE_ASSISTANT_CLIP });
-    if (entry.id === undefined || entry.messages.length === 0) continue;
-    if (!pathIsInside(root, entry.cwd ?? "")) continue; // only THIS vault's sessions
-    const fingerprint = `${log.path}|${log.mtimeMs}|${log.size}`;
+    if (entry.id === undefined || entry.messages.length === 0 || !pathIsInside(root, entry.cwd ?? "")) {
+      scanned[log.path] = { fp: fingerprint, inVault: false, pending: false };
+      dirty = true;
+      continue;
+    }
+    // A delegated child replays its parent's prefix: capturing it would store
+    // the same conversation again under a second id. Marked scanned so the
+    // decision is not re-derived on every pass.
+    if (entry.isSubagent && captureSubagents !== true) {
+      scanned[log.path] = { fp: fingerprint, inVault: false, pending: false };
+      dirty = true;
+      continue;
+    }
     const prior = next.sessions[entry.id];
-    if (prior !== undefined && prior.fingerprint === fingerprint) continue; // unchanged
     const plan = planSessionDelta(entry, prior);
     if (plan === null) {
       next.sessions[entry.id] = { lastSeq: prior?.lastSeq ?? -1, fingerprint, file: prior?.file ?? "" };
+      scanned[log.path] = { fp: fingerprint, inVault: true, pending: false };
+      dirty = true;
       continue;
     }
     const body = renderConversationTail(plan.delta, CAPTURE_MAX_SESSION_CHARS);
     if (body === null) {
       next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: prior?.file ?? "" };
+      scanned[log.path] = { fp: fingerprint, inVault: true, pending: false };
+      dirty = true;
       continue;
     }
     const date = localDateFromMs(entry.createdAt);
@@ -458,15 +681,19 @@ export function runSessionCapture(root, sessionsRoot, state = undefined) {
       appendEpisodeIndex(root, stem, entry.title ?? entry.id);
       captured.push({ id: entry.id, rel, lastSeq: plan.lastSeq });
       next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: rel };
+      scanned[log.path] = { fp: fingerprint, inVault: true, pending: false };
+      dirty = true;
     } catch {
       // best-effort; leave the marker untouched so it retries next time
     }
   }
-  try {
-    mkdirSync(join(root, CACHE_DIR), { recursive: true });
-    writeFileSync(join(root, CAPTURE_FILE), JSON.stringify(next, null, 2), "utf8");
-  } catch {
-    // marker persistence is best-effort
+  if (dirty) {
+    try {
+      mkdirSync(join(root, CACHE_DIR), { recursive: true });
+      writeFileSync(join(root, CAPTURE_FILE), JSON.stringify(next, null, 2), "utf8");
+    } catch {
+      // marker persistence is best-effort
+    }
   }
   return { captured, state: next };
 }
@@ -522,14 +749,20 @@ export function parseMemoFrontmatter(text) {
 
 const CAPTURE_POLICY_FILE = join(MEMORY_DIR, "capture-policy.md");
 const CAPTURE_MODES = new Set(["auto", "ask", "off"]);
-const DEFAULT_CAPTURE_POLICY = { idea: "ask", fact: "auto", preference: "auto" };
+// One gate per memory layer, so the user never has to reason about which
+// "three-write step" a given file belongs to (see docs/memory/control-panel.md
+// §2.4). `structure` was added after the layers grew: topics / theorems /
+// templates / strategy are index-and-structure writes, and gating them behind
+// the content gates (`fact`/`preference`) made the ask-mode prompt fire for
+// "add one line to an index". Default `auto` = the behaviour before this field
+// existed, so an untouched vault does not start asking more often.
+const DEFAULT_CAPTURE_POLICY = { idea: "ask", fact: "ask", preference: "ask", structure: "auto" };
 
 /**
  * Parse the vault's user-maintained capture policy
- * (.deepseek/capture-policy.md frontmatter): idea / fact / preference ×
- * auto / ask / off. Missing file, missing fields, or unknown values fall
- * back to the defaults — which reproduce the pre-policy behavior (ideas ask,
- * facts and preferences auto per the three-write protocol).
+ * (.deepseek/capture-policy.md frontmatter): idea / fact / preference /
+ * structure × auto / ask / off. Missing file, missing fields, or unknown values
+ * fall back to the defaults.
  */
 export function parseCapturePolicy(text) {
   const policy = { ...DEFAULT_CAPTURE_POLICY };
@@ -537,7 +770,7 @@ export function parseCapturePolicy(text) {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
   if (match === null) return policy;
   for (const line of match[1].split(/\r?\n/)) {
-    const pair = /^(idea|fact|preference):\s*([A-Za-z_-]+)\s*$/.exec(line.trim());
+    const pair = /^(idea|fact|preference|structure):\s*([A-Za-z_-]+)\s*$/.exec(line.trim());
     if (pair !== null && CAPTURE_MODES.has(pair[2])) policy[pair[1]] = pair[2];
   }
   return policy;
@@ -570,7 +803,7 @@ export function parseMemoryConfig(text) {
   if (match === null) return null;
   const config = {};
   for (const line of match[1].split(/\r?\n/)) {
-    const pair = /^(enabled|dialogueIndex|reminders|audit|autoArchive|sessionCapture):\s*(true|false)\s*$/i.exec(line.trim());
+    const pair = /^(enabled|dialogueIndex|reminders|audit|autoArchive|sessionCapture|captureSubagents):\s*(true|false)\s*$/i.exec(line.trim());
     if (pair !== null) config[pair[1]] = pair[2].toLowerCase() === "true";
   }
   return Object.keys(config).length === 0 ? null : config;
@@ -748,23 +981,45 @@ function rewriteHookStats(frontmatterText, uses, lastUsed) {
  * Best-effort deterministic sync of usage statistics into a card's hook block.
  * Only touches `uses` / `last_used` lines; any parse surprise leaves the
  * file untouched. The agent itself never maintains these two fields.
+ *
+ * @returns `true` when the file now carries `uses: <effectiveUses>` (including
+ *   "nothing to change"), `false` when the write could not be performed. The
+ *   audit counts the `false`s: a silently failed sync used to look identical to
+ *   a successful one (design-intake §1 item 5).
  */
 function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
   let text;
   try {
     text = readFileSync(filePath, "utf8");
   } catch {
-    return;
+    return false;
   }
   const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
-  if (fmMatch === null) return;
+  if (fmMatch === null) return false;
   const rewritten = rewriteHookStats(fmMatch[1], effectiveUses, lastUsed);
-  if (rewritten === null || rewritten === fmMatch[1]) return;
+  if (rewritten === null) return false;
+  if (rewritten === fmMatch[1]) return verifyUsesWritten(text, effectiveUses, true);
   try {
-    writeFileSync(filePath, text.replace(fmMatch[1], rewritten), "utf8");
+    const next = replaceLeadingFrontmatter(text, fmMatch, rewritten);
+    writeFileSync(filePath, next, "utf8");
+    // Post-condition, not an assumption: read back what we just claimed to write.
+    return verifyUsesWritten(next, effectiveUses, true);
   } catch {
-    // Stats sync is advisory; never let it break the prompt.
+    return false;
   }
+}
+
+/**
+ * True when `text` declares `uses: <expected>` somewhere in its leading
+ * frontmatter (inside the hook block for hook cards, at the top level for
+ * strategy cards).
+ */
+function verifyUsesWritten(text, expected, anyIndent) {
+  const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
+  if (fmMatch === null) return false;
+  const pattern = anyIndent ? /^\s*uses:\s*(-?\d+)\s*$/m : /^uses:\s*(-?\d+)\s*$/m;
+  const found = pattern.exec(fmMatch[1]);
+  return found !== null && Number(found[1]) === Number(expected);
 }
 
 /**
@@ -784,65 +1039,115 @@ function setTopFieldText(frontmatterText, field, value) {
 }
 
 /**
+ * Splice a rewritten frontmatter block back into a file BY OFFSET.
+ *
+ * The obvious `text.replace(fmMatch[1], rewritten)` is wrong here in two ways,
+ * both reachable from agent-authored cards:
+ *   1. the second argument is a REPLACEMENT STRING, so `$$`/`$&`/`$'`/`` $` ``
+ *      inside the frontmatter get expanded (`title: 关于 $$ 的表示` would lose a
+ *      `$`; `$&` would inject the entire matched block). memory-admin.mjs had the
+ *      same defect, fixed there; a math vault is exactly where `$$` shows up in
+ *      a title.
+ *   2. a string needle replaces the first occurrence ANYWHERE in the file, not
+ *      necessarily the leading block the regex matched.
+ * Offsets remove both hazards.
+ */
+function replaceLeadingFrontmatter(text, fmMatch, rewritten) {
+  return text.slice(0, fmMatch.index) + rewritten + text.slice(fmMatch.index + fmMatch[1].length);
+}
+
+// Exported for the regression suite: the hazard it removes (a `$`-bearing
+// frontmatter used as a replacement STRING) is invisible until it corrupts a
+// real card, so the property is asserted directly.
+export { replaceLeadingFrontmatter as __replaceLeadingFrontmatterForTest };
+
+/**
  * Best-effort sync of usage stats into a strategy card's TOP-LEVEL frontmatter
  * (strategy cards carry uses/last_used at the top level, not in a hook block).
+ * @returns `true` on success (or nothing to change), `false` when the write did
+ *   not land — see {@link syncHookStatsToCard}.
  */
 function syncTopLevelStatsToCard(filePath, effectiveUses, lastUsed) {
   let text;
   try {
     text = readFileSync(filePath, "utf8");
   } catch {
-    return;
+    return false;
   }
   const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
-  if (fmMatch === null) return;
-  let fm = fmMatch[1];
-  fm = setTopFieldText(fm, "uses", String(effectiveUses));
-  if (lastUsed !== "") fm = setTopFieldText(fm, "last_used", lastUsed);
-  if (fm === fmMatch[1]) return;
+  if (fmMatch === null) return false;
+  // `fmMatch[1]` INCLUDES both `---` delimiters, so appending a field to it puts
+  // the line AFTER the closing delimiter — i.e. in the BODY. That is exactly how
+  // `strategy/strat-ot-structure-proof.md` ended up with two stray `uses: 0`
+  // lines outside its frontmatter: the first audit appended one, the next added
+  // another, and every reader (which parses the frontmatter) ignored them. The
+  // read-back verification in `syncTopLevelStatsToCard`'s caller is what finally
+  // exposed it; splice inside the delimiters here.
+  const inner = /^---\r?\n([\s\S]*?)\r?\n---$/.exec(fmMatch[1]);
+  if (inner === null) return false;
+  const crlf = fmMatch[1].includes("\r\n");
+  const sep = crlf ? "\r\n" : "\n";
+  let body = setTopFieldText(inner[1], "uses", String(effectiveUses));
+  if (lastUsed !== "") body = setTopFieldText(body, "last_used", lastUsed);
+  const fm = `---${sep}${body}${sep}---`;
+  if (fm === fmMatch[1]) return verifyUsesWritten(text, effectiveUses, false);
   try {
-    writeFileSync(filePath, text.replace(fmMatch[1], fm), "utf8");
+    const next = replaceLeadingFrontmatter(text, fmMatch, fm);
+    writeFileSync(filePath, next, "utf8");
+    return verifyUsesWritten(next, effectiveUses, false);
   } catch {
-    // advisory only
+    return false;
   }
 }
 
 /**
- * Move low-utility cards into `.deepseek/archive/records/` (move, never
- * delete) and rewrite the records index links so provenance survives. Returns
- * the moved entries. Best-effort: a failure on one card must not stop the rest.
+ * Move low-utility cards into `.deepseek/archive/<layer>/` (move, never delete)
+ * and rewrite that layer's index links so provenance survives. Returns the moved
+ * entries. Best-effort: a failure on one card must not stop the rest.
+ *
+ * The destination and the rewritten index follow the card's OWN layer. Both used
+ * to be hardcoded to `records` (written when records were the only archivable
+ * layer): a strategy card was filed under `archive/records/` and its line in
+ * `strategy/index.md` was never touched, leaving a dangling link — found in the
+ * 2026-09-10 design-iteration audit.
  */
 function moveCardsToArchive(root, targets) {
-  const archiveDir = join(root, MEMORY_DIR, "archive", "records");
   const moved = [];
   for (const card of targets) {
     if (typeof card?.filePath !== "string" || !existsSync(card.filePath)) continue;
-    const stem = String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "");
+    const rel = String(card.rel ?? "");
+    const stem = rel.split("/").at(-1).replace(/\.md$/, "");
     if (stem === "") continue;
+    const segments = rel.split("/");
+    const layer = segments[0] === MEMORY_DIR && segments[1] === "memory" ? segments[2] : segments[1];
+    if (typeof layer !== "string" || !/^[a-z][a-z0-9-]{0,31}$/.test(layer)) continue;
+    const archiveDir = join(root, MEMORY_DIR, "archive", layer);
     try {
       mkdirSync(archiveDir, { recursive: true });
       let dest = join(archiveDir, `${stem}.md`);
       let suffix = 1;
       while (existsSync(dest)) { suffix += 1; dest = join(archiveDir, `${stem}-${suffix}.md`); }
       renameSync(card.filePath, dest);
-      moved.push({ rel: card.rel, stem, archivedStem: suffix === 1 ? stem : `${stem}-${suffix}` });
+      moved.push({ rel, layer, stem, archivedStem: suffix === 1 ? stem : `${stem}-${suffix}` });
     } catch {
       // leave in place on any maintenance failure
     }
   }
-  if (moved.length > 0) {
-    const indexPath = join(root, MEMORY_DIR, "memory", "records", "index.md");
-    if (existsSync(indexPath)) {
-      try {
-        let indexText = readFileSync(indexPath, "utf8");
-        for (const item of moved) {
-          indexText = indexText.replaceAll(`[[${item.stem}|`, `[[archive/${item.archivedStem}|`);
-          indexText = indexText.replaceAll(`[[${item.stem}]]`, `[[archive/${item.archivedStem}]]`);
-        }
-        writeFileSync(indexPath, indexText, "utf8");
-      } catch {
-        // index update is best-effort
+  // Rewrite each affected layer's index once, with only its own moves.
+  for (const layer of new Set(moved.map((item) => item.layer))) {
+    const indexPath = layer === "strategy"
+      ? join(root, MEMORY_DIR, "strategy", "index.md")
+      : join(root, MEMORY_DIR, "memory", layer, "index.md");
+    if (!existsSync(indexPath)) continue;
+    try {
+      let indexText = readFileSync(indexPath, "utf8");
+      for (const item of moved.filter((entry) => entry.layer === layer)) {
+        indexText = indexText.replaceAll(`[[${item.stem}|`, `[[archive/${item.archivedStem}|`);
+        indexText = indexText.replaceAll(`[[${item.stem}]]`, `[[archive/${item.archivedStem}]]`);
       }
+      writeFileSync(indexPath, indexText, "utf8");
+    } catch {
+      // index update is best-effort
     }
   }
   return moved;
@@ -900,6 +1205,19 @@ export function buildAuditReport(root, helpers) {
         : (typeof hook?.last_used === "string" ? hook.last_used : (typeof meta.last_used === "string" ? meta.last_used : ""));
       const successRate = Number.isFinite(Number(hook?.success_rate)) ? Number(hook.success_rate)
         : (Number.isFinite(Number(meta.success_rate)) ? Number(meta.success_rate) : null);
+      // Negative-transfer accounting (R1 `usage.harmed`, design-intake §1 item 2):
+      // how often this card was used and made things WORSE. `uses`/`success_rate`
+      // cannot express "used a lot and misled a lot"; this counter can.
+      const harmed = Math.max(0, Math.trunc(
+        Number.isFinite(Number(hook?.harmed)) ? Number(hook.harmed)
+          : (Number.isFinite(Number(meta.harmed)) ? Number(meta.harmed) : 0)
+      ));
+      // Provenance witness (R1 ladder, item 3): the ONLY deterministic path that
+      // may raise `verified` above single-source is a user confirmation, which
+      // writes `verified_by: user`. A card claiming a higher level without that
+      // witness was promoted by the agent itself — flag it, never auto-fix it.
+      const verifiedBy = typeof hook?.verified_by === "string" ? hook.verified_by
+        : (typeof meta.verified_by === "string" ? meta.verified_by : "");
       const days = daysSinceLocal(meta.updated ?? "");
       cards.push({
         rel,
@@ -909,6 +1227,9 @@ export function buildAuditReport(root, helpers) {
         status: meta.status ?? "active",
         hook,
         uses,
+        effectiveUses: uses,
+        harmed,
+        verifiedBy,
         lastUsed,
         successRate,
         verified: typeof hook?.verified === "string" ? hook.verified
@@ -928,6 +1249,10 @@ export function buildAuditReport(root, helpers) {
   // FIX(B1): after merging the note_recall hit counts into hook.uses, the
   // stats entries are zeroed — otherwise every daily audit re-adds the same
   // hits and uses grows without bound.
+  //
+  // Every write here is a CLAIM, so each one is verified by reading the file
+  // back (design-intake §1 item 5: "report degraded instead of silent success").
+  const postconditions = { statsWrites: 0, statsFailures: [], unmergeableStats: [], statsResetFailed: false, hookHistoryWritten: true };
   if (helpers.maintainHookStats !== false) {
     let mergedAny = false;
     for (const card of cards) {
@@ -937,12 +1262,20 @@ export function buildAuditReport(root, helpers) {
         // Strategy cards carry uses/last_used at the top level (no hook block).
         if (card.type === "strategy") {
           if (hasStat) mergedAny = true;
-          syncTopLevelStatsToCard(card.filePath, card.uses, card.lastUsed);
+          postconditions.statsWrites += 1;
+          if (!syncTopLevelStatsToCard(card.filePath, card.uses, card.lastUsed)) postconditions.statsFailures.push(card.rel);
+        } else if (hasStat) {
+          // A card with neither a hook block nor top-level strategy stats has
+          // nowhere to record the hits — and the reset below would zero them.
+          // Say so instead of dropping them silently.
+          mergedAny = true;
+          postconditions.unmergeableStats.push(card.rel);
         }
         continue;
       }
       if (hasStat) mergedAny = true;
-      syncHookStatsToCard(card.filePath, card.uses, card.lastUsed);
+      postconditions.statsWrites += 1;
+      if (!syncHookStatsToCard(card.filePath, card.uses, card.lastUsed)) postconditions.statsFailures.push(card.rel);
     }
     // Reset the per-period counters (card hits AND the passive "__meta__"
     // signal) whenever there is anything to consume. Merged-or-not, the meta
@@ -956,21 +1289,24 @@ export function buildAuditReport(root, helpers) {
       cleaned["__meta__"] = { calls: 0, empty: 0 };
       try {
         writeFileSync(join(root, RETRIEVAL_STATS_FILE), JSON.stringify(cleaned, null, 2), "utf8");
+        const check = JSON.parse(readFileSync(join(root, RETRIEVAL_STATS_FILE), "utf8"));
+        postconditions.statsResetFailed = Number(check?.__meta__?.calls ?? -1) !== 0;
       } catch {
         // best-effort; a failed reset only re-inflates counts, never breaks boot
+        postconditions.statsResetFailed = true;
       }
     }
   }
 
   // Hook usage history (panel trend): one snapshot per day per hook card, with
   // the merged uses — trends must reflect the final post-merge numbers.
-  writeHookHistory(root, cards);
+  postconditions.hookHistoryWritten = writeHookHistory(root, cards);
 
   // ── structural integrity checks (retrieval v3 S6) ──────────────────────────
   // The three-write protocol is model-executed; these deterministic checks give
   // the daily audit a structural backstop: records without source, provenance
   // links pointing at nothing, and cards missing from the records index.
-  const structural = { missingSource: [], brokenLinks: [], notInIndex: [] };
+  const structural = { missingSource: [], brokenLinks: [], notInIndex: [], unjustifiedUpgrade: [], usesMismatch: [] };
   const extractLinks = (raw) => {
     const links = [];
     const expression = /\[\[([^\[\]|#]+)(?:#[^\]\[]*)?(?:\|[^\]\[]*)?\]\]/g;
@@ -1001,6 +1337,12 @@ export function buildAuditReport(root, helpers) {
     }
   })();
   for (const card of cards) {
+    // Provenance ladder (machine-checkable, design-intake §1 item 3): AGENTS.md
+    // says the agent may only write `single-source`; every higher level needs a
+    // user confirmation, which is the only writer of `verified_by: user`.
+    if (card.verified !== null && card.verified !== "single-source" && card.verifiedBy !== "user") {
+      structural.unjustifiedUpgrade.push(`${card.title}(${card.verified})`);
+    }
     if (!card.rel.includes("/records/")) continue; // source discipline applies to record cards
     if (card.source.trim() === "") structural.missingSource.push(card.title);
     for (const target of extractLinks(card)) {
@@ -1008,6 +1350,26 @@ export function buildAuditReport(root, helpers) {
     }
     const stem = card.rel.split("/").at(-1).replace(/\.md$/, "");
     if (recordsIndexText !== "" && !recordsIndexText.includes(`[[${stem}`)) structural.notInIndex.push(card.title);
+  }
+
+  // Post-condition on the stats sync: a card we claimed to update must now
+  // DECLARE the merged value. A leftover mismatch means the write did not land
+  // (read-only file, concurrent editor, parse surprise) — reported, never
+  // auto-retried, because silently "fixing" a user's file is worse than saying
+  // so. This is the declared-vs-effective reconciliation of design-intake §1
+  // item 4; the panel shows the same effective number (declared + pending).
+  for (const card of cards) {
+    let text = "";
+    try {
+      text = readFileSync(card.filePath, "utf8");
+    } catch {
+      structural.usesMismatch.push(card.rel);
+      continue;
+    }
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
+    const declared = /^\s*uses:\s*(-?\d+)\s*$/m.exec(fm);
+    const value = declared === null ? 0 : Number(declared[1]);
+    if (!Number.isFinite(value) || value !== card.uses) structural.usesMismatch.push(card.rel);
   }
 
   const strong = cards.filter((card) => card.successRate !== null && card.successRate >= AUDIT_STRONG_RATE && card.uses >= 1);
@@ -1072,7 +1434,7 @@ export function buildAuditReport(root, helpers) {
       if (fmMatch === null) continue;
       const keptStem = kept.rel.split("/").at(-1).replace(/\.md$/, "");
       const rewritten = setTopFieldText(fmMatch[1], "duplicate_of", `[[${keptStem}]]`);
-      if (rewritten !== fmMatch[1]) writeFileSync(redundant.filePath, text.replace(fmMatch[1], rewritten), "utf8");
+      if (rewritten !== fmMatch[1]) writeFileSync(redundant.filePath, replaceLeadingFrontmatter(text, fmMatch, rewritten), "utf8");
     } catch {
       // best-effort; never break the audit
     }
@@ -1133,70 +1495,249 @@ export function buildAuditReport(root, helpers) {
       const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
       if (fmMatch === null) continue;
       const rewritten = setTopFieldText(fmMatch[1], "status", "active");
-      if (rewritten !== fmMatch[1]) writeFileSync(card.filePath, text.replace(fmMatch[1], rewritten), "utf8");
+      if (rewritten !== fmMatch[1]) writeFileSync(card.filePath, replaceLeadingFrontmatter(text, fmMatch, rewritten), "utf8");
     } catch {
       // best-effort
     }
   }
 
-  const lines = [];
-  const counts = { cards: cards.length, strong: strong.length, weak: weak.length, unused: unused.length, duplicates: duplicates.length, unverified: unverified.length, antipatterns: antipatterns.length, archiveCandidates: archiveCandidates.length, pendingReview: pendingReview.length, autoArchived: archived.length };
+  // ── two registers, one source of truth ───────────────────────────────────
+  // The audit used to produce ONE string that was (a) injected into the model's
+  // prompt, (b) written to cache/memory-audit.json, and (c) rendered verbatim in
+  // both memory panels. It reads as an imperative checklist addressed to the
+  // agent, so the human saw "——按 AGENTS.md 补 source、修断链、补索引行。" next to
+  // raw `[[.deepseek/...|title]]` and a 0-1 "utility" scalar (user report:
+  // 「几乎就是 dsh 的输出记录，令人不知所云」).
+  //
+  // Now: `sections` carries the structured facts (so any surface renders from
+  // data, not by re-parsing prose), `checklist` is the terse model-facing block,
+  // and `human` is what a person reads. All three are derived from the same
+  // arrays, so they cannot drift.
+  // `archived` is produced by the move above, so every list built here must
+  // exclude the cards that just left the vault — otherwise the report tells the
+  // user to archive a card it has already archived (the file is gone; the row
+  // would be dead). One set, applied to all sections and to `decisions`.
+  const archivedRels = new Set(archived.map((item) => item.rel));
+  const live = (card) => !archivedRels.has(card.rel);
+  const cardRef = (card) => ({ rel: card.rel, title: card.title });
+  const liveArchiveCandidates = archiveCandidates.filter(({ card }) => live(card));
+  const livePendingReview = pendingReview.filter(live);
+  const liveDuplicates = duplicates.filter(({ a, b }) => live(a) && live(b));
+  const sections = {
+    strong: strong.filter(live).map(cardRef),
+    weak: weak.filter(live).map(cardRef),
+    unused: unused.filter(live).map((card) => ({ ...cardRef(card), days: card.days ?? null })),
+    unverified: unverified.filter(live).map(cardRef),
+    duplicates: liveDuplicates.map(({ a, b }) => ({ a: cardRef(a), b: cardRef(b) })),
+    pendingReview: livePendingReview.map((card) => ({ ...cardRef(card), lastWrong: card.lastWrong ?? "" })),
+    archiveCandidates: liveArchiveCandidates.map(({ card, utility }) => ({ ...cardRef(card), utility })),
+    antipatterns: antipatterns.filter(live).map(cardRef),
+    // Negative-transfer accounting: cards that were used and made things worse.
+    harmed: cards.filter((card) => live(card) && card.harmed > 0)
+      .map((card) => ({ ...cardRef(card), harmed: card.harmed, uses: card.uses })),
+    autoArchiveTargets: autoArchiveTargets.map((card) => ({ ...cardRef(card), filePath: card.filePath })),
+    archived: archived.map((item) => ({ rel: item.rel, stem: item.stem }))
+  };
+  const thresholds = {
+    unusedDays: AUDIT_UNUSED_DAYS,
+    unverifiedDays: AUDIT_UNVERIFIED_DAYS,
+    weakUses: AUDIT_WEAK_USES,
+    weakRate: AUDIT_WEAK_RATE,
+    strongRate: AUDIT_STRONG_RATE,
+    duplicateJaccard: AUDIT_DUP_JACCARD,
+    autoArchiveUnusedDays: AUTO_ARCHIVE_UNUSED_DAYS
+  };
+
+  // What needs a HUMAN decision (the panel's headline number).
+  const decisions = {
+    reviewCards: livePendingReview.length,
+    cleanupCards: liveArchiveCandidates.length + liveDuplicates.length,
+    total: livePendingReview.length + liveArchiveCandidates.length + liveDuplicates.length
+  };
+
+  // `counts` keeps its v1 key set (readers written against 0.7.x must not break)
+  // but now counts only cards that are still in the vault.
+  const counts = {
+    cards: cards.length - archivedRels.size,
+    strong: sections.strong.length,
+    weak: sections.weak.length,
+    unused: sections.unused.length,
+    duplicates: sections.duplicates.length,
+    unverified: sections.unverified.length,
+    antipatterns: sections.antipatterns.length,
+    archiveCandidates: sections.archiveCandidates.length,
+    pendingReview: sections.pendingReview.length,
+    harmed: sections.harmed.length,
+    autoArchived: sections.archived.length
+  };
+
+  // Degraded instead of silent success (R2 `status:"degraded"`, design-intake §1
+  // item 5). The audit performs deterministic writes; when one of them cannot be
+  // confirmed, the report says so rather than reporting a clean run. Four of the
+  // bugs fixed on 2026-09-10 were exactly this shape.
+  const warnings = [];
+  if (postconditions.statsFailures.length > 0) {
+    warnings.push(`${postconditions.statsFailures.length}/${postconditions.statsWrites} 张卡的 uses 回写未确认：${postconditions.statsFailures.slice(0, 3).join("、")}`);
+  }
+  if (postconditions.statsResetFailed) warnings.push("检索统计的重置未确认（下一轮体检可能重复计入同一批命中）");
+  if (postconditions.unmergeableStats.length > 0) {
+    warnings.push(`${postconditions.unmergeableStats.length} 张卡的命中无处可写（既无 hook 块也不是策略卡），这批 hits 会在重置时丢失：${postconditions.unmergeableStats.slice(0, 3).join("、")}`);
+  }
+  if (!postconditions.hookHistoryWritten) warnings.push("hook 历史快照写入未确认（面板趋势可能停在上一轮）");
+  if (structural.usesMismatch.length > 0) {
+    warnings.push(`${structural.usesMismatch.length} 张卡的声明 uses 与合并值不一致：${structural.usesMismatch.slice(0, 3).join("、")}`);
+  }
+  const status = warnings.length === 0 ? "ok" : "degraded";
+
+  /** Model-facing checklist: terse, imperative, paths and thresholds included. */
+  const checklistLines = [];
   if (cards.length > 0) {
-    lines.push(`记忆体检（${today}，共 ${cards.length} 张卡）`);
+    checklistLines.push(`记忆体检（${today}，共 ${cards.length} 张卡）${status === "degraded" ? "［DEGRADED］" : ""}`);
+    if (status === "degraded") checklistLines.push(`- ⚠️ 未确认项：${warnings.join("；")}`);
+    if (sections.harmed.length > 0) {
+      checklistLines.push(`- 负反馈（用过但结果更差）: ${sections.harmed.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]](${card.harmed}/${card.uses})`).join("、")}`);
+    }
+    if (structural.unjustifiedUpgrade.length > 0) {
+      checklistLines.push(`- 越权升级（verified 高于 single-source 但不是用户确认写入的）: ${structural.unjustifiedUpgrade.slice(0, 3).join("、")}`);
+    }
     if (structural.missingSource.length + structural.brokenLinks.length + structural.notInIndex.length > 0) {
       const structuralParts = [];
       if (structural.missingSource.length > 0) structuralParts.push(`缺 source: ${structural.missingSource.length} 张（${structural.missingSource.slice(0, 3).join("、")}）`);
       if (structural.brokenLinks.length > 0) structuralParts.push(`断链: ${structural.brokenLinks.length} 处（${structural.brokenLinks.slice(0, 2).join("；")}）`);
       if (structural.notInIndex.length > 0) structuralParts.push(`未入索引: ${structural.notInIndex.length} 张（${structural.notInIndex.slice(0, 3).join("、")}）`);
-      lines.push(`- 结构校验：${structuralParts.join("；")}——按 AGENTS.md 补 source、修断链、补索引行。`);
+      checklistLines.push(`- 结构校验：${structuralParts.join("；")}`);
     }
     if (passive.calls > 0) {
       const emptyPct = Math.round((passive.empty / passive.calls) * 100);
-      lines.push("- 检索健康：近 " + passive.calls + " 次 note_recall，空结果 " + passive.empty + " 次（" + emptyPct + "%）——空结果率高时先改进查询蒸馏，不要硬凑。");
+      checklistLines.push(`- 检索健康：上次体检以来 ${passive.calls} 次检索，空结果 ${passive.empty} 次（${emptyPct}%）`);
     }
-    if (antipatterns.length > 0) {
-      lines.push("- 反模式（失败经验，供提炼「要避免的错误」）: " + antipatterns.slice(0, 3).map((card) => "[[" + card.rel.replace(/.md$/, "") + "|" + card.title + "]]").join("、"));
+    const listOf = (items, limit = 3, withDays = false) => items.slice(0, limit)
+      .map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]${withDays && card.days !== null ? `(${card.days}天)` : ""}`)
+      .join("、");
+    if (sections.antipatterns.length > 0) checklistLines.push(`- 反模式: ${listOf(sections.antipatterns)}`);
+    if (sections.pendingReview.length > 0) checklistLines.push(`- 待重审: ${listOf(sections.pendingReview)}`);
+    if (sections.archiveCandidates.length > 0) {
+      checklistLines.push(`- 低效用归档候选: ${sections.archiveCandidates.map((c) => `[[${c.rel.replace(/\.md$/, "")}|${c.title}]](${c.utility})`).join("、")}`);
     }
-    if (pendingReview.length > 0) {
-      lines.push("- 待重审（被 ❌ 标记，读 source 证据链重判对错后清除 needs_review）: " + pendingReview.slice(0, 3).map((card) => "[[" + card.rel.replace(/.md$/, "") + "|" + card.title + "]]").join("、"));
-    }
-    if (archiveCandidates.length > 0) {
-      lines.push("- 低效用归档候选（0.5×可靠性+0.3×频次+0.2×新近度）: " + archiveCandidates.map(({ card, utility }) => "[[" + card.rel.replace(/.md$/, "") + "|" + card.title + "]](" + utility + ")").join("、") + "——向用户建议处置，不自行删除。");
-    }
-    if (archived.length > 0) {
-      lines.push("- 已自动归档 " + archived.length + " 张低效用卡（零使用 + 长期陈旧 + 非确认）: " + archived.map((item) => item.stem).slice(0, 3).join("、"));
-    }
-    for (const [label, items, formatter] of [
-      ["strong（可 reinforce）", strong.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
-      ["weak（建议改写并重置成功率）", weak.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
-      ["unused（>30 天零使用）", unused.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`],
-      ["unverified（单一来源 >60 天）", unverified.slice(0, 3), (card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`]
-    ]) {
+    if (sections.archived.length > 0) checklistLines.push(`- 已自动归档 ${sections.archived.length} 张: ${sections.archived.slice(0, 3).map((a) => a.stem).join("、")}`);
+    for (const [label, items] of [["strong", sections.strong], ["weak", sections.weak], ["unused", sections.unused], ["unverified", sections.unverified]]) {
       if (items.length === 0) continue;
-      lines.push(`- ${label}: ${items.map(formatter).join("、")}`);
+      checklistLines.push(`- ${label}: ${listOf(items, 3, label === "unused")}`);
     }
-    if (duplicates.length > 0) {
-      lines.push(`- 疑似重复（同算子、pattern+techniques Jaccard ≥ ${AUDIT_DUP_JACCARD}）: ${duplicates.map(({ a, b }) => `[[${a.rel.replace(/\.md$/, "")}|${a.title}]] ↔ [[${b.rel.replace(/\.md$/, "")}|${b.title}]]`).join("；")}`);
+    if (sections.duplicates.length > 0) {
+      checklistLines.push(`- 疑似重复: ${sections.duplicates.map(({ a, b }) => `[[${a.rel.replace(/\.md$/, "")}|${a.title}]] ↔ [[${b.rel.replace(/\.md$/, "")}|${b.title}]]`).join("；")}`);
     }
   } else {
-    lines.push("（尚无记忆卡，无可体检内容）");
+    checklistLines.push("（尚无记忆卡，无可体检内容）");
   }
+
+  /**
+   * Human-facing summary: answers "how is my memory, and what needs me?".
+   * Counts-only headline (no invented 0-100 score), then one line per thing the
+   * user can act on. Identifiers (note_recall / success_rate / needs_review /
+   * Jaccard) and `.deepseek/...` paths are deliberately absent.
+   */
+  const humanLines = [];
+  if (cards.length > 0) {
+    const reliable = counts.strong;
+    const headline = [
+      `记忆体检 ${today}`,
+      // Scoped on purpose: the audit only maintains records/templates/strategy
+      // (they carry hook statistics and a lifecycle). topics/theorems are
+      // navigation cards and are never "low-utility → archive", so the panel's
+      // per-layer counts and this number legitimately differ — say which cards
+      // this counts instead of leaving the reader to wonder.
+      `${counts.cards} 张卡（记录/模板/策略）`,
+      `${reliable} 张可靠`,
+      counts.weak > 0 ? `${counts.weak} 张待改写` : "",
+      counts.unused > 0 ? `${counts.unused} 张长期没用` : "",
+      decisions.total > 0 ? `需要你决定 ${decisions.total} 件` : "暂无需要你决定的事"
+    ].filter((part) => part !== "");
+    humanLines.push(headline.join(" · "));
+    if (status === "degraded") {
+      humanLines.push(`⚠️ 本次体检有未确认项（不是"全部正常"）：${warnings.join("；")}。`);
+    }
+    if (sections.harmed.length > 0) {
+      const names = sections.harmed.slice(0, 3).map((c) => `「${c.title}」`).join("、");
+      humanLines.push(`🧨 ${sections.harmed.length} 张卡"用过但结果更差"：${names}${sections.harmed.length > 3 ? " …" : ""}——它们不是"内容错"，而是"用了反而误导"，值得改写适用边界或归档。`);
+    }
+    if (structural.unjustifiedUpgrade.length > 0) {
+      humanLines.push(`🔓 ${structural.unjustifiedUpgrade.length} 张卡的验证等级高于"单源"，但不是由你的确认写入的——按规则升级只能来自你的 ✅；助手会重判或降回。`);
+    }
+    if (decisions.reviewCards > 0) {
+      humanLines.push(`✍️ ${decisions.reviewCards} 张卡被你标过「错」，助手会在相关讨论时读来源证据链重判；你也可以直接在下面点 ✅ 或 ❌。`);
+    }
+    if (counts.weak > 0) {
+      humanLines.push(`🩹 ${counts.weak} 张用过但成功率偏低，助手会在相关讨论时改写它们的内容或适用边界。`);
+    }
+    if (counts.unused > 0) {
+      const names = sections.unused.slice(0, 3).map((c) => `「${c.title}」${c.days === null ? "" : `（${c.days} 天）`}`).join("、");
+      humanLines.push(`🕸 ${counts.unused} 张超过 ${thresholds.unusedDays} 天没被用到：${names}${counts.unused > 3 ? " …" : ""}。可以点「归档」把它们移进 archive（移动而非删除，可逆）。`);
+    }
+    if (counts.duplicates > 0) {
+      humanLines.push(`🔁 ${counts.duplicates} 组疑似重复，助手会合并成一张：${sections.duplicates.slice(0, 2).map(({ a, b }) => `「${a.title}」↔「${b.title}」`).join("；")}`);
+    }
+    if (counts.unverified > 0) {
+      humanLines.push(`❓ ${counts.unverified} 张仍是单一来源、且已超过 ${thresholds.unverifiedDays} 天没有互证——用到它们时请留意。`);
+    }
+    if (passive.calls > 0) {
+      const emptyPct = Math.round((passive.empty / passive.calls) * 100);
+      humanLines.push(`🔍 上次体检以来检索 ${passive.calls} 次，其中 ${passive.empty} 次没找到内容（${emptyPct}%）${emptyPct >= 30 ? "——偏高，助手会先改进检索用词。" : "。"}`);
+    }
+    if (sections.archived.length > 0) {
+      humanLines.push(`📦 本次体检自动归档了 ${sections.archived.length} 张低效用卡（在 .deepseek/archive/ 下按层存放，可找回）。`);
+    }
+    if (decisions.total === 0 && counts.weak === 0) humanLines.push("（没有需要你处理的项目。）");
+  } else {
+    humanLines.push("（还没有记忆卡，暂时没有可体检的内容。）");
+  }
+
+  // `report` stays for backward compatibility with anything reading the old
+  // field, but it is now the CHECKLIST (what the model consumes), not the text a
+  // panel should show.
+  const checklist = clip(checklistLines.join("\n"), MAX_AUDIT_CHARS);
+  const human = humanLines.join("\n");
 
   return {
     generatedAt: Date.now(),
+    schemaVersion: AUDIT_SCHEMA_VERSION,
+    today,
+    // "ok" | "degraded": every deterministic write in this pass is verified by
+    // reading it back; `warnings` names the ones that could not be confirmed.
+    status,
+    warnings,
+    postconditions,
     counts,
+    decisions,
+    thresholds,
+    sections,
     structural: {
       missingSource: structural.missingSource.length,
       brokenLinks: structural.brokenLinks.length,
-      notInIndex: structural.notInIndex.length
+      notInIndex: structural.notInIndex.length,
+      unjustifiedUpgrade: structural.unjustifiedUpgrade.length,
+      usesMismatch: structural.usesMismatch.length
     },
-    antipatterns: antipatterns.map((card) => card.rel),
-    archiveCandidates: archiveCandidates.map(({ card, utility }) => ({ rel: card.rel, title: card.title, utility })),
-    pendingReview: pendingReview.map((card) => card.rel),
-    autoArchiveTargets: autoArchiveTargets.map((card) => ({ rel: card.rel, filePath: card.filePath, title: card.title })),
-    archived: archived.map((item) => item.rel),
+    // The names behind the structural counts (the checklist quotes a few; the
+    // panels/CLI can list them all without re-running the scan).
+    structuralDetail: {
+      unjustifiedUpgrade: structural.unjustifiedUpgrade.slice(0, 20),
+      usesMismatch: structural.usesMismatch.slice(0, 20)
+    },
+    // Legacy flat fields (audit schema v1 readers: dsh/host/memory-admin.mjs and
+    // older panels). Same arrays as `sections`, minus the archived ones.
+    antipatterns: sections.antipatterns.map((card) => card.rel),
+    archiveCandidates: sections.archiveCandidates.map((card) => ({ rel: card.rel, title: card.title, utility: card.utility })),
+    pendingReview: sections.pendingReview.map((card) => card.rel),
+    autoArchiveTargets: sections.autoArchiveTargets.map((card) => ({ rel: card.rel, filePath: card.filePath, title: card.title })),
+    archived: sections.archived.map((item) => item.rel),
     passive,
-    report: clip(lines.join("\n"), MAX_AUDIT_CHARS)
+    checklist,
+    human,
+    checklistChars: checklist.length,
+    checklistTruncated: !checklistLines.join("\n").startsWith(checklist.replace(/ …$/, "")),
+    humanChars: human.length,
+    report: checklist
   };
 }
 
@@ -1234,6 +1775,12 @@ export function buildHookHistory(existing, cards, today, maxPoints = HOOK_HISTOR
   return { generatedAt: Date.now(), maxPoints, snapshots };
 }
 
+/**
+ * Persist the panel's trend snapshots.
+ * @returns `true` when the file was written (or reparsed to the intended
+ *   content), `false` on any failure — the audit reports the latter instead of
+ *   assuming success.
+ */
 function writeHookHistory(root, cards) {
   let existing = {};
   try {
@@ -1245,9 +1792,13 @@ function writeHookHistory(root, cards) {
   try {
     const next = buildHookHistory(existing, cards, localDateString());
     mkdirSync(join(root, CACHE_DIR), { recursive: true });
-    writeFileSync(join(root, HOOK_HISTORY_FILE), JSON.stringify(next, null, 2), "utf8");
+    const target = join(root, HOOK_HISTORY_FILE);
+    writeFileSync(target, JSON.stringify(next, null, 2), "utf8");
+    // Post-condition: the file we just wrote parses and has the same snapshot count.
+    const check = JSON.parse(readFileSync(target, "utf8"));
+    return Object.keys(check?.snapshots ?? {}).length === Object.keys(next?.snapshots ?? {}).length;
   } catch {
-    // history is advisory; a failed write must never break the audit
+    return false;
   }
 }
 
@@ -1395,11 +1946,14 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     "## 分层长期记忆（由 math-memory 自动注入；导航层在此，证据层在磁盘）",
     "",
     "记忆按 arXiv:2606.24775 与 arXiv:2607.05794 的原则组织为五层：profile=语义层，topics=导航层，" +
-    "records=类型化原子记录层，episodes=原始证据层，inbox=想法层。以下内容用于“知道去哪找”，不要当作完整证据。" +
-    "回答细节问题时必须按路由规则读文件：",
+    "records=类型化原子记录层，episodes=原始证据层，inbox=想法层；另有三个在五层之后长出来的检索面：" +
+    "theorems=定理索引（个人 Matlas）、templates=问题模板库、strategy=策略层（方法卡：困难 → 策略 → 检索目标）。" +
+    "以下内容用于“知道去哪找”，不要当作完整证据。回答细节问题时必须按路由规则读文件：",
     "- 精确事实 / 用户原话 / 日期数字 → 先 grep `.deepseek/memory/episodes/` 再读命中文件；",
     "- 类型化原子事实（fact/event/instruction/preference）→ 先看 `.deepseek/memory/records/index.md`，再 grep/读具体记录，记录里的 source 可回原始证据；",
     "- 相关定理 / 命题 / 引理 → 先看 `.deepseek/memory/theorems/index.md`，再 grep 笔记全文并核对适用性；",
+    "- 同类题型 / 解法模式 → `memory/templates/index.md` 与关联定理（去重聚合）；",
+    "- 方法 / 策略类问题（证明、构造）→ 先用 `note_strategy` 取方法卡（困难 → 策略 → 检索目标），再按 move→retrieve 清单走 `note_recall`；",
     "- 主题来龙去脉 → 先读 `.deepseek/memory/topics/index.md` 定位，再读 `topics/<slug>.md` 或相关笔记；",
     "- “当前最新状态” → 比较 frontmatter `updated` 或最新 episode 时间戳；",
     "- 检索不到就明说没有，不要编造。"
@@ -1431,7 +1985,19 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
       `- 回复正文中引用笔记时，使用可点击链接：[标题](${linkBaseUrl}/open?path=<vault 相对路径，原样放入>${tokenSuffix})；`,
       "  点击即可在 Obsidian 中打开对应笔记。笔记文件内部仍写 [[wikilink]]，两者不要混用。",
       `- 引用记忆卡时标注验证等级徽标：✅用户确认（hook.verified=user-confirmed）/ ⚖️互证（cross-referenced）/ ❓单源（single-source 或缺失）。`,
-      `- 本回复依据了记忆卡时，在末尾给反馈链接（path 为该卡 vault 相对路径，原样放入）：[✅ 这条对](${linkBaseUrl}/feedback?path=<卡路径>&action=confirm${tokenSuffix}) [❌ 这条错](${linkBaseUrl}/feedback?path=<卡路径>&action=wrong${tokenSuffix}) [🔁 不适用](${linkBaseUrl}/feedback?path=<卡路径>&action=inapplicable${tokenSuffix})；用户点击后由 Obsidian 插件直接改写验证等级与成功率，无需你代劳。「不适用」用于「记忆正确但本题不该用」，不降低该卡成功率。`
+      "  两个徽标都是「这张卡本身可信吗」的信号，不是你这一轮用得对不对。",
+      // One line PER CARD, and the card's title must be in the line: the old row
+      // emitted N identical `[✅ 这条对]` links whose only difference was the
+      // path inside the URL, and 「这条」 read as "this answer was right" while
+      // the action is a permanent per-card verdict. The third link (🔁 不适用)
+      // is gone: it wrote `last_not_applicable`, which nothing in the system
+      // reads (verified by grep), so it looked like ❌ but changed nothing —
+      // "memory is a candidate, not an instruction" is enforced at inference
+      // time by the applicability discipline above instead. Legacy links in old
+      // transcripts still work: the host keeps the action.
+      `- 本回复依据了记忆卡时，在末尾**每张实际用到的卡各给一行**反馈链接（path 为该卡 vault 相对路径，原样放入；标题用该卡的标题，便于用户确认是哪一张）：`,
+      `  依据的记忆：<卡标题> — [✅ 这条对](${linkBaseUrl}/feedback?path=<卡路径>&action=confirm${tokenSuffix}) [❌ 这张卡有错](${linkBaseUrl}/feedback?path=<卡路径>&action=wrong${tokenSuffix})`,
+      "  点击后由 Obsidian 插件直接改写该卡的验证等级与成功率，无需你代劳。只给本轮真正用到的卡，不要为凑反馈而引用没用到的卡。"
     );
   }
 
@@ -1444,9 +2010,10 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     "",
     "### 捕获策略（.deepseek/capture-policy.md，用户维护，模型不得修改）",
     "",
-    `- 💡 想法 idea: ${capturePolicy.idea} · 事实 fact（事实/事件/指令）: ${capturePolicy.fact} · 偏好 preference: ${capturePolicy.preference}`,
+    `- 💡 想法 idea: ${capturePolicy.idea} · 事实 fact（事实/事件/指令/工作产物）: ${capturePolicy.fact} · 偏好 preference（画像/记号）: ${capturePolicy.preference} · 结构 structure（主题/定理索引/问题模板/策略卡）: ${capturePolicy.structure}`,
     "- auto=按三写协议直接写入；ask=先经 ask_user 征得同意再写；off=不主动捕获（用户明确要求时除外）。",
-    captureText === "" ? "- （策略文件缺失，按默认档位 ask/auto/auto 执行。）" : "- 用户口头指令优先于策略文件。"
+    "- **每个档位管哪些层**（照此执行，不要再按「第几步」推断）：idea→inbox 想法；fact→records 的 fact/event/instruction/artifact；preference→profile.md 与 notation.md；structure→topics/、theorems/index.md、templates/、strategy/ 的索引与结构行。事件层（episodes）由确定性会话捕获写入，不受本表管辖（开关是 config.md 的 sessionCapture）。",
+    captureText === "" ? "- （策略文件缺失，按默认档位 idea=ask / fact=ask / preference=ask / structure=auto 执行——写入记录内容前一律先征得同意；结构层只补索引。）" : "- 用户口头指令优先于策略文件。"
   );
 
   if (profile !== "") {
@@ -1574,12 +2141,19 @@ function normalizeConfig(config) {
   const remindersEnabled = config.reminders !== false;
   const auditMaintainHookStats = config.auditMaintainHookStats !== false;
   const autoArchive = config.autoArchive === true;
-  const sessionCapture = config.sessionCapture !== false;
+  // Dialogue capture is opt-in: OFF unless explicitly enabled. The default is
+  // no longer true so the assistant never silently archives whole conversations.
+  const sessionCapture = config.sessionCapture === true;
+  // Subagent sessions (delegated children) replay their parent's prefix, so
+  // capturing them stores the same conversation several times and dilutes the
+  // injected budget. They are skipped by default; `captureSubagents: true`
+  // opts back in.
+  const captureSubagents = config.captureSubagents === true;
   const auditIntervalMs = Number.isFinite(config.auditIntervalMs) && config.auditIntervalMs >= 0
     ? config.auditIntervalMs
     : DEFAULT_AUDIT_INTERVAL_MS;
   if (!isAbsolute(sessionsRoot)) throw new TypeError("math-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, autoArchive, sessionCapture, auditIntervalMs };
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, autoArchive, sessionCapture, captureSubagents, auditIntervalMs };
 }
 
 function fingerprint(logs) {
@@ -1626,6 +2200,9 @@ class MemoryEngine {
   #builtAt = 0;
   #auditCache = new Map();
   #lastCaptureAt = 0;
+  // Per-workspace override for dialogue capture, set by sectionForAgent from
+  // `.deepseek/config.md` sessionCapture (undefined = preset config applies).
+  #sessionCaptureOverride = undefined;
 
   constructor(config, helpers = {}) {
     this.#config = normalizeConfig(config);
@@ -1639,9 +2216,11 @@ class MemoryEngine {
    * each call a cheap metadata scan unless a session actually grew. Never
    * throws — a capture failure must not break boot or prompt assembly.
    */
-  captureNow() {
+  captureNow(enabled) {
     const config = this.#config;
-    if (!config.sessionCapture) return;
+    // `enabled` (per-workspace config.md) > latest per-workspace override
+    // (also from config.md via sectionForAgent) > preset agent.cordis.yml.
+    if (!(enabled ?? this.#sessionCaptureOverride ?? config.sessionCapture)) return;
     const now = Date.now();
     if (now - this.#lastCaptureAt < CAPTURE_THROTTLE_MS) return;
     this.#lastCaptureAt = now;
@@ -1651,7 +2230,7 @@ class MemoryEngine {
         : "";
       if (vaultRoot === "") return;
       const state = readCaptureState(vaultRoot);
-      runSessionCapture(vaultRoot, config.sessionsRoot, state);
+      runSessionCapture(vaultRoot, config.sessionsRoot, state, { captureSubagents: config.captureSubagents });
     } catch {
       // advisory; never break the prompt
     }
@@ -1664,7 +2243,10 @@ class MemoryEngine {
   /** Return the current dialogue index, rebuilding it only when sources changed. */
   getDialogueIndex(vaultRoot, force = false) {
     const config = this.#config;
-    const logs = findSessionLogs(config.sessionsRoot, MAX_LOG_FILES);
+    // Fingerprint the SAME vault-filtered selection the index is built from,
+    // otherwise a change in another workspace (or in this vault's older logs)
+    // could fail to invalidate the cache.
+    const logs = vaultSessionLogs(config.sessionsRoot, vaultRoot, MAX_LOG_FILES);
     const current = fingerprint(logs);
     const stale = force ||
       this.#cachedIndex === undefined ||
@@ -1751,6 +2333,10 @@ class MemoryEngine {
         return "## 长期记忆（本工作区已停用）\n\n" +
           "当前工作区的 .deepseek/config.md 里 enabled: false；如需开启，把该项改为 true（或删除该文件）。";
       }
+      // Wire the per-workspace sessionCapture toggle into the capture trigger
+      // (config.md override, preset default as fallback). This is what makes
+      // the Obsidian/panel「自动保存对话」开关 actually gate runSessionCapture.
+      this.#sessionCaptureOverride = ws.sessionCapture ?? config.sessionCapture;
       const currentSessionId = agent?.session?.id;
       const dialogueIndex = (ws.dialogueIndex ?? config.dialogueIndexEnabled) ? this.getDialogueIndex(vaultRoot) : { sources: [], entries: [] };
       const auditReport = this.auditReportFor(vaultRoot, ws.audit ?? config.auditEnabled, ws.autoArchive ?? config.autoArchive);

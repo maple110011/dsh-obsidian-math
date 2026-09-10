@@ -33,7 +33,13 @@ const pkgJson = {
   exports: { ".": "./index.mjs", "./client": "./client.js", "./package.json": "./package.json" },
   dsh: {
     client: {
-      inject: ["@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-settings"],
+      // Informational only: dsh >= 0.1.5 documents `dsh.client.inject` as
+      // load/prefetch metadata, never apply sequencing — the real requirements
+      // are the cordis service names the panel injects at runtime
+      // (`slots`, `locale`). The names below are the 0.1.5 cohort's providers;
+      // the pre-0.1.5 `dsh-client-runtime` / `dsh-client-ui-slots` faces no
+      // longer exist in an installed tree (docs/dsh-0.1.5-adaptation.md §3.5).
+      inject: ["@deepseek-ai/dsh-client-modules", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-settings"],
       platform: "web"
     }
   },
@@ -48,11 +54,29 @@ let patch = readFileSync(patchPath, "utf8");
 if (patch.includes(PKG)) {
   console.log("cordis.patch.yml 已包含该包，跳过 insert");
 } else {
+  // The previous implementation anchored the insert to a trailing `]` (flow
+  // style). Every patch file this repo actually ships is BLOCK style with no
+  // trailing `]`, so `String.replace` returned the input unchanged — and the
+  // script still wrote the file back and printed success. That silent no-op is
+  // the only documented way the client panel reaches a profile. Appending a
+  // block item to a genuine flow sequence instead produced invalid YAML.
+  //
+  // Now the block-style insert is APPENDED (block style accepts any number of
+  // top-level items), and the write is asserted.
+  const insert = [
+    "",
+    "# Math-memory client panel (install-into-profile.mjs).",
+    "- insert:",
+    "    - id: " + INSERT_ID,
+    "      name: '" + PKG + "'"
+  ].join("\n");
+  const next = patch.replace(/\s*$/, "") + insert + "\n";
   writeFileSync(patchPath + ".bak", patch, "utf8");
-  const insert = "\n- insert:\n    - id: " + INSERT_ID + "\n      name: '" + PKG + "'";
-  // 把最后那个收尾的 ']' 替换为 insert + ']'（容忍注释与末尾换行）。
-  patch = patch.replace(/\]([ \t\r\n]*)$/, insert + "\n]$1");
-  writeFileSync(patchPath, patch, "utf8");
+  writeFileSync(patchPath, next, "utf8");
+  if (!readFileSync(patchPath, "utf8").includes(PKG)) {
+    console.error("insert 失败：写入后", patchPath, "仍不含", PKG);
+    process.exit(1);
+  }
   console.log("已 insert 到", patchPath, "（备份 cordis.patch.yml.bak）");
 }
 

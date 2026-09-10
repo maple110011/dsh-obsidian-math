@@ -5,17 +5,25 @@
 // Generated from obsidian/main.template.js (single source of truth).
 
 import {
-  existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync
+  existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync,
+  openSync, readSync, closeSync
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 
+// Receipts shown AFTER a feedback action. They state the object ("this card")
+// and the consequence, in the user's language — the old strings said
+// "成功率减半" even on a card that had no success_rate (so the number went from
+// nothing to 0.25, not "half"), and named internal fields (user-confirmed,
+// superseded) the panel never explains. `applyFeedback` returns a message built
+// from what it ACTUALLY did; these are the fallbacks for callers that only have
+// the action name.
 export const FEEDBACK_MESSAGES = {
-  confirm: '已确认 ✅ 该记忆升级为 user-confirmed（成功率提至 ≥0.9）',
-  wrong: '已记录 ❌ 该记忆成功率减半，明日体检将重新评估',
-  inapplicable: '已记录 🔁 该记忆在此上下文不适用（不降成功率，保留原验证等级）',
-  stale: '已标记 superseded（保留证据，不删除）',
-  forget: '已归档到 .deepseek/archive/records/'
+  confirm: '已确认 ✅ 这张卡的验证等级升为「用户确认」，检索时会排得更靠前。',
+  wrong: '已记录 ❌ 这张卡会被降级并在下次体检时重审；文件不会被删除。',
+  inapplicable: '已记录 🔁 这张卡在本次场景不适用（不影响它的可信度）。',
+  stale: '已标记「已过期」：不再参与检索，文件仍然保留。',
+  forget: '已归档：文件移到了 .deepseek/archive/（移动而非删除，可找回）。'
 };
 
 export function pathInside(root, child) {
@@ -26,6 +34,12 @@ export function pathInside(root, child) {
   const r = norm(root);
   const c = norm(child);
   return c === r || c.startsWith(r + '/');
+}
+
+/** Join frontmatter lines, dropping the blank line an EMPTY body would leave. */
+function joinFrontmatterLines(lines, useCrlf) {
+  while (lines.length > 0 && lines[0] === '') lines.shift();
+  return lines.join(useCrlf ? '\r\n' : '\n');
 }
 
 /**
@@ -48,8 +62,10 @@ export function setHookField(frontmatterText, field, value) {
     return line;
   });
   if (!seen) updated.push('  ' + field + ': ' + value);
-  return [...lines.slice(0, hookIdx + 1), ...updated, ...lines.slice(endIdx)]
-    .join(frontmatterText.includes('\r\n') ? '\r\n' : '\n');
+  return joinFrontmatterLines(
+    [...lines.slice(0, hookIdx + 1), ...updated, ...lines.slice(endIdx)],
+    frontmatterText.includes('\r\n')
+  );
 }
 
 /** Set a top-level (non-indented) frontmatter field, appending when absent. */
@@ -62,7 +78,50 @@ export function setTopField(frontmatterText, field, value) {
     return line;
   });
   if (!seen) updated.push(field + ': ' + value);
-  return updated.join(frontmatterText.includes('\r\n') ? '\r\n' : '\n');
+  return joinFrontmatterLines(updated, frontmatterText.includes('\r\n'));
+}
+
+/**
+ * Byte span of a file's leading `---\n…\n---` frontmatter block.
+ * @returns `{ start, end, text }` where `text` is `raw.slice(start, end)`, or
+ *   null when the file has no frontmatter block.
+ */
+export function frontmatterSpan(raw) {
+  const open = /^---[ \t]*\r?\n/.exec(raw);
+  if (open === null) return null;
+  const start = open[0].length;
+  const close = /\r?\n---[ \t]*(?:\r?\n|$)/.exec(raw.slice(start));
+  if (close === null) return null;
+  const end = start + close.index;
+  return { start, end, text: raw.slice(start, end) };
+}
+
+/**
+ * Replace a file's frontmatter with `replacementText`, leaving the rest of the
+ * file byte-identical.
+ *
+ * Splices by the span's offsets instead of `String.replace(spanText, newText)`.
+ * Two defects made the replace form wrong here, and both are reachable from the
+ * memory panel's ✅/❌ buttons:
+ *   1. `String.replace` treats its second argument as a REPLACEMENT STRING, so
+ *      `$$`/`$&`/`` $` ``/`$'` inside agent-authored frontmatter are expanded
+ *      (`title: 关于 $$ 的表示` became `title: 关于 $ 的表示`; `$&` injected the
+ *      whole matched block). A math vault is exactly where `$$` display math
+ *      appears in a title. `scripts/build-obsidian.mjs` already documents this
+ *      hazard for its own replacements — "Use replacement functions, not
+ *      replacement strings".
+ *   2. An EMPTY frontmatter body makes the search string `""`, and
+ *      `replace("", x)` inserts at offset 0 instead of replacing — the closing
+ *      `---` then lands mid-file and the card becomes unparseable, while the
+ *      caller is told the write succeeded.
+ *
+ * The empty body is legitimate (`---\n\n---\nbody`), and `setTopField("")`
+ * appends the new key, so the result stays well-formed.
+ */
+export function replaceFrontmatter(raw, replacementText) {
+  const span = frontmatterSpan(raw);
+  if (span === null) return null;
+  return raw.slice(0, span.start) + replacementText + raw.slice(span.end);
 }
 
 /**
@@ -80,20 +139,56 @@ export function setCapturePolicyMode(vault, field, mode, fallbackTemplate = '') 
     text = fallbackTemplate;
     if (text === '') throw new Error('capture policy template missing');
   }
-  const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (fmMatch === null) throw new Error('capture-policy.md 没有 frontmatter');
-  let frontmatter = setTopField(fmMatch[1], field, mode);
+  const span = frontmatterSpan(text);
+  if (span === null) throw new Error('capture-policy.md 没有 frontmatter');
+  let frontmatter = setTopField(span.text, field, mode);
   const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
   frontmatter = setTopField(frontmatter, 'updated', today);
-  writeFileSync(policyPath, text.replace(fmMatch[1], frontmatter), 'utf8');
+  const updated = replaceFrontmatter(text, frontmatter);
+  if (updated === null) throw new Error('capture-policy.md 没有 frontmatter');
+  writeFileSync(policyPath, updated, 'utf8');
 }
 
-/** Apply one feedback action to a card file (in place, minimal diff). */
+/**
+ * Append an empty block-style `hook:` block when the card has none, so the
+ * feedback actions (which all write hook fields) work on every card.
+ *
+ * Before this, ✅/❌ on a card without a `hook:` block failed with
+ * 「该卡片没有 hook 块」 — and the panels hid the buttons entirely, so the
+ * least-evidenced cards were also the only ones that could never be corrected
+ * (docs/memory/handoff.md listed it as an open item). Returns null for the
+ * flow-style `hook: { … }` form, which we refuse to rewrite blindly.
+ */
+function ensureHookBlock(frontmatterText) {
+  if (/^hook:[ \t]*$/m.test(frontmatterText)) return frontmatterText;
+  if (/^hook:[ \t]*\S/m.test(frontmatterText)) return null;
+  const sep = frontmatterText.includes('\r\n') ? '\r\n' : '\n';
+  const trimmed = frontmatterText.replace(/[\r\n]+$/, '');
+  return trimmed === '' ? 'hook:' : `${trimmed}${sep}hook:`;
+}
+
+/**
+ * Apply one feedback action to a card file (in place, minimal diff).
+ * @returns `{ ok, message, action, changed }` — `message` is the receipt the UI
+ *   shows, built from what the write actually did.
+ */
 export function applyFeedback(filePath, action) {
   const text = readFileSync(filePath, 'utf8');
-  const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (fmMatch === null) return { ok: false, message: '该文件没有 frontmatter' };
-  let frontmatter = fmMatch[1];
+  const span = frontmatterSpan(text);
+  if (span === null) return { ok: false, message: '该文件没有 frontmatter' };
+  let frontmatter = span.text;
+  // Only the actions that write hook fields need a hook block; `inapplicable`
+  // and `stale` write top-level fields and must not restructure the card.
+  if (action === 'confirm' || action === 'wrong') {
+    const withHook = ensureHookBlock(frontmatter);
+    if (withHook === null) return { ok: false, message: '该卡片的 hook 是行内写法，暂不支持自动改写，请手动编辑' };
+    frontmatter = withHook;
+  }
+  const today = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  })();
+  const notes = [];
   if (action === 'confirm') {
     const verified = setHookField(frontmatter, 'verified', 'user-confirmed');
     if (verified === null) return { ok: false, message: '该卡片没有 hook 块，无法写入验证等级' };
@@ -106,6 +201,13 @@ export function applyFeedback(filePath, action) {
     // A ✅ confirm resolves any prior ❌: clear the re-review flag so the card
     // leaves the pending-review list (self-correction.md P2).
     frontmatter = setTopField(frontmatter, 'needs_review', 'false');
+    // Provenance witness (docs/design-intake-2026-09-10.md §1 item 3): raising
+    // `verified` above single-source is only legitimate through a user
+    // confirmation, and this is the ONE writer of the witness the daily audit
+    // checks for. The agent is forbidden to write this field (AGENTS.md).
+    const witnessed = setHookField(frontmatter, 'verified_by', 'user');
+    if (witnessed !== null) frontmatter = witnessed;
+    notes.push(FEEDBACK_MESSAGES.confirm);
   } else if (action === 'wrong') {
     // Demote (self-correction.md P1b): a ❌ means the card's CONTENT is wrong
     // (unlike `inapplicable`, which is context-only). Halve success_rate but
@@ -113,43 +215,110 @@ export function applyFeedback(filePath, action) {
     // re-evaluates; downgrade the verification level one step so a
     // user-confirmed card does not keep its ✅ badge; and flag needs_review
     // for the deterministic re-review list (self-correction.md P2).
+    //
+    // success_rate is only touched when the card ALREADY has one: inventing
+    // 0.25 for an unrated card turned "no rating" into "a rating that looks
+    // measured" (the old receipt then called that "减半"). The demotion and the
+    // re-review flag carry the signal for unrated cards.
     const rateMatch = /^(\s*)success_rate:\s*([0-9.]+)\s*$/m.exec(frontmatter);
-    const current = rateMatch === null ? 0.5 : parseFloat(rateMatch[2]);
-    const base = Number.isFinite(current) ? current : 0.5;
-    const next = Math.min(Math.max(0.05, Math.round(base * 0.5 * 100) / 100), 0.35);
-    const rated = setHookField(frontmatter, 'success_rate', String(next));
-    if (rated === null) return { ok: false, message: '该卡片没有 hook 块' };
-    frontmatter = rated;
+    if (rateMatch !== null) {
+      const base = parseFloat(rateMatch[2]);
+      const next = Math.min(Math.max(0.05, Math.round((Number.isFinite(base) ? base : 0.5) * 0.5 * 100) / 100), 0.35);
+      const rated = setHookField(frontmatter, 'success_rate', String(next));
+      if (rated !== null) frontmatter = rated;
+    }
     const verifiedMatch = /^(\s*)verified:\s*["']?(user-confirmed|cross-referenced|single-source)["']?\s*$/m.exec(frontmatter);
-    if (verifiedMatch !== null && verifiedMatch[2] === 'user-confirmed') {
+    if (verifiedMatch === null) {
+      const marked = setHookField(frontmatter, 'verified', 'single-source');
+      if (marked !== null) frontmatter = marked;
+    } else if (verifiedMatch[2] === 'user-confirmed') {
       frontmatter = frontmatter.replace(verifiedMatch[0], `${verifiedMatch[1]}verified: cross-referenced`);
-    } else if (verifiedMatch !== null && verifiedMatch[2] === 'cross-referenced') {
+    } else if (verifiedMatch[2] === 'cross-referenced') {
       frontmatter = frontmatter.replace(verifiedMatch[0], `${verifiedMatch[1]}verified: single-source`);
     }
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    // If the level stays above single-source (user-confirmed → cross-referenced)
+    // the user's witness no longer covers it: invalidate it so the audit asks for
+    // a fresh confirmation instead of silently trusting the old one.
+    const levelNow = /^\s*verified:\s*["']?(user-confirmed|cross-referenced|single-source)["']?\s*$/m.exec(frontmatter)?.[1];
+    if (levelNow !== undefined && levelNow !== 'single-source') {
+      const cleared = setHookField(frontmatter, 'verified_by', 'none');
+      if (cleared !== null) frontmatter = cleared;
+    }
+    // Negative-transfer accounting (docs/design-intake-2026-09-10.md §1 item 2):
+    // ❌ is the one signal that says "this was used and it misled". `uses` and
+    // `success_rate` cannot express that on their own, and a card that is often
+    // used AND often wrong is exactly the one worth rewriting.
+    const harmedNow = Number(/^\s*harmed:\s*(\d+)\s*$/m.exec(frontmatter)?.[1] ?? 0);
+    const harmed = setHookField(frontmatter, 'harmed', String((Number.isFinite(harmedNow) ? harmedNow : 0) + 1));
+    if (harmed !== null) frontmatter = harmed;
     frontmatter = setTopField(frontmatter, 'last_wrong', today);
     frontmatter = setTopField(frontmatter, 'needs_review', 'true');
+    notes.push(FEEDBACK_MESSAGES.wrong);
   } else if (action === 'inapplicable') {
     // "Not applicable to this context" is NOT evidence the card is wrong:
     // leave success_rate/verified/status untouched so a correct technique is
     // not degraded by a single misapplication (MemTrapBench "Trauma" trap).
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     frontmatter = setTopField(frontmatter, 'last_not_applicable', today);
+    notes.push(FEEDBACK_MESSAGES.inapplicable);
   } else if (action === 'stale') {
     frontmatter = setTopField(frontmatter, 'status', 'superseded');
+    notes.push(FEEDBACK_MESSAGES.stale);
+  } else {
+    return { ok: false, message: `未知的反馈动作：${String(action)}` };
   }
-  const updated = text.replace(fmMatch[1], frontmatter);
-  if (updated !== text) writeFileSync(filePath, updated, 'utf8');
-  return { ok: true, message: FEEDBACK_MESSAGES[action] };
+  const updated = replaceFrontmatter(text, frontmatter);
+  if (updated === null) return { ok: false, message: '该文件没有 frontmatter' };
+  const changed = updated !== text;
+  if (changed) writeFileSync(filePath, updated, 'utf8');
+  return { ok: true, action, changed, message: notes.join(' ') };
 }
 
-/** Move a memory file into the vault archive (never a hard delete). */
+/**
+ * Move a memory file into the vault archive (never a hard delete).
+ *
+ * The source is validated, not assumed: every caller passes a path that came
+ * from a request or a scan, and this function is the last gate before a rename.
+ * Without the checks below it happily archived a plain user note, renamed a
+ * whole `.deepseek/memory/records/` directory into the archive, and even tried
+ * to rename the vault root (`rel = ["."]`) — all confirmed against temp
+ * fixtures during the 2026-09-10 audit.
+ *
+ * @returns the archive path, or throws when the source is not an archivable
+ *   memory file.
+ */
 export function archiveMemoryFile(vaultPath, relParts) {
-  const archiveDir = join(vaultPath, '.deepseek', 'archive', 'records');
+  const parts = Array.isArray(relParts) ? relParts.filter((part) => typeof part === 'string' && part !== '') : [];
+  const fileName = parts[parts.length - 1] ?? '';
+  const reject = (reason) => { throw new Error(`archiveMemoryFile: refuse to archive (${reason})`); };
+  if (parts.length < 3) reject('path must live under .deepseek/<layer>/');
+  if (parts.some((part) => part === '.' || part === '..' || part.includes(':') || part.includes('\\'))) reject('illegal path segment');
+  // Only the memory tree is archivable: `.deepseek/<layer>/…`. Capture policy,
+  // config.md and working.md are configuration, not cards.
+  if (parts[0] !== '.deepseek' || parts[1] === 'archive' || parts[1] === 'cache') reject('not a memory path');
+  if (!/\.md$/i.test(fileName)) reject('not a markdown file');
+  const source = join(vaultPath, ...parts);
+  if (!pathInside(vaultPath, source)) reject('outside the vault');
+  let stats;
+  try {
+    stats = statSync(source); // follows symlinks: a link to a file is fine
+  } catch {
+    reject('source does not exist');
+  }
+  if (!stats.isFile()) reject('source is not a regular file');
+  // Archive under the layer the card came FROM. Every card used to land in
+  // `archive/records/` whatever its layer, because that directory was written
+  // when records were the only archivable layer — so archiving a strategy or
+  // topics card both misfiled it and made the receipt name the wrong folder.
+  // `.deepseek/memory/<layer>/x.md` and `.deepseek/<layer>/x.md` both keep their
+  // own name; records maps to `records`, exactly as before (existing archives in
+  // `.deepseek/archive/records/` stay valid).
+  const layer = parts[1] === 'memory' ? parts[2] : parts[1];
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(layer)) reject('unrecognized layer');
+  // Create the archive directory only AFTER the source is known good: doing it
+  // first littered the vault with an empty `.deepseek/archive/records/` on every
+  // refused request (observed live during the 2026-09-10 acceptance run).
+  const archiveDir = join(vaultPath, '.deepseek', 'archive', layer);
   mkdirSync(archiveDir, { recursive: true });
-  const fileName = relParts[relParts.length - 1];
   const stem = fileName.replace(/\.md$/i, '');
   let target = join(archiveDir, fileName);
   let suffix = 1;
@@ -157,7 +326,7 @@ export function archiveMemoryFile(vaultPath, relParts) {
     target = join(archiveDir, stem + '-' + suffix + '.md');
     suffix += 1;
   }
-  renameSync(join(vaultPath, ...relParts), target);
+  renameSync(source, target);
   return target;
 }
 
@@ -266,12 +435,231 @@ export function titleOf(text, fallback) {
   return heading ?? fallback;
 }
 
+/** Trim to `max` characters on a word-ish boundary, appending `…`. */
+function clipText(value, max) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** A summary that ends in `：` reads like a truncated sentence (a card whose
+ *  first body line is a lead-in such as `抄书笔记系列，主线：`), so drop the
+ *  dangling punctuation. */
+function tidySummary(value, max = 90) {
+  return clipText(String(value ?? '').replace(/[\s：:，,、；;（(]+$/, ''), max);
+}
+
+/**
+ * One line that answers "what IS this card?" for a panel row.
+ *
+ * A card's title is often a full mathematical statement (30-40 CJK characters,
+ * LaTeX included), so a list of titles alone does not tell the user what the
+ * memory contains — reported as 「各条记忆的名称显示可能让人无法 get 到内容」.
+ * Preference order: an explicit `summary`/`description` frontmatter field → the
+ * first real body paragraph → `hook.pattern` (the retrieval feature block's own
+ * one-liner).
+ */
+export function summaryOf(text, meta = {}, hook = null) {
+  for (const key of ['summary', 'description', 'abstract', 'one_liner']) {
+    const value = meta?.[key];
+    if (typeof value === 'string' && value.trim() !== '') return tidySummary(value);
+  }
+  const lines = String(text ?? '').split(/\r?\n/);
+  let i = 0;
+  if (lines[0]?.trim() === '---') {
+    i = 1;
+    while (i < lines.length && lines[i].trim() !== '---') i += 1;
+    i += 1;
+  }
+  for (; i < lines.length; i += 1) {
+    // A leading bullet marker is not content either: the navigation layer keeps
+    // its bookkeeping as `- 标签：…` / `- 状态：…` bullets.
+    const line = lines[i].trim().replace(/^[-*+]\s+/, '');
+    if (line === '' || line.startsWith('#') || line.startsWith('>') || line.startsWith('|')) continue;
+    if (line.startsWith('```') || line.startsWith('<!--') || /^[-=_*]{3,}$/.test(line)) continue;
+    // Metadata-looking lines are not content: a stray `uses: 0` left OUTSIDE the
+    // frontmatter (present in the wild, in a real strategy card) and the topics
+    // layer's leading `标签：#…` line both made useless summaries.
+    if (/^[A-Za-z_][A-Za-z0-9_-]*:\s*\S/.test(line)) continue;
+    if (/^(标签|关键词|关键字|来源|出处|相关|关联|状态|类型|主题|日期|创建|更新|最新状态[^：:]{0,8}|核心笔记|tags?|related|source|created|updated)\s*[:：]/.test(line)) continue;
+    const cleaned = line
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
+      .replace(/\[\[([^\]]+)\]\]/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/[*_`]/g, '')
+      .trim();
+    if (cleaned === '') continue;
+    return tidySummary(cleaned);
+  }
+  // Strategy cards put the answer in the frontmatter's `abstraction:` block; the
+  // `principle` line is the portable statement, `concrete` the one-off instance.
+  for (const key of ['principle', 'generalize', 'concrete']) {
+    const value = new RegExp(`^\\s{2}${key}:\\s*["']?(.+?)["']?\\s*$`, 'm').exec(String(text ?? ''))?.[1];
+    if (typeof value === 'string' && value.trim() !== '') return tidySummary(value);
+  }
+  const pattern = hook?.pattern;
+  if (typeof pattern === 'string' && pattern.trim() !== '') return tidySummary(pattern);
+  return '';
+}
+
 export function daysSinceText(dateStr) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr ?? '');
   if (match === null) return '';
   const day = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
   const days = Math.floor((Date.now() - day.getTime()) / 86400000);
   return days > 0 ? `${days} 天前` : '今天';
+}
+
+/**
+ * Parse `memory/episodes/index.md` into `stem → { title, topic }`.
+ *
+ * The index line format is `- [[stem|human title]] — topicA、topicB`. The
+ * episode FILE name is machine-made (`YYYY-MM-DD-session-<uuid>.md`) and its
+ * mtime is just the capture time, so the index is the only place carrying what
+ * the conversation was about. The panel used to print the file name + mtime,
+ * which is why 30 identical-looking rows separated the cards from the report.
+ * Exported for tests.
+ */
+export function parseEpisodeIndex(text) {
+  const map = new Map();
+  // `[ \t]` (NOT `\s`) around the separator: `\s` matches the newline, so
+  // `- [[stem]]` followed by `- [[other|title]] — topic` parsed as ONE line and
+  // moved the next episode's link text into this entry's `topic` (caught by
+  // scripts/test-memory.mjs §30).
+  const re = /^[ \t]*[-*][ \t]*\[\[([^\]|\n]+)(?:\|([^\]\n]*))?\]\](?:[ \t]*[—–-][ \t]*(.*))?[ \t]*$/gm;
+  let match = re.exec(text ?? '');
+  while (match !== null) {
+    const stem = (match[1] ?? '').trim().replace(/^archive\//, '');
+    if (stem !== '') {
+      map.set(stem, {
+        title: (match[2] ?? '').trim(),
+        topic: (match[3] ?? '').trim().replace(/[。.]+$/, '')
+      });
+    }
+    match = re.exec(text ?? '');
+  }
+  return map;
+}
+
+/** `YYYY-MM-DD` from an episode file name, or '' when it has none. */
+export function episodeDateOf(name) {
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(String(name ?? ''));
+  return match === null ? '' : match[1];
+}
+
+/** Read `.deepseek/cache/memory-audit.json` and return the parsed object, or null. */
+export function readAuditReport(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    if (parsed !== null && typeof parsed === 'object') return parsed;
+  } catch {
+    // no report yet
+  }
+  return null;
+}
+
+/**
+ * Build a human summary from a PRE-SPLIT (schema v1) audit JSON, which has no
+ * `human` field — only the model-facing `report` string.
+ *
+ * The panels must not show that string (it is the log dump the user complained
+ * about: raw `[[.deepseek/…|title]]`, a bare 0-1 utility scalar and imperatives
+ * addressed to the agent), and must not claim there is no report either. Schema
+ * v1 still carries `counts` / `pendingReview` / `archiveCandidates` / `passive`,
+ * which is enough for the sentences below. The next audit rewrites the file in
+ * the new format and this fallback stops being used.
+ */
+export function legacyAuditSummary(audit) {
+  const counts = audit?.counts ?? {};
+  const ms = Number(audit?.generatedAt);
+  const day = Number.isFinite(ms) && ms > 0
+    ? (() => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })()
+    : '';
+  const lines = [`记忆体检${day === '' ? '' : ` ${day}`}（旧版报告，下次对话后会自动更新为摘要版）`];
+  const bits = [];
+  if (Number.isFinite(counts.cards)) bits.push(`${counts.cards} 张卡`);
+  if (Number.isFinite(counts.strong)) bits.push(`${counts.strong} 张可靠`);
+  if (Number.isFinite(counts.weak) && counts.weak > 0) bits.push(`${counts.weak} 张待改写`);
+  if (Number.isFinite(counts.unused) && counts.unused > 0) bits.push(`${counts.unused} 张长期没用`);
+  if (bits.length > 0) lines.push(`· ${bits.join(' · ')}`);
+  const pending = Array.isArray(audit?.pendingReview) ? audit.pendingReview : [];
+  if (pending.length > 0) lines.push(`✍️ ${pending.length} 张卡被你标过「错」，助手会在相关讨论时读来源证据链重判。`);
+  const candidates = Array.isArray(audit?.archiveCandidates) ? audit.archiveCandidates : [];
+  if (candidates.length > 0) {
+    const names = candidates.slice(0, 3)
+      .map((item) => (typeof item === 'string' ? item : (item?.title ?? '')))
+      .filter((name) => name !== '')
+      .map((name) => `「${name}」`)
+      .join('、');
+    lines.push(`⚠️ ${candidates.length} 张长期没被用到，建议归档${names === '' ? '' : `：${names}`}（移动而非删除，可在下面直接点「归档」）。`);
+  }
+  const passive = audit?.passive;
+  if (passive !== null && typeof passive === 'object' && Number.isFinite(passive.calls) && passive.calls > 0) {
+    const pct = Math.round((passive.empty / passive.calls) * 100);
+    lines.push(`🔍 上次体检以来检索 ${passive.calls} 次，其中 ${passive.empty} 次没找到内容（${pct}%）。`);
+  }
+  if (lines.length === 1) lines.push('（旧版报告里没有可读的结构化信息，下次对话后会重新生成。）');
+  return lines.join('\n');
+}
+
+/** Card layers the panels browse. `.deepseek/memory/records` is the records
+ * layer; the other four are real (strategy cards exist in the wild) but were
+ * never collected, so a vault whose memory lived in topics/theorems looked
+ * empty to both panels. */
+export const CARD_LAYERS = [
+  { key: 'records', dir: '.deepseek/memory/records', label: '记录' },
+  { key: 'templates', dir: '.deepseek/memory/templates', label: '模板' },
+  { key: 'topics', dir: '.deepseek/memory/topics', label: '主题' },
+  { key: 'theorems', dir: '.deepseek/memory/theorems', label: '定理' },
+  { key: 'strategy', dir: '.deepseek/strategy', label: '策略' }
+];
+
+/**
+ * Normalize an audit JSON for the panels, including PRE-SPLIT (schema v1) files.
+ *
+ * v1 has no `sections` / `decisions` — it has top-level `pendingReview` (rel
+ * strings) and `archiveCandidates` (`{rel,title,utility}`). The panels render
+ * the ⚠️ 待处理 block from `sections` + `decisions`, so without this they showed
+ * nothing at all for an old cache, even when the report was recommending two
+ * archives. Titles for the rel-only entries come from the cards we just scanned.
+ */
+export function normalizeAuditForPanel(audit, titleByRel = new Map()) {
+  if (audit === null || typeof audit !== 'object') return audit;
+  const sections = audit.sections !== null && typeof audit.sections === 'object' ? { ...audit.sections } : {};
+  const asRef = (item) => {
+    if (typeof item === 'string') {
+      return { rel: item, title: titleByRel.get(item) ?? item.split('/').at(-1).replace(/\.md$/, '') };
+    }
+    if (item !== null && typeof item === 'object' && typeof item.rel === 'string') {
+      return { ...item, title: item.title ?? titleByRel.get(item.rel) ?? item.rel.split('/').at(-1).replace(/\.md$/, '') };
+    }
+    return null;
+  };
+  if (!Array.isArray(sections.pendingReview)) {
+    sections.pendingReview = (Array.isArray(audit.pendingReview) ? audit.pendingReview : []).map(asRef).filter((item) => item !== null);
+  }
+  if (!Array.isArray(sections.archiveCandidates)) {
+    sections.archiveCandidates = (Array.isArray(audit.archiveCandidates) ? audit.archiveCandidates : []).map(asRef).filter((item) => item !== null);
+  }
+  if (!Array.isArray(sections.duplicates)) sections.duplicates = [];
+  if (!Array.isArray(sections.unused)) sections.unused = [];
+  const decisions = audit.decisions !== null && typeof audit.decisions === 'object' && Number.isFinite(Number(audit.decisions.total))
+    ? audit.decisions
+    : {
+        reviewCards: sections.pendingReview.length,
+        cleanupCards: sections.archiveCandidates.length + sections.duplicates.length,
+        total: sections.pendingReview.length + sections.archiveCandidates.length + sections.duplicates.length
+      };
+  const normalized = { ...audit, sections, decisions };
+  // v1 has no `today` (only `generatedAt`), and the panels show 「上次体检 <today>」.
+  if (typeof normalized.today !== 'string' || normalized.today === '') {
+    const ms = Number(audit.generatedAt);
+    if (Number.isFinite(ms) && ms > 0) {
+      const d = new Date(ms);
+      normalized.today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+  }
+  return normalized;
 }
 
 /** Collect every memory-layer file under the vault for the panel. */
@@ -286,6 +674,29 @@ export function collectMemoryState(vaultPath, filter, hookParser) {
       return [];
     }
   };
+  // Pending retrieval hits recorded by note_recall since the last audit. The
+  // audit MERGES these into the cards' frontmatter and then zeroes them, so the
+  // file is a DELTA, not a total: showing only the frontmatter value makes the
+  // panel under-report between audits, and showing only the delta makes it look
+  // like the counts were lost. The panel shows declared + pending, and labels a
+  // card whose declared value still disagrees after the audit
+  // (docs/design-intake-2026-09-10.md §1 item 4).
+  const pendingUses = (() => {
+    const map = new Map();
+    try {
+      const parsed = JSON.parse(readFileSync(join(vaultPath, '.deepseek', 'cache', 'retrieval-stats.json'), 'utf8'));
+      if (parsed !== null && typeof parsed === 'object') {
+        for (const [key, entry] of Object.entries(parsed)) {
+          if (key === '__meta__') continue;
+          const uses = Number(entry?.uses);
+          if (Number.isFinite(uses) && uses > 0) map.set(key, Math.trunc(uses));
+        }
+      }
+    } catch {
+      // no stats yet
+    }
+    return map;
+  })();
   const hookHistory = (() => {
     const map = new Map();
     try {
@@ -311,28 +722,59 @@ export function collectMemoryState(vaultPath, filter, hookParser) {
         return null;
       }
       const { meta, hook } = parseMemoryFrontmatter(text, hookParser);
+      const key = `${dir}/${name}`;
+      const usesDeclared = Number.isFinite(Number(hook?.uses)) ? Number(hook.uses)
+        : (Number.isFinite(Number(meta.uses)) ? Number(meta.uses) : 0);
+      const usesPending = pendingUses.get(key) ?? 0;
       return {
         rel: rel(dir, name),
         name,
         title: titleOf(text, name.replace(/\.md$/, '')),
+        summary: summaryOf(text, meta, hook),
         type: meta.type ?? '',
         status: meta.status ?? 'active',
         updated: meta.updated ?? '',
         topic: meta.topic ?? '',
         hook,
-        uses: Number.isFinite(Number(hook?.uses)) ? Number(hook.uses) : 0,
+        // `uses` is the EFFECTIVE count (declared + not-yet-merged hits);
+        // `usesDeclared` is what the file says, `usesPending` the delta.
+        uses: usesDeclared + usesPending,
+        usesDeclared,
+        usesPending,
+        // Negative-transfer counter: used AND it made things worse.
+        harmed: Math.max(0, Math.trunc(
+          Number.isFinite(Number(hook?.harmed)) ? Number(hook.harmed)
+            : (Number.isFinite(Number(meta.harmed)) ? Number(meta.harmed) : 0)
+        )),
+        verifiedBy: typeof hook?.verified_by === 'string' ? hook.verified_by
+          : (typeof meta.verified_by === 'string' ? meta.verified_by : ''),
         successRate: Number.isFinite(Number(hook?.success_rate)) ? Number(hook.success_rate) : null,
         lastUsed: typeof hook?.last_used === 'string' ? hook.last_used : '',
         verified: typeof hook?.verified === 'string' ? hook.verified : null,
         operator: typeof hook?.operator === 'string' ? hook.operator : '',
-        history: hookHistory.get(`${dir}/${name}`) ?? []
+        // Applicability boundary: shown as a hint on the row, and used by
+        // note_recall to withhold a card whose boundary the query matches.
+        boundary: typeof meta.not_applicable_when === 'string' ? meta.not_applicable_when
+          : (typeof hook?.not_applicable_when === 'string' ? hook.not_applicable_when : ''),
+        history: hookHistory.get(key) ?? []
       };
     })
     .filter((entry) => entry !== null);
-  const matches = (entry) => filter === '' ||
-    `${entry.title} ${entry.operator} ${entry.type} ${entry.topic}`.toLowerCase().includes(filter);
-  const records = cardEntries('.deepseek/memory/records').filter(matches);
-  const templates = cardEntries('.deepseek/memory/templates').filter(matches);
+  // The haystack is lowercased but the needle used to be compared verbatim, so
+  // any query with an uppercase letter ("De Finetti") matched nothing.
+  const needle = String(filter ?? '').trim().toLowerCase();
+  const matches = (entry) => needle === '' ||
+    `${entry.title} ${entry.operator} ${entry.type} ${entry.topic}`.toLowerCase().includes(needle);
+  const layers = {};
+  for (const layer of CARD_LAYERS) {
+    layers[layer.key] = {
+      label: layer.label,
+      dir: layer.dir,
+      cards: cardEntries(layer.dir).filter(matches).map((card) => ({ ...card, layer: layer.key }))
+    };
+  }
+  const records = layers.records.cards;
+  const templates = layers.templates.cards;
   const memos = listDir('.deepseek/inbox')
     .filter((name) => name !== 'index.md' && !name.startsWith('_'))
     .map((name) => {
@@ -348,53 +790,108 @@ export function collectMemoryState(vaultPath, filter, hookParser) {
         rel: rel('.deepseek/inbox', name),
         name,
         title: titleOf(text, name.replace(/\.md$/, '')),
+        summary: summaryOf(text, meta, null),
         status: meta.status ?? 'inbox',
         updated: meta.updated ?? '',
         topic: meta.topic ?? ''
       };
     })
-    .filter((entry) => entry !== null && (filter === '' || `${entry.title} ${entry.topic}`.toLowerCase().includes(filter)));
+    .filter((entry) => entry !== null && (needle === '' || `${entry.title} ${entry.topic}`.toLowerCase().includes(needle)));
+  // Episodes carry their meaning in `episodes/index.md`, not in the file name
+  // or the mtime (every episode written by one capture shares a timestamp).
+  const episodeIndex = (() => {
+    try {
+      return parseEpisodeIndex(readFileSync(join(vaultPath, '.deepseek', 'memory', 'episodes', 'index.md'), 'utf8'));
+    } catch {
+      return new Map();
+    }
+  })();
   const episodes = [];
   try {
     episodes.push(...readdirSync(join(vaultPath, '.deepseek', 'memory', 'episodes'), { withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'index.md' && !entry.name.startsWith('_'))
       .map((entry) => {
         const filePath = join(vaultPath, '.deepseek', 'memory', 'episodes', entry.name);
+        const stem = entry.name.replace(/\.md$/, '');
         let mtimeMs = 0;
         try {
           mtimeMs = statSync(filePath).mtimeMs;
         } catch {
           // keep 0
         }
-        return { rel: rel('.deepseek/memory/episodes', entry.name), name: entry.name, mtimeMs };
+        const indexed = episodeIndex.get(stem) ?? {};
+        return {
+          rel: rel('.deepseek/memory/episodes', entry.name),
+          name: entry.name,
+          stem,
+          mtimeMs,
+          date: episodeDateOf(entry.name),
+          title: indexed.title !== undefined && indexed.title !== '' ? indexed.title : stem,
+          topic: indexed.topic ?? ''
+        };
       })
-      .sort((a, b) => b.mtimeMs - a.mtimeMs));
+      .filter((entry) => needle === '' || `${entry.title} ${entry.topic} ${entry.stem}`.toLowerCase().includes(needle))
+      .sort((a, b) => (a.date === b.date ? b.mtimeMs - a.mtimeMs : (a.date < b.date ? 1 : -1))));
   } catch {
     // episodes dir missing: stay empty
   }
   const profile = existsSync(join(vaultPath, '.deepseek', 'memory', 'profile.md'));
-  const auditText = readAuditText(join(vaultPath, '.deepseek', 'cache', 'memory-audit.json'));
+  const auditPath = join(vaultPath, '.deepseek', 'cache', 'memory-audit.json');
+  const titleByRel = new Map();
+  for (const layer of Object.values(layers)) {
+    for (const card of layer.cards) titleByRel.set(card.rel, card.title);
+  }
+  const audit = normalizeAuditForPanel(readAuditReport(auditPath), titleByRel);
   const capturePolicy = (() => {
+    const fallback = { idea: 'ask', fact: 'ask', preference: 'ask', structure: 'auto' };
     try {
       const raw = readFileSync(join(vaultPath, '.deepseek', 'capture-policy.md'), 'utf8');
       const { meta } = parseMemoryFrontmatter(raw, hookParser);
-      const mode = (value, fallback) => typeof value === 'string' && ['auto', 'ask', 'off'].includes(value) ? value : fallback;
-      return { idea: mode(meta.idea, 'ask'), fact: mode(meta.fact, 'auto'), preference: mode(meta.preference, 'auto') };
+      const mode = (value, fallbackMode) => typeof value === 'string' && ['auto', 'ask', 'off'].includes(value) ? value : fallbackMode;
+      return {
+        idea: mode(meta.idea, fallback.idea),
+        fact: mode(meta.fact, fallback.fact),
+        preference: mode(meta.preference, fallback.preference),
+        // `structure` postdates the other three fields: an existing policy file
+        // has no such line, and its absence must mean "as before" (auto), not
+        // "ask" — otherwise upgrading would silently make the agent interrupt
+        // the user for every index row.
+        structure: mode(meta.structure, fallback.structure)
+      };
     } catch {
-      return { idea: 'ask', fact: 'auto', preference: 'auto' };
+      return fallback;
     }
   })();
-  return { records, templates, memos, episodes, profile, auditText, capturePolicy };
+  return {
+    // Kept flat for readers written against 0.7.x (`records`, `templates`).
+    records,
+    templates,
+    // Every browsable card layer, so a vault whose memory lives in topics /
+    // theorems / strategy is no longer reported as empty.
+    layers,
+    memos,
+    episodes,
+    profile,
+    // `auditText` is the MODEL-facing checklist, kept for back-compat only; the
+    // panels must render `audit` (structured) or `auditHuman` (plain language),
+    // never the checklist — that string is why the panel looked like a log dump.
+    auditText: typeof audit?.report === 'string' ? audit.report : '',
+    audit,
+    // A `memory-audit.json` written before the checklist/human split (schema v1)
+    // has only `report`. Showing nothing while a report exists is worse than
+    // deriving a summary from its structured leftovers (see legacyAuditSummary);
+    // the next audit regenerates the file in the new format.
+    auditHuman: typeof audit?.human === 'string' && audit.human !== ''
+      ? audit.human
+      : (audit === null ? '' : legacyAuditSummary(audit)),
+    capturePolicy
+  };
 }
 
+/** Legacy accessor: the model-facing checklist string from the audit JSON. */
 export function readAuditText(path) {
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8'));
-    if (typeof parsed?.report === 'string' && parsed.report !== '') return parsed.report;
-  } catch {
-    // no report yet
-  }
-  return '';
+  const parsed = readAuditReport(path);
+  return typeof parsed?.report === 'string' ? parsed.report : '';
 }
 
 // ── dialogue capture (obelisk-comparison.md §5) ──────────────────────────────
@@ -410,6 +907,15 @@ const CAPTURE_USER_CLIP = 4000;
 const CAPTURE_ASSISTANT_CLIP = 4000;
 const CAPTURE_MAX_SESSION_CHARS = 24000;
 const CAPTURE_SCAN_LIMIT = 100000;
+/**
+ * Bytes read from the head of a session log to reach its header frame. The
+ * harness writes a small checksummed header frame first (see
+ * `dsh-session-persistence-jsonl`), so the opening 64 KiB always holds the
+ * whole `{type:"session", id, cwd, …}` line. Measured on a real 389-log /
+ * 367 MB store: reading every header costs ~0.6 s, whereas decoding every log
+ * costs ~34 s — the difference between a usable panel and a frozen app.
+ */
+const CAPTURE_HEAD_BYTES = 65536;
 const ZSTD_MAGIC = 4247762216; // little-endian 28 B5 2F FD
 
 function captureClip(text, maxChars) {
@@ -492,6 +998,113 @@ function decodeSessionLog(buffer) {
   return events;
 }
 
+/**
+ * Read ONE session log's header line without decoding the whole file.
+ *
+ * The scan only needs `{ id, cwd }` to decide whether a log belongs to this
+ * vault. Decoding every log to learn that is what made the panel freeze: on a
+ * real store the vault owned 40 of 389 logs (6.6 MB of 367 MB), so ~98% of the
+ * decoding was thrown away. Reading just the first frame makes the same
+ * decision for ~1/60th of the cost.
+ *
+ * Returns the parsed header object, or null when the file is unreadable, the
+ * head holds no complete zstd frame, or the first line is not JSON.
+ */
+function readSessionHeader(path) {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const size = statSync(path).size;
+    const want = Math.min(CAPTURE_HEAD_BYTES, size);
+    if (want <= 0) return null;
+    const head = Buffer.allocUnsafe(want);
+    const read = readSync(fd, head, 0, want, 0);
+    const bounds = scanZstdFrames(head.subarray(0, read));
+    if (bounds.length === 0) return null;
+    const text = zstdDecompressSync(head.subarray(bounds[0][0], bounds[0][1])).toString('utf8');
+    for (const line of text.split('\n')) {
+      if (line.trim() === '') continue;
+      const parsed = JSON.parse(line);
+      return parsed !== null && typeof parsed === 'object' ? parsed : null;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // already closed
+      }
+    }
+  }
+}
+
+/**
+ * The identity of the session an artifact belongs to.
+ *
+ * Since dsh 0.1.5 (session data format V3) ONE session can own two artifacts in
+ * the same directory: the V2 original `session.jsonl.zstd` and the migrated
+ * `session.v3.jsonl.zstd`. The migration generates the new file while KEEPING
+ * the old one, so both names end in `.jsonl.zstd` and the walker below would
+ * otherwise count one conversation twice. The key is the first ancestor
+ * directory that is not the generic `sessions` root (the session directory in
+ * the harness layout); a flat `<id>.jsonl.zstd` store falls back to the file
+ * stem. Mirrors `sessionLogKey` in `dsh/preset/math-memory.mjs`.
+ */
+function sessionLogKey(path) {
+  const segments = String(path).split(/[\\/]/).filter((s) => s !== '');
+  const stem = (name) => {
+    let value = String(name);
+    while (value.includes('.')) {
+      const next = value.replace(/\.[^.]+$/, '');
+      if (next === value) break;
+      value = next;
+    }
+    return value;
+  };
+  for (let i = segments.length - 2; i >= 0; i -= 1) {
+    const candidate = segments[i];
+    if (/^sessions?$/i.test(candidate)) break; // the generic root: stop looking
+    const key = stem(candidate);
+    if (key !== '') return key;
+  }
+  const file = segments[segments.length - 1];
+  return file === undefined ? '' : stem(file);
+}
+
+/**
+ * Collapse same-session artifacts to ONE authoritative log each.
+ *
+ * The `.v3.` variant label decides first — the migrated artifact is the live
+ * and authoritative one even when its mtime ties with the original (the
+ * migration can write both inside one filesystem timestamp tick); mtime decides
+ * second. The result stays mtime-descending for the caller's `maxFiles` window.
+ * Mirrors `selectAuthoritativeLogs` in `dsh/preset/math-memory.mjs`.
+ */
+function selectAuthoritativeLogs(logs) {
+  const best = new Map();
+  const flat = [];
+  for (const log of logs) {
+    const key = sessionLogKey(log.path);
+    if (!key) {
+      flat.push(log);
+      continue;
+    }
+    const current = best.get(key);
+    if (current === undefined || isNewerArtifact(log, current)) best.set(key, log);
+  }
+  return [...flat, ...best.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+function isNewerArtifact(candidate, incumbent) {
+  const candidateV3 = /\.v3\./.test(candidate.path);
+  const incumbentV3 = /\.v3\./.test(incumbent.path);
+  if (candidateV3 !== incumbentV3) return candidateV3;
+  return candidate.mtimeMs > incumbent.mtimeMs;
+}
+
 function findSessionLogs(sessionsRoot, maxFiles) {
   const found = [];
   const walk = (dir) => {
@@ -515,17 +1128,21 @@ function findSessionLogs(sessionsRoot, maxFiles) {
     }
   };
   walk(sessionsRoot);
-  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return found.slice(0, maxFiles);
+  // Dedup BEFORE the slice so `maxFiles` still means "at most N sessions".
+  return selectAuthoritativeLogs(found).slice(0, maxFiles);
 }
 
 function distillSession(events, { userClip = 500, assistantClip = 320 } = {}) {
-  const entry = { id: undefined, title: undefined, cwd: undefined, createdAt: undefined, messages: [] };
+  const entry = { id: undefined, title: undefined, cwd: undefined, createdAt: undefined, isSubagent: false, messages: [] };
   for (const event of events) {
     if (event?.type === 'session' && typeof event.id === 'string') {
       entry.id = event.id;
       entry.cwd = typeof event.cwd === 'string' ? event.cwd : entry.cwd;
       entry.createdAt = typeof event.createdAt === 'number' ? event.createdAt : entry.createdAt;
+      // V3 headers mark delegated children (`origin` / `delegationDepth`); V2
+      // headers have neither, so a V2 subagent stays indistinguishable.
+      entry.isSubagent = event.origin === 'subagent'
+        || (Number.isFinite(event.delegationDepth) && event.delegationDepth > 0);
     } else if (event?.type === 'session/title' && typeof event.data?.title === 'string') {
       entry.title = event.data.title;
     } else if (event?.type === 'user/message' && event.data?.source?.kind === 'user') {
@@ -593,12 +1210,62 @@ function appendEpisodeIndex(root, stem, title) {
   }
 }
 
-export function runSessionCapture(root, sessionsRoot, state = undefined) {
-  const next = state !== undefined && state !== null && typeof state === 'object' && state.schemaVersion === CAPTURE_SCHEMA_VERSION
-    ? { schemaVersion: state.schemaVersion, sessions: { ...(state.sessions ?? {}) } }
-    : { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {} };
+/**
+ * The per-log scan cache persisted next to the capture marker under `scanned`.
+ *
+ * It maps a session-log absolute path to what the last examination learned at
+ * that exact file revision:
+ *
+ *   { fp, inVault, pending }
+ *
+ * - `fp` is the same `path|mtimeMs|size` fingerprint the capture marker uses,
+ *   so a log that grew invalidates its own record and is re-examined.
+ * - `inVault` is false for logs belonging to other workspaces. Those are
+ *   characterised once (one cheap header read) and then skipped forever.
+ *   Before this cache existed they were read and fully zstd-decoded on EVERY
+ *   scan only to be discarded by the vault containment filter.
+ * - `pending` is true when the session has messages not yet written into
+ *   episodes, i.e. it is still waiting for a capture.
+ *
+ * Two callers share it: the count path (panel badge) never mutates episodes but
+ * may cache "irrelevant" and "pending" verdicts; the capture path also writes
+ * the deltas. Caching a `pending` verdict is what lets the badge re-render
+ * without re-decoding, and it stays correct because the capture path treats a
+ * cached `pending` record as "still needs work" and decodes it anyway.
+ */
+function scanSessionCapture(root, sessionsRoot, next, capture) {
+  const scanned = { ...(next.scanned ?? {}) };
   const captured = [];
+  let count = 0;
+  // Only rewrite the marker when this pass actually learned something, so a
+  // badge refresh on a quiet vault performs no vault write at all.
+  let dirty = false;
   for (const log of findSessionLogs(sessionsRoot, CAPTURE_SCAN_LIMIT)) {
+    const fingerprint = `${log.path}|${log.mtimeMs}|${log.size}`;
+    const record = scanned[log.path];
+    if (record !== undefined && record.fp === fingerprint) {
+      // Characterised at this exact revision: never read the log again.
+      if (record.inVault !== true || record.pending !== true) continue;
+      if (capture !== true) {
+        count += 1;
+        continue;
+      }
+      // A capture must append the delta, which needs the decoded messages.
+    }
+    // Cheap gate first: only this vault's sessions are ever captured. Reading
+    // the header costs ~1.5 ms against ~90 ms to decode a whole log. The
+    // `type` test matches distillSession exactly, so anything the decoder would
+    // reject is rejected here, before the file is ever decompressed.
+    const header = readSessionHeader(log.path);
+    // A null header means the head held no complete frame (an unusually large
+    // first frame, or a torn file). Do NOT cache an "irrelevant" verdict we
+    // cannot justify: a miscached log would be hidden from capture forever.
+    // Fall through to the full decode, which decides relevance authoritatively.
+    if (header !== null && (header.type !== 'session' || typeof header.id !== 'string' || !pathInside(root, header.cwd ?? ''))) {
+      scanned[log.path] = { fp: fingerprint, inVault: false, pending: false };
+      dirty = true;
+      continue;
+    }
     let events;
     try {
       events = decodeSessionLog(readFileSync(log.path));
@@ -606,19 +1273,38 @@ export function runSessionCapture(root, sessionsRoot, state = undefined) {
       continue;
     }
     const entry = distillSession(events, { userClip: CAPTURE_USER_CLIP, assistantClip: CAPTURE_ASSISTANT_CLIP });
-    if (entry.id === undefined || entry.messages.length === 0) continue;
-    if (!pathInside(root, entry.cwd ?? '')) continue;
-    const fingerprint = `${log.path}|${log.mtimeMs}|${log.size}`;
+    if (entry.id === undefined || entry.messages.length === 0 || !pathInside(root, entry.cwd ?? '')) {
+      scanned[log.path] = { fp: fingerprint, inVault: false, pending: false };
+      dirty = true;
+      continue;
+    }
+    // Delegated child sessions replay their parent prefix; the preset's capture
+    // path skips them unless `captureSubagents` is on, so the badge must use the
+    // same rule or it would report work that capturing will never do.
+    if (entry.isSubagent === true) {
+      scanned[log.path] = { fp: fingerprint, inVault: false, pending: false };
+      dirty = true;
+      continue;
+    }
     const prior = next.sessions[entry.id];
-    if (prior !== undefined && prior.fingerprint === fingerprint) continue;
     const plan = planSessionDelta(entry, prior);
     if (plan === null) {
       next.sessions[entry.id] = { lastSeq: prior?.lastSeq ?? -1, fingerprint, file: prior?.file ?? '' };
+      scanned[log.path] = { fp: fingerprint, inVault: true, pending: false };
+      dirty = true;
+      continue;
+    }
+    if (capture !== true) {
+      scanned[log.path] = { fp: fingerprint, inVault: true, pending: true };
+      dirty = true;
+      count += 1;
       continue;
     }
     const body = renderConversationTail(plan.delta, CAPTURE_MAX_SESSION_CHARS);
     if (body === null) {
       next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: prior?.file ?? '' };
+      scanned[log.path] = { fp: fingerprint, inVault: true, pending: false };
+      dirty = true;
       continue;
     }
     const date = localDateFromMs(entry.createdAt);
@@ -629,7 +1315,7 @@ export function runSessionCapture(root, sessionsRoot, state = undefined) {
       const isNew = prior?.file === undefined || prior.file === '';
       if (isNew) {
         mkdirSync(dirname(abs), { recursive: true });
-        const header = [
+        const header2 = [
           `# ${entry.title ?? entry.id}`,
           '',
           `> sessionId: ${entry.id} · 自动保存对话 · ${date}`,
@@ -637,7 +1323,7 @@ export function runSessionCapture(root, sessionsRoot, state = undefined) {
           '## 对话（不含思考）',
           ''
         ].join('\n');
-        writeFileSync(abs, `${header}${body}\n`, 'utf8');
+        writeFileSync(abs, `${header2}${body}\n`, 'utf8');
       } else {
         const existing = existsSync(abs) ? readFileSync(abs, 'utf8') : '';
         const sep = existing.endsWith('\n') ? '' : '\n';
@@ -646,39 +1332,65 @@ export function runSessionCapture(root, sessionsRoot, state = undefined) {
       appendEpisodeIndex(root, stem, entry.title ?? entry.id);
       captured.push({ id: entry.id, rel, lastSeq: plan.lastSeq });
       next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: rel };
+      scanned[log.path] = { fp: fingerprint, inVault: true, pending: false };
+      dirty = true;
     } catch {
       // best-effort; leave the marker untouched so it retries next time
     }
   }
+  next.scanned = scanned;
+  return { captured, count, dirty };
+}
+
+/**
+ * Persist the capture marker plus its scan cache (best-effort).
+ *
+ * `keepDiskSessions` is for the count path. Obsidian and the dsh host route can
+ * both write this file, and `sessions` (the per-session `lastSeq` marker) is the
+ * state whose loss would re-append a conversation tail into an episode. The
+ * count path only ever *adds* `scanned` observations, so it re-reads the marker
+ * and lets an on-disk `sessions` win over the copy its scan started from.
+ */
+function persistCaptureState(root, next, keepDiskSessions = false) {
   try {
     mkdirSync(join(root, MEMORY_DIR, 'cache'), { recursive: true });
-    writeFileSync(join(root, CAPTURE_FILE), JSON.stringify(next, null, 2), 'utf8');
+    let payload = next;
+    if (keepDiskSessions) {
+      const onDisk = readCaptureState(root);
+      payload = {
+        schemaVersion: CAPTURE_SCHEMA_VERSION,
+        sessions: { ...next.sessions, ...(onDisk.sessions ?? {}) },
+        scanned: { ...(onDisk.scanned ?? {}), ...next.scanned }
+      };
+    }
+    writeFileSync(join(root, CAPTURE_FILE), JSON.stringify(payload, null, 2), 'utf8');
   } catch {
     // marker persistence is best-effort
   }
+}
+
+export function runSessionCapture(root, sessionsRoot, state = undefined) {
+  const next = state !== undefined && state !== null && typeof state === 'object' && state.schemaVersion === CAPTURE_SCHEMA_VERSION
+    ? { schemaVersion: state.schemaVersion, sessions: { ...(state.sessions ?? {}) }, scanned: { ...(state.scanned ?? {}) } }
+    : { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {}, scanned: {} };
+  const { captured, dirty } = scanSessionCapture(root, sessionsRoot, next, true);
+  if (dirty) persistCaptureState(root, next);
   return { captured, state: next };
 }
 
-/** Count in-vault sessions that still have uncaptured messages (for the panel badge). */
+/**
+ * Count in-vault sessions that still have uncaptured messages (panel badge).
+ *
+ * Reads no log that the scan cache already characterised, which is what keeps
+ * this callable from a view's `onOpen` on the renderer main thread. It does
+ * write the scan cache back (a pure function of the session logs), so repeated
+ * calls converge on a stat-only pass instead of re-reading the store.
+ */
 export function countUncapturedSessions(root, sessionsRoot) {
   const state = readCaptureState(root);
-  let count = 0;
-  for (const log of findSessionLogs(sessionsRoot, CAPTURE_SCAN_LIMIT)) {
-    let events;
-    try {
-      events = decodeSessionLog(readFileSync(log.path));
-    } catch {
-      continue;
-    }
-    const entry = distillSession(events, { userClip: CAPTURE_USER_CLIP, assistantClip: CAPTURE_ASSISTANT_CLIP });
-    if (entry.id === undefined || entry.messages.length === 0) continue;
-    if (!pathInside(root, entry.cwd ?? '')) continue;
-    const fingerprint = `${log.path}|${log.mtimeMs}|${log.size}`;
-    const prior = state.sessions[entry.id];
-    if (prior !== undefined && prior.fingerprint === fingerprint) continue;
-    if (planSessionDelta(entry, prior) === null) continue;
-    count += 1;
-  }
+  const next = { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: { ...(state.sessions ?? {}) }, scanned: { ...(state.scanned ?? {}) } };
+  const { count, dirty } = scanSessionCapture(root, sessionsRoot, next, false);
+  if (dirty) persistCaptureState(root, next, true);
   return count;
 }
 
@@ -695,20 +1407,22 @@ export function setSessionCapture(root, enabled, fallbackTemplate = '') {
     text = fallbackTemplate;
     if (text === '') throw new Error('config template missing');
   }
-  const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (fmMatch === null) throw new Error('config.md 没有 frontmatter');
-  let frontmatter = setTopField(fmMatch[1], 'sessionCapture', enabled ? 'true' : 'false');
-  writeFileSync(configPath, text.replace(fmMatch[1], frontmatter), 'utf8');
+  const span = frontmatterSpan(text);
+  if (span === null) throw new Error('config.md 没有 frontmatter');
+  let frontmatter = setTopField(span.text, 'sessionCapture', enabled ? 'true' : 'false');
+  const updated = replaceFrontmatter(text, frontmatter);
+  if (updated === null) throw new Error('config.md 没有 frontmatter');
+  writeFileSync(configPath, updated, 'utf8');
 }
 
-/** Read whether session capture is enabled (missing config → default on). */
+/** Read whether session capture is enabled (missing config → default off). */
 export function readSessionCaptureEnabled(root) {
   const configPath = join(root, MEMORY_DIR, 'config.md');
   try {
     const raw = readFileSync(configPath, 'utf8');
     const { meta } = parseMemoryFrontmatter(raw, () => null);
-    return meta.sessionCapture !== 'false';
+    return meta.sessionCapture === 'true';
   } catch {
-    return true;
+    return false;
   }
 }

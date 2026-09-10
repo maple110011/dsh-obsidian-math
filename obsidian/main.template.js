@@ -9,21 +9,48 @@
 const { Plugin, ItemView, Notice, PluginSettingTab, Setting, Modal } = require('obsidian');
 const { shell } = require('electron');
 const { spawn, spawnSync } = require('child_process');
-const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, symlinkSync, appendFileSync } = require('fs');
+const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, lstatSync, rmSync, renameSync, symlinkSync, appendFileSync, appendFile, openSync, readSync, closeSync } = require('fs');
 const { join, dirname, resolve } = require('path');
 const { homedir } = require('os');
 const { randomBytes } = require('crypto');
 const { zstdDecompressSync } = require('zlib');
 const http = require('http');
-const { createServer } = http;
+const { createServer, request: httpRequest } = http;
 
 // ── file-based debug log (read directly by the maintainer) ──
+//
+// Asynchronous and batched ON PURPOSE. The log is written from render paths, and
+// `appendFileSync` blocks Obsidian's renderer thread for the duration of a real
+// file write (this machine's real-time AV scans each one). Measured at startup:
+// three `[render]` lines inside 7 ms, i.e. three blocking writes while the
+// workspace was still painting. Queue + a single async append keeps the
+// ordering and costs the UI nothing.
 let debugVaultPath = '';
+let debugQueue = [];
+let debugFlushTimer = null;
+
 function writeDebugLog(line) {
   try {
     if (debugVaultPath === '') return;
-    const path = join(debugVaultPath, '.obsidian', 'plugins', 'dsh-math-assistant', 'debug.log');
-    appendFileSync(path, '[' + new Date().toISOString() + '] ' + line + '\n', 'utf8');
+    debugQueue.push('[' + new Date().toISOString() + '] ' + line + '\n');
+    if (debugFlushTimer !== null) return;
+    debugFlushTimer = setTimeout(flushDebugLog, 250);
+  } catch {
+    // instrumentation must never break the plugin
+  }
+}
+
+/** Write everything queued. Called by the 250 ms timer and on unload. */
+function flushDebugLog() {
+  if (debugFlushTimer !== null) {
+    clearTimeout(debugFlushTimer);
+    debugFlushTimer = null;
+  }
+  if (debugVaultPath === '' || debugQueue.length === 0) return;
+  const text = debugQueue.join('');
+  debugQueue = [];
+  try {
+    appendFile(join(debugVaultPath, '.obsidian', 'plugins', 'dsh-math-assistant', 'debug.log'), text, 'utf8', () => {});
   } catch {
     // instrumentation must never break the plugin
   }
@@ -55,11 +82,56 @@ const MEMORY_ADMIN = (() => {
     .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:path["'];?\s*$/gm, '')
     .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:zlib["'];?\s*$/gm, '')
     .replace(/^export\s+/gm, '')
-    + '\nreturn { pathInside, setHookField, setTopField, setCapturePolicyMode, applyFeedback, archiveMemoryFile, archiveOldEpisodes, parseMemoryFrontmatter, titleOf, daysSinceText, collectMemoryState, readAuditText, FEEDBACK_MESSAGES, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled };';
-  return new Function('existsSync', 'mkdirSync', 'writeFileSync', 'readFileSync', 'readdirSync', 'statSync', 'renameSync', 'join', 'dirname', 'zstdDecompressSync', body)(
-    existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, join, dirname, zstdDecompressSync
+    // probeService lives inside this evaluated body so `http` resolves here
+    // rather than in the template's own scope (the loader has no closure over
+    // template constants — see check-embedded-loader.mjs).
+    + `
+/**
+ * Probe the local dsh web server with Node's http client. Do NOT use browser
+ * \`fetch\` here: Obsidian's CSP can block renderer-side requests to
+ * http://127.0.0.1, which previously made a healthy service look dead.
+ *
+ * Returns a TRI-STATE, because "something answers on the port" is not the same
+ * as "our dsh UI is usable":
+ *   'ready'        — the index is served (HTTP 2xx), i.e. authenticated.
+ *   'unauthorized' — HTTP 401: dsh >= 0.1.5 refuses the index without the
+ *                    browser-session cookie minted from \`/?token=…\`. The
+ *                    service is alive; the iframe would show the 401 text.
+ *   'down'         — nothing usable is listening.
+ */
+function probeService(port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const request = http.get({ host: '127.0.0.1', port, path: '/', timeout: timeoutMs }, (response) => {
+      response.resume();
+      if (response.statusCode === 401) { finish('unauthorized'); return; }
+      finish(response.statusCode >= 200 && response.statusCode < 500 ? 'ready' : 'down');
+    });
+    request.on('error', () => finish('down'));
+    request.on('timeout', () => {
+      request.destroy();
+      finish('down');
+    });
+  });
+}
+`
+    + '\nreturn { probeService, pathInside, frontmatterSpan, replaceFrontmatter, setHookField, setTopField, setCapturePolicyMode, applyFeedback, archiveMemoryFile, archiveOldEpisodes, parseMemoryFrontmatter, titleOf, daysSinceText, collectMemoryState, readAuditText, FEEDBACK_MESSAGES, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled };';
+  return new Function('existsSync', 'mkdirSync', 'writeFileSync', 'readFileSync', 'readdirSync', 'statSync', 'renameSync', 'join', 'dirname', 'zstdDecompressSync', 'openSync', 'readSync', 'closeSync', 'http', body)(
+    existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, join, dirname, zstdDecompressSync, openSync, readSync, closeSync, http
   );
 })();
+
+/**
+ * Probe the dsh web index. Definition comes from the embedded loader above
+ * (returned as `MEMORY_ADMIN.probeService`), because the loader has no closure
+ * over template-scope bindings such as `http`.
+ */
+const probeServiceStatus = (...args) => MEMORY_ADMIN.probeService(...args);
 
 const DEFAULT_SETTINGS = {
   port: 3180,
@@ -71,6 +143,14 @@ const DEFAULT_SETTINGS = {
   showRibbon: true,
   keepAliveOnUnload: false,
   enableSkinCenter: false,
+  // 侧栏性能模式：由代理把皮肤的高开销特效（毛玻璃 / 无限动画 / 装饰模糊）从
+  // 侧栏这一份 HTML 里去掉，并把皮肤客户端 hooks 模块的两处热循环减速。
+  // 见 DshWebProxy.perfMode 与 docs/memory/sidebar-performance.md。
+  sidebarPerformanceMode: true,
+  // 侧栏是否加载皮肤的**客户端脚本**（hero 场景 / 状态角色 / 信号芯片都由它创建）。
+  // 实测它是侧栏卡顿的最大来源；关掉后装饰消失，但按钮/展开动画不再掉帧。
+  // 默认 true = 保留装饰（用户可选更流畅的那一档）。
+  sidebarSkinScripts: true,
   memoryPanelUrl: 'http://127.0.0.1:3080/'
 };
 
@@ -85,31 +165,6 @@ function ensureFile(target, content, overwrite = false) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Probe the local dsh web server with Node's http client. Do NOT use
- * browser `fetch` here: Obsidian's CSP can block renderer-side requests to
- * http://127.0.0.1, which previously made a healthy service look dead.
- */
-function probeService(port, timeoutMs = 1500) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    const request = http.get({ host: '127.0.0.1', port, path: '/', timeout: timeoutMs }, (response) => {
-      response.resume();
-      finish(response.statusCode >= 200 && response.statusCode < 500);
-    });
-    request.on('error', () => finish(false));
-    request.on('timeout', () => {
-      request.destroy();
-      finish(false);
-    });
-  });
 }
 
 /**
@@ -188,6 +243,36 @@ class LinkServer {
         res.writeHead(status, { 'content-type': html ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8' });
         res.end(body);
       };
+      try {
+        this.handle(req, res, finish);
+      } catch (error) {
+        // Nothing may escape the listener: an uncaught throw here leaves the
+        // browser's click hanging with no response at all (that is exactly what
+        // a malformed percent-encoding used to do before the decode fix), and
+        // the visible symptom is "the link does nothing" with an empty log.
+        try {
+          finish(500, 'internal error: ' + String(error));
+        } catch {
+          // response already gone; nothing left to answer
+        }
+        this.plugin.service?.appendLog?.('链接服务处理失败：' + String(error));
+      }
+    });
+    try {
+      this.token = randomBytes(16).toString('hex');
+    } catch {
+      this.token = '';
+    }
+    this.server.listen(0, '127.0.0.1', () => {
+      const address = this.server.address();
+      this.port = typeof address === 'object' && address !== null ? address.port : 0;
+      this.plugin.service?.appendLog(`链接跳转服务已启动：http://127.0.0.1:${this.port}`);
+    });
+  }
+
+  /** One request: /feedback (memory mutation) or /open (note jump). */
+  handle(req, res, finish) {
+    {
       let url;
       try {
         url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -200,9 +285,13 @@ class LinkServer {
           finish(403, 'bad token');
           return;
         }
+        // `URLSearchParams` ALREADY percent-decodes: decoding again threw a
+        // URIError on any path containing a literal `%` (a math vault has
+        // plenty), and because the decode sat outside the try below, the throw
+        // escaped the request listener and the click hung with no response.
         const rawFeedbackPath = url.searchParams.get('path') ?? '';
         const action = url.searchParams.get('action') ?? '';
-        const rel = decodeURIComponent(rawFeedbackPath).trim()
+        const rel = rawFeedbackPath.trim()
           .replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
         const parts = rel.split('/');
         const bad = rel === '' || rel.length > 2000 || !FEEDBACK_ACTIONS.has(action) ||
@@ -254,7 +343,8 @@ class LinkServer {
         return;
       }
       const rawPath = url.searchParams.get('path') ?? url.searchParams.get('note') ?? '';
-      const notePath = decodeURIComponent(rawPath).trim();
+      // Already percent-decoded by URLSearchParams — see the /feedback note.
+      const notePath = rawPath.trim();
       if (notePath === '' || notePath.length > 2000) {
         finish(400, 'missing path');
         return;
@@ -267,17 +357,7 @@ class LinkServer {
       }
       const display = notePath.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
       finish(200, `<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;padding:24px"><p>已在 Obsidian 中打开：<code>${display}</code></p><script>setTimeout(function(){history.back()},400)</script></body>`, true);
-    });
-    try {
-      this.token = randomBytes(16).toString('hex');
-    } catch {
-      this.token = '';
     }
-    this.server.listen(0, '127.0.0.1', () => {
-      const address = this.server.address();
-      this.port = typeof address === 'object' && address !== null ? address.port : 0;
-      this.plugin.service?.appendLog(`链接跳转服务已启动：http://127.0.0.1:${this.port}`);
-    });
   }
 
   get baseUrl() {
@@ -291,53 +371,6 @@ class LinkServer {
       this.port = 0;
     }
   }
-}
-
-// ── dsh frontend link patch ────────────────────────────────────────────────
-// The dsh web frontend renders every http(s) markdown link with target=_blank,
-// so our loopback /open and /feedback links open the system browser instead of
-// navigating the embedded iframe in place. Patch the installed frontend bundle
-// so loopback links stay in-frame (the LinkServer then history.back()s to dsh).
-function patchDshFrontendLinks(installDir) {
-  if (!installDir) return '跳过 dsh 前端链接补丁：未检测到安装目录';
-  const q = String.fromCharCode(34);
-  const assetsDir = join(installDir, 'node_modules', '@deepseek-ai', 'dsh-web-frontend', 'dist', 'assets');
-  let files = [];
-  try {
-    files = readdirSync(assetsDir).filter((name) => name.startsWith('index-') && name.endsWith('.js'));
-  } catch {
-    return '跳过 dsh 前端链接补丁：未找到 dsh-web-frontend/dist/assets';
-  }
-  if (files.length === 0) return '跳过 dsh 前端链接补丁：assets 目录为空';
-  const marker = '![' + q + '127.0.0.1' + q + ',' + q + 'localhost' + q + '].includes(new URL(';
-  let patched = 0;
-  let already = 0;
-  for (const name of files) {
-    const path = join(assetsDir, name);
-    let content;
-    try {
-      content = readFileSync(path, 'utf8');
-    } catch {
-      continue;
-    }
-    if (content.includes(marker)) { already += 1; continue; }
-    let next = content;
-    for (const v of ['u', 's']) {
-      const find = '[' + q + 'http:' + q + ',' + q + 'https:' + q + '].includes(new URL(' + v + ').protocol)';
-      const replace = '([' + q + 'http:' + q + ',' + q + 'https:' + q + '].includes(new URL(' + v + ').protocol)&&![' + q + '127.0.0.1' + q + ',' + q + 'localhost' + q + '].includes(new URL(' + v + ').hostname))';
-      next = next.split(find).join(replace);
-    }
-    if (next === content) continue;
-    try {
-      writeFileSync(path, next, 'utf8');
-      patched += 1;
-    } catch {
-      // best-effort; a read-only install just keeps the old behavior
-    }
-  }
-  if (patched > 0) return 'dsh 前端链接补丁：已处理 ' + patched + ' 个 bundle（loopback 链接改为站内跳转）';
-  if (already > 0) return 'dsh 前端链接补丁：已打补丁（' + already + ' 个 bundle）';
-  return 'dsh 前端链接补丁：未命中（该 dsh 版本的链接渲染方式未识别）';
 }
 
 // ── dsh detection ───────────────────────────────────────────────────────────
@@ -435,6 +468,415 @@ function detectDshHome(settings, detected) {
 
 // ── dsh service manager ─────────────────────────────────────────────────────
 
+// ── loopback reverse proxy for the dsh web UI ───────────────────────────────
+//
+// WHY THIS EXISTS. dsh >= 0.1.5 authenticates the browser session with a cookie
+// it mints from the `…/?token=…` launch URL, and that cookie is `SameSite=Strict`
+// and named after the request authority (`dsh-auth-<sha256(host:port)>`). Inside
+// Obsidian the UI lives in an IFRAME whose top-level site is `app://obsidian.md`
+// while the frame is `http://127.0.0.1:3180` — cross-site. Chrome therefore never
+// sends that cookie for the frame's requests, so the panel renders dsh's
+// "authentication required" page no matter how the token is captured.
+//
+// The main process has no such restriction: it can redeem the launch token once,
+// keep the cookie and inject it into every forwarded request. That requires the
+// proxy to own the address the browser (and the cookie name) sees, so dsh itself
+// moves to an OS-assigned internal port.
+//
+// It also owns 侧栏性能模式 (`perfStylesheet` below): the sidebar frame is a
+// separate document, so injected response bytes are the only way to reach it.
+// Every helper therefore lives ON this class — scripts/test-panel-proxy.mjs
+// extracts the class by brace matching and runs it without module scope.
+class DshWebProxy {
+  constructor(plugin) {
+    this.plugin = plugin ?? null;
+    this.server = null;
+    this.port = 0;
+    this.upstreamPort = 0;
+    this.cookie = '';
+    /** Upgrades are matched by path prefix; dsh registers them the same way. */
+    this.upgradePrefixes = ['/api/'];
+  }
+
+  /**
+   * 侧栏性能模式：把 dsh 皮肤里**真正让侧栏卡顿的那一半**从这一份渲染里去掉。
+   *
+   * Why the proxy has to do it: everything inside the sidebar iframe is a
+   * separate document, so Obsidian CSS cannot reach it and the plugin cannot
+   * touch its DOM (cross-origin). The one place that sees the bytes is this
+   * proxy.
+   *
+   * MEASURED (headless Chromium, this machine, real dsh + real skin, 6 real
+   * toggle clicks via CDP; see docs/memory/sidebar-performance.md §7):
+   *
+   *   configuration                  frames>50ms  worst frame  RecalcStyle
+   *   skin JS on  + skin CSS on           3         84 ms     1172 ms (960 ops)
+   *   skin JS on  + skin CSS REMOVED      4         83 ms     1165 ms (965 ops)
+   *   skin JS BLOCKED                     0         33 ms      743 ms (663 ops)
+   *
+   * i.e. the CSS effects (frosted glass, infinite animations) are NOT what makes
+   * the sidebar stutter — removing all of them changes nothing. The skin's
+   * client-side hook module (`hooks.mjs`) is: it keeps working while the user
+   * does nothing (the status-character loop rewrites the sprite's inline style
+   * ~5x/s, the ResizeObserver on the sidebar pane fires on every frame of the
+   * expand animation and writes body-level CSS variables + flips
+   * `body[data-orca-sidebar-wide]`), and each of those writes costs a style
+   * recalculation over the whole document.
+   *
+   * So the mode does two things: the base stylesheet below (cheap visual wins)
+   * and `patchSkinHooks` — the same hooks module with only those two loops
+   * slowed down, which keeps the skin's look and removes the jank.
+   *
+   * Read live from settings so the toggle needs no service restart.
+   */
+  get perfMode() {
+    try {
+      return this.plugin?.settings?.sidebarPerformanceMode !== false;
+    } catch {
+      return true;
+    }
+  }
+
+  /** Buffering cap for the injection path: the dsh index is ~29 KB. */
+  get perfHtmlLimit() {
+    return 2 * 1024 * 1024;
+  }
+
+  get perfStyleId() {
+    return 'dsh-obsidian-sidebar-perf';
+  }
+
+  /**
+   * The stylesheet injected into the dsh index when 侧栏性能模式 is on.
+   *
+   * Rules are mechanism-level rather than skin-specific, and each one keeps the
+   * look (colors, type, spacing) while removing work that has to be redone every
+   * frame. Measured on this machine's active skin (orca-link `patches.css`):
+   * 4 `backdrop-filter`, 14 `blur(`, 7 `infinite` animations.
+   */
+  perfStylesheet() {
+    const functional = ':is([data-orca-link-icon="spinner"], [class*="spinner"], [class*="Spinner"], [class*="loading"], [class*="Loading"], [class*="progress"], [class*="Progress"], [class*="caret"], [class*="Caret"])';
+    return [
+      `<style id="${this.perfStyleId}">`,
+      '/* 1. 毛玻璃：iframe 内的 backdrop-filter 会让合成器把宿主内容一并纳入模糊背景，',
+      '      于是宿主的任何动画（展开侧栏、按钮悬停）都要重算这块模糊。背景色保留。 */',
+      '*, *::before, *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }',
+      '/* 2. 装饰性辉光/脉冲：无限循环 + box-shadow，每帧失效重绘，与宿主动画抢合成器。',
+      '      功能性反馈（spinner / 光标 / 进度）保持动画，否则界面看起来像卡死。 */',
+      '[class*="ulse"], [class*="Glow"], [class*="glow"], [class*="Weave"], [class*="Aurora"], [class*="aurora"], [class*="Halo"], [class*="halo"] { animation: none !important; }',
+      '/* 3. 其余无限动画最多跑一轮：入场动画照旧，不再永远重绘。 */',
+      '*, *::before, *::after { animation-iteration-count: 1 !important; }',
+      `${functional}, ${functional}::before, ${functional}::after { animation-iteration-count: infinite !important; }`,
+      '/* 4. 皮肤装饰层的大面积 filter/blur：只作用于皮肤自己的元素，不碰应用内容。 */',
+      '[class*="orca-"] { filter: none !important; }',
+      '</style>'
+    ].join('\n');
+  }
+
+  /** Insert the perf stylesheet as the LAST thing in <head> (wins the cascade). */
+  injectPerfStyle(html) {
+    if (html.includes(this.perfStyleId)) return html;
+    const at = html.lastIndexOf('</head>');
+    if (at === -1) return html;
+    return html.slice(0, at) + this.perfStylesheet() + html.slice(at);
+  }
+
+  /** A navigation (not a fetch for CSS/JS/JSON): the only HTML we inject into. */
+  wantsHtml(req) {
+    return String(req.headers?.accept ?? '').includes('text/html');
+  }
+
+  /** The skin's client-side hook module — the one JS file 侧栏性能模式 rewrites. */
+  isSkinHooks(url) {
+    return /^\/api\/skin-center\/[^?]*\/hooks\.mjs(\?|$)/.test(String(url ?? ''));
+  }
+
+  /**
+   * 侧栏停用皮肤动态脚本：serve a no-op hooks module instead of the skin's.
+   *
+   * The measured cause of the sidebar stutter is that module's live work (see
+   * `perfMode`): ~14 subtree MutationObservers, a ~5 Hz inline-style loop, and a
+   * ResizeObserver that reacts to every frame of the sidebar animation. Blocking
+   * it entirely measured best (worst frame 84 → 33 ms, zero frames > 50 ms, zero
+   * long-animation-frames), at the cost of the skin's decorations inside the
+   * panel: the hero scene, the status character and the signal chip are all
+   * created by that module. Colors, type and layout come from the stylesheet and
+   * stay.
+   *
+   * Default OFF: it is a visible loss, so it stays the user's choice.
+   */
+  get perfSkinScriptsOff() {
+    try {
+      return this.plugin?.settings?.sidebarSkinScripts === false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The module the skin center loads when the scripts are switched off. */
+  stubSkinHooks() {
+    return '// dsh-math-assistant 侧栏性能模式：停用皮肤动态脚本（装饰由 hooks.mjs 创建）\n'
+      + 'export default function defineSkinHooks() { return { apply() {} } }\n';
+  }
+
+  /** Script responses we are willing to rewrite (the hooks module is a module). */
+  isScriptResponse(headers) {
+    return /javascript|ecmascript/i.test(String(headers['content-type'] ?? ''));
+  }
+
+  /**
+   * Slow the two skin loops that cost style recalculations while the user does
+   * nothing. Anchors are matched loosely (whitespace-tolerant) and BOTH must be
+   * found: on a skin update that changes them, the original module is served
+   * unchanged and a line is logged — a stale patch must never break the skin.
+   *
+   * 1. `syncSidebarWidth`'s ResizeObserver fires on every frame of the sidebar
+   *    animation and each pass reads layout and writes body-level CSS variables /
+   *    flips `body[data-orca-sidebar-wide]` → document-wide style invalidation
+   *    per frame. Debounced to the trailing edge (180 ms): the art stage still
+   *    ends up aligned, the per-frame storm is gone.
+   * 2. The status-character loop rewrites the sprite's inline style ~5×/s
+   *    forever. Floored at 1000 ms (≈1×/s): the character still animates.
+   */
+  patchSkinHooks(text) {
+    const applied = [];
+    let out = String(text ?? '');
+    const resizeAnchor = /new ResizeObserver\(\(\)\s*=>\s*\{\s*if \(observedSidebar\) syncObservedSidebar\(observedSidebar\)\s*\}\)/;
+    if (resizeAnchor.test(out)) {
+      out = out.replace(resizeAnchor, 'new ResizeObserver(() => { if (observedSidebar) { clearTimeout(window.__dshSidebarSyncRo); window.__dshSidebarSyncRo = setTimeout(() => syncObservedSidebar(observedSidebar), 180) } })');
+      applied.push('sidebar-width-debounce');
+    }
+    const spriteAnchor = /timeout = setTimeout\(tick, statusFrameDuration\(status, sequenceIndex\)\)/;
+    if (spriteAnchor.test(out)) {
+      out = out.replace(spriteAnchor, 'timeout = setTimeout(tick, Math.max(1000, statusFrameDuration(status, sequenceIndex)))');
+      applied.push('character-loop-1s');
+    }
+    return { text: out, applied };
+  }
+
+  /** The template's file log, when this class runs outside it (tests). */
+  log(line) {
+    if (typeof writeDebugLog === 'function') writeDebugLog(line);
+  }
+
+  get publicAuthority() {
+    return `127.0.0.1:${this.port}`;
+  }
+
+  get baseUrl() {
+    return this.port > 0 ? `http://127.0.0.1:${this.port}/` : '';
+  }
+
+  get running() {
+    return this.server !== null && this.port > 0;
+  }
+
+  /** Listen on the user's configured port. Rejects when it is taken. */
+  async listen(port) {
+    if (this.server !== null) await this.close();
+    const server = createServer((req, res) => this.forward(req, res));
+    server.on('upgrade', (req, socket, head) => this.forwardUpgrade(req, socket, head));
+    await new Promise((resolve, reject) => {
+      const onError = (error) => { server.removeListener('listening', onListening); reject(error); };
+      const onListening = () => { server.removeListener('error', onError); resolve(); };
+      server.once('error', onError);
+      server.once('listening', onListening);
+      server.listen(port, '127.0.0.1');
+    });
+    this.server = server;
+    this.port = server.address().port;
+    return this.port;
+  }
+
+  async close() {
+    const server = this.server;
+    this.server = null;
+    this.port = 0;
+    this.cookie = '';
+    if (server !== null) {
+      server.closeAllConnections?.();
+      await new Promise((resolve) => {
+        server.close(() => resolve());
+        setTimeout(resolve, 500);
+      });
+    }
+  }
+
+  /**
+   * Redeem the launch token AS THE PUBLIC AUTHORITY and keep the session cookie.
+   *
+   * The token lives on the internal port's stdout line, but the cookie must be
+   * minted for the authority the browser will use — dsh names the cookie after
+   * the request's Host — so this dials the upstream while presenting the public
+   * Host. Node's `fetch` cannot do that (Host is a forbidden header), hence the
+   * raw http.request.
+   */
+  async redeem(tokenUrl) {
+    let url;
+    try {
+      url = new URL(tokenUrl);
+    } catch {
+      return false;
+    }
+    const result = await new Promise((resolve) => {
+      const request = httpRequest({
+        host: '127.0.0.1',
+        port: this.upstreamPort,
+        path: url.pathname + url.search,
+        method: 'GET',
+        headers: { host: this.publicAuthority, connection: 'close' },
+        setHost: false
+      }, (response) => {
+        response.resume();
+        const raw = response.headers['set-cookie'] ?? [];
+        resolve({ status: response.statusCode ?? 0, cookies: raw });
+      });
+      request.on('error', () => resolve(null));
+      request.end();
+    });
+    if (result === null || result.status !== 303) return false;
+    const cookie = result.cookies.map((c) => String(c).split(';')[0]).filter(Boolean).join('; ');
+    if (cookie === '') return false;
+    this.cookie = cookie;
+    return true;
+  }
+
+  /** Upstream request options for one proxied call. */
+  upstreamOptions(req) {
+    const headers = { ...req.headers, host: this.publicAuthority };
+    if (this.cookie !== '') headers.cookie = this.cookie;
+    // Rewriting a body is only possible while the response is not compressed
+    // (measured: dsh answers gzip whenever the client advertises it). Loopback
+    // bandwidth is free; only the two rewritten responses are affected.
+    if (this.perfMode && (this.wantsHtml(req) || this.isSkinHooks(req.url))) delete headers['accept-encoding'];
+    return { host: '127.0.0.1', port: this.upstreamPort, method: req.method, path: req.url, headers };
+  }
+
+  forward(req, res) {
+    const upstream = httpRequest(this.upstreamOptions(req), (up) => {
+      const headers = { ...up.headers };
+      // The cookie is ours to manage; framing headers would fight the sidebar.
+      for (const name of ['set-cookie', 'x-frame-options', 'content-security-policy']) delete headers[name];
+      const plain = headers['content-encoding'] === undefined;
+      const injectable = this.perfMode && plain
+        && up.statusCode === 200
+        && String(headers['content-type'] ?? '').startsWith('text/html');
+      if (injectable) {
+        this.forwardInjecting(up, res, headers);
+        return;
+      }
+      // The skin's hook module is the measured cause of the sidebar stutter
+      // (§7 of docs/memory/sidebar-performance.md): rewrite its two hot loops.
+      const patchable = this.perfMode && plain
+        && up.statusCode === 200
+        && this.isSkinHooks(req.url)
+        && this.isScriptResponse(headers);
+      if (patchable) {
+        this.forwardInjecting(up, res, headers, (source) => {
+          if (this.perfSkinScriptsOff) {
+            this.log('[perf] 侧栏已停用皮肤动态脚本（hooks.mjs 以空实现返回）');
+            return this.stubSkinHooks();
+          }
+          const patched = this.patchSkinHooks(source);
+          if (patched.applied.length === 0) this.log('[perf] 皮肤 hooks 模块的锚点已变化，本次按原样返回（未打补丁）');
+          else this.log('[perf] 皮肤 hooks 已打补丁：' + patched.applied.join(', '));
+          return patched.text;
+        });
+        return;
+      }
+      res.writeHead(up.statusCode ?? 502, headers);
+      up.pipe(res);
+    });
+    upstream.on('error', () => {
+      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('dsh 代理无法连接后端服务。');
+    });
+    req.pipe(upstream);
+  }
+
+  /**
+   * Buffer one HTML document, inject the perf stylesheet, send it.
+   *
+   * Buffering is bounded: past `perfHtmlLimit` the already-read chunks are
+   * flushed and the rest streams through untouched (a degraded response, logged,
+   * never a hung one).
+   */
+  forwardInjecting(up, res, headers, rewrite = null) {
+    const chunks = [];
+    let total = 0;
+    let overflowed = false;
+    up.on('data', (chunk) => {
+      if (overflowed) return;
+      total += chunk.length;
+      if (total > this.perfHtmlLimit) {
+        overflowed = true;
+        this.log('[perf] 响应超过 ' + this.perfHtmlLimit + ' 字节，本次跳过性能注入');
+        res.writeHead(up.statusCode ?? 502, headers);
+        for (const buffered of chunks) res.write(buffered);
+        chunks.length = 0;
+        up.pipe(res);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    up.on('end', () => {
+      if (overflowed) return;
+      const source = Buffer.concat(chunks).toString('utf8');
+      const body = Buffer.from(rewrite === null ? this.injectPerfStyle(source) : rewrite(source), 'utf8');
+      // The body is no longer the upstream's: dropping the validators and
+      // switching from chunked to a known length keeps the response legal
+      // (dsh answers `transfer-encoding: chunked`; keeping it AND sending a
+      // content-length makes the client reject the response outright).
+      delete headers.etag;
+      delete headers['transfer-encoding'];
+      headers['content-length'] = String(body.length);
+      res.writeHead(up.statusCode ?? 502, headers);
+      res.end(body);
+    });
+    up.on('error', () => {
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
+      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('dsh 代理无法连接后端服务。');
+    });
+  }
+
+  forwardUpgrade(req, socket, head) {
+    const wanted = this.upgradePrefixes.some((prefix) => String(req.url ?? '').startsWith(prefix));
+    if (!wanted) {
+      socket.destroy();
+      return;
+    }
+    const upstream = httpRequest(this.upstreamOptions(req));
+    upstream.on('upgrade', (upRes, upSocket, upHead) => {
+      const lines = [`HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage}`];
+      for (const [name, value] of Object.entries(upRes.headers)) {
+        lines.push(`${name}: ${Array.isArray(value) ? value.join(', ') : value}`);
+      }
+      socket.write(lines.join('\r\n') + '\r\n\r\n');
+      if (upHead?.length) socket.write(upHead);
+      if (head?.length) upSocket.write(head);
+      upSocket.pipe(socket);
+      socket.pipe(upSocket);
+      const drop = () => { socket.destroy(); upSocket.destroy(); };
+      socket.on('error', drop);
+      upSocket.on('error', drop);
+    });
+    upstream.on('response', (upRes) => {
+      // The upstream refused the upgrade (e.g. 401): relay the status verbatim.
+      socket.write(`HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage}\r\nconnection: close\r\n\r\n`);
+      socket.destroy();
+      upRes.resume();
+    });
+    upstream.on('error', () => socket.destroy());
+    upstream.end();
+  }
+}
+
+// ── dsh service manager ─────────────────────────────────────────────────────
+
 class DshService {
   constructor(plugin) {
     this.plugin = plugin;
@@ -443,6 +885,15 @@ class DshService {
     this.logLines = [];
     this.listeners = new Set();
     this.cachedLocation = undefined;
+    // In-flight start promise: dedupes concurrent start()/ensureStarted() calls
+    // (e.g. the sidebar view's onOpen racing the autoStart timer) so they never
+    // spawn two dsh processes fighting over the same port (EADDRINUSE).
+    this.starting = null;
+    // The authenticated index URL (`…/?token=…`) captured from the child's
+    // stdout, and the loopback proxy that injects its cookie for the iframe.
+    this.authUrl = null;
+    this.internalPort = 0;
+    this.proxy = new DshWebProxy(plugin);
   }
 
   onChange(listener) {
@@ -464,6 +915,87 @@ class DshService {
     }
   }
 
+  /**
+   * Pick the `dsh web: http://127.0.0.1:PORT/?token=…` line out of the child's
+   * stdout and remember it as the address the iframe must load.
+   *
+   * dsh >= 0.1.5 refuses the index (401) without the browser-session cookie that
+   * only this URL mints, and the URL exists nowhere else — not in argv, not in
+   * an env var, only on stdout. `--no-open` keeps it off the user's browser, so
+   * the plugin is its only consumer.
+   *
+   * The token is bound to host:port, so a different port invalidates it: the
+   * URL is re-derived from whatever the child printed last.
+   */
+  captureAuthUrl(chunk) {
+    const match = /http:\/\/127\.0\.0\.1:(\d+)\/\?token=([A-Za-z0-9_-]{8,})/.exec(String(chunk));
+    if (match === null) return;
+    const port = Number(match[1]);
+    const url = match[0];
+    if (url === this.authUrl) return;
+    this.authUrl = url;
+    this.internalPort = port;
+    this.portOccupiedNotified = false;
+    writeDebugLog('[auth] 已取得带 token 的启动地址（内部端口 ' + port + '）');
+    // The address itself is only an intermediate step now: the iframe talks to
+    // the proxy, which injects the cookie the browser refuses to send.
+    this.proxy.upstreamPort = port;
+    this.syncProxyAuth();
+  }
+
+  /**
+   * Keep the proxy's cookie in step with the launch token.
+   *
+   * Called whenever the token is (re)captured: redeeming is cheap and idempotent,
+   * and a token from a previous process would otherwise leave the proxy serving
+   * 401s.
+   */
+  syncProxyAuth() {
+    if (this.authUrl === null || this.internalPort === 0) return;
+    if (!this.proxy.running) return;
+    this.proxy.redeem(this.authUrl).then((ok) => {
+      writeDebugLog('[auth] 代理 cookie 兑换：' + (ok ? '成功' : '失败'));
+      if (ok) this.plugin.refreshViews?.();
+    }).catch(() => {});
+  }
+
+  /**
+   * Bring the proxy up on the port the user configured, then authenticate it.
+   *
+   * @param waitForToken - true while the child is still booting.
+   * @returns true when the proxy can serve an authenticated UI.
+   */
+  async resolveAuth(waitForToken) {
+    const wanted = Number(this.plugin.settings.port);
+    const deadline = Date.now() + (waitForToken ? 8000 : 0);
+    for (;;) {
+      if (this.authUrl !== null && this.internalPort > 0) {
+        if (!this.proxy.running || this.proxy.port !== wanted) {
+          try {
+            await this.proxy.listen(wanted);
+            this.proxy.upstreamPort = this.internalPort;
+            writeDebugLog('[auth] 代理已监听 ' + this.proxy.publicAuthority + ' → 上游 ' + this.internalPort);
+          } catch (error) {
+            writeDebugLog('[auth] 代理无法监听 ' + wanted + '：' + String(error));
+            return false;
+          }
+        }
+        if (await this.proxy.redeem(this.authUrl)) return true;
+      }
+      if (Date.now() >= deadline) return false;
+      await sleep(300);
+    }
+  }
+
+  /**
+   * The dsh UI is reached through the proxy; before it is up, the raw upstream
+   * address is the only thing that exists (and it needs the token).
+   */
+  get iframeSrc() {
+    if (this.proxy.running) return this.proxy.baseUrl;
+    return this.authUrl ?? `http://127.0.0.1:${this.plugin.settings.port}/`;
+  }
+
   location(force = false) {
     if (!force && this.cachedLocation !== undefined) return this.cachedLocation;
     const detected = detectDsh(this.plugin.settings);
@@ -476,39 +1008,62 @@ class DshService {
   }
 
   /**
-   * One-shot hint when the port answers but this plugin never spawned the
-   * service. Skipped when keepAliveOnUnload is on: a still-running service
-   * from the previous Obsidian process is the expected state there.
+   * One-shot hint for a foreign service sitting on the configured port.
+   *
+   * Since the port now carries the plugin's own proxy, "something answers
+   * there" is no longer evidence of a stray server — it IS us. Kept for the one
+   * case that still matters: the probe failed and something else owns the port.
    */
   warnPortOccupied() {
     if (this.child !== null || this.portOccupiedNotified === true || this.plugin.settings.keepAliveOnUnload) return;
     this.portOccupiedNotified = true;
-    this.appendLog(`端口 ${this.plugin.settings.port} 已有其他 HTTP 服务在响应（未由本插件启动）。若侧栏显示的不是 dsh 笔记助手，请在设置中更换端口并重启服务。`);
-    new Notice(`dsh 笔记助手：端口 ${this.plugin.settings.port} 已有其他服务在运行。若侧栏内容异常，请在插件设置中更换端口。`);
+    this.appendLog(`端口 ${this.plugin.settings.port} 上已有其他 HTTP 服务在响应（未由本插件启动），代理将无法监听该端口。请在设置中更换端口后重启服务。`);
+    new Notice(`dsh 笔记助手：端口 ${this.plugin.settings.port} 被其他服务占用，侧栏无法工作。请在插件设置中更换端口。`);
   }
 
   async ensureStarted() {
     const location = this.location();
-    if (location !== null) this.appendLog(patchDshFrontendLinks(location.installDir));
-    if (await probeService(this.plugin.settings.port, 1200)) {
-      this.warnPortOccupied();
-      this.setStatus('running');
-      return;
+    writeDebugLog('[ensureStarted] location=' + (location === null ? 'null' : location.installDir));
+    // "Already running" now means: our child is alive, the proxy is up on the
+    // configured port and it holds a usable session cookie.
+    if (this.child !== null && this.child.exitCode === null && this.proxy.running) {
+      if (await probeServiceStatus(this.proxy.port, 1200) === 'ready') {
+        this.setStatus('running');
+        writeDebugLog('[ensureStarted] 代理已在端口 ' + this.proxy.port + ' 上就绪，视为 running');
+        return;
+      }
     }
     return this.start();
   }
 
   async start() {
-    if (this.child !== null && this.child.exitCode === null) return;
-    if (await probeService(this.plugin.settings.port, 1200)) {
-      this.warnPortOccupied();
-      this.setStatus('running');
-      return;
+    if (this.child !== null && this.child.exitCode === null && this.proxy.running) return;
+    // Concurrent callers (view onOpen vs autoStart timer, retry button, ...)
+    // share one in-flight start so only a single dsh process is spawned.
+    if (this.starting !== null) return this.starting;
+    const run = this._start().finally(() => { this.starting = null; });
+    this.starting = run;
+    return run;
+  }
+
+  async _start() {
+    if (this.child !== null && this.child.exitCode === null && this.proxy.running) return;
+    // A leftover service that we do not own cannot be authenticated (its launch
+    // token only ever existed on a stdout we no longer hold), so it must be
+    // replaced rather than adopted. Free the configured port for our proxy.
+    if (this.proxy.running) await this.proxy.close();
+    if (await probeServiceStatus(this.plugin.settings.port, 800) !== 'down') {
+      this.appendLog(`端口 ${this.plugin.settings.port} 上已有其他服务在响应；本插件需要该端口承载代理，请更换端口或先停掉它。`);
+      this.setStatus('unauthorized');
+      throw new Error(`端口 ${this.plugin.settings.port} 被占用：本插件需要它来代理 dsh 界面。请在设置中更换端口后点「重启服务」。`);
     }
     const location = this.location();
     if (location === null) {
       this.setStatus('missing-dsh');
-      throw new Error('未找到 dsh。请打开插件设置，点击“自动检测”，或先安装 DeepSeek Harness。');
+      const message = '未找到 dsh。请打开插件设置，点击“自动检测”，或先安装 DeepSeek Harness。';
+      this.appendLog('启动失败：' + message);
+      writeDebugLog('[start] 启动失败：' + message);
+      throw new Error(message);
     }
     const patchPath = this.plugin.settings.autoInit
       ? ensureObsidianPatch(this.plugin, location)
@@ -520,15 +1075,24 @@ class DshService {
       ...process.env,
       DSH_HOME: location.home,
       DSH_OBSIDIAN_VAULT: vaultPath,
+      // Consumed by the memory preset (math-memory.mjs) and by the host panel
+      // routes (math-memory-panel.mjs) to locate the session-log store.
+      // NOT consumed by the harness's own persistence plugin: the session LIST
+      // in the sidebar follows the `session-persistence-jsonl` `root` config,
+      // so pointing this elsewhere does not scope what the panel displays.
+      // See docs/session-scope.md.
       DSH_SESSIONS_ROOT: join(location.home, 'sessions'),
       ...(linkBaseUrl === '' ? {} : { DSH_OBSIDIAN_LINK_URL: linkBaseUrl }),
       ...(this.plugin.linkServer?.token === undefined || this.plugin.linkServer.token === ''
         ? {}
         : { DSH_OBSIDIAN_FEEDBACK_TOKEN: this.plugin.linkServer.token })
     };
+    // dsh listens on an OS-assigned loopback port; the PROXY owns the port the
+    // user configured and the browser talks to. That is what keeps the session
+    // cookie's authority (and therefore its name) stable and first-party.
     const args = location.script
-      ? [location.script, '--profile', PRESET_NAME, ...patchArgs, '--no-open', '--port', String(this.plugin.settings.port)]
-      : ['--profile', PRESET_NAME, ...patchArgs, '--no-open', '--port', String(this.plugin.settings.port)];
+      ? [location.script, '--profile', PRESET_NAME, ...patchArgs, '--no-open', '--port', '0']
+      : ['--profile', PRESET_NAME, ...patchArgs, '--no-open', '--port', '0'];
     const executable = location.script ? nodeExecutable() : 'dsh';
     // Without a resolved script we rely on the dsh launcher; Windows needs a
     // shell to execute .cmd shims.
@@ -538,37 +1102,59 @@ class DshService {
     const child = spawn(executable, args, { env, windowsHide: true, shell, stdio: ['ignore', 'pipe', 'pipe'] });
     this.child = child;
     let spawnError = null;
-    child.stdout.on('data', (chunk) => this.appendLog(chunk));
+    // The launch token reaches us only on the child's stdout, and it can scroll
+    // out of the 600-line ring buffer, so parse it from the stream itself while
+    // also keeping the human-readable log.
+    child.stdout.on('data', (chunk) => {
+      this.appendLog(chunk);
+      this.captureAuthUrl(String(chunk));
+    });
     child.stderr.on('data', (chunk) => this.appendLog(chunk));
     // Without this handler a missing `node` binary throws an uncaught
     // ChildProcess 'error' event and can take the whole plugin down.
     child.on('error', (error) => {
       spawnError = error;
       this.appendLog(`启动失败：${String(error)}`);
+      writeDebugLog('[start] child error：' + String(error) + '\n' + (error?.stack ?? '(no stack)'));
       if (this.child === child) this.child = null;
       this.setStatus('error');
     });
     child.on('exit', (code) => {
       this.appendLog(`dsh 已退出，退出码 ${code}`);
+      writeDebugLog('[start] dsh 已退出，退出码 ' + code);
       if (this.child === child) this.child = null;
       if (this.status !== 'stopping' && spawnError === null) this.setStatus(code === 0 ? 'stopped' : 'error');
     });
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      await sleep(750);
-      if (await probeService(this.plugin.settings.port, 1000)) {
-        this.setStatus('running');
-        return;
+      if (await this.resolveAuth(true)) {
+        // Ready when the PROXY serves the authenticated UI on the configured
+        // port — the upstream being alive is not enough (that was the bug).
+        const through = await probeServiceStatus(this.proxy.port, 1200);
+        if (through === 'ready') {
+          this.setStatus('running');
+          writeDebugLog(`[start] 服务已在端口 ${this.proxy.port} 就绪（经由代理，已认证）`);
+          this.plugin.refreshViews?.();
+          return;
+        }
       }
       if (this.child === null || this.child.exitCode !== null) break;
+      await sleep(750);
     }
     this.setStatus('error');
-    throw new Error(`dsh 服务未能在端口 ${this.plugin.settings.port} 上启动。${this.logLines.slice(-3).join(' | ')}`);
+    const timeoutMessage = `dsh 服务未能在端口 ${this.plugin.settings.port} 上启动。${this.logLines.slice(-3).join(' | ')}`;
+    this.appendLog('启动失败：' + timeoutMessage);
+    writeDebugLog('[start] ' + timeoutMessage);
+    throw new Error(timeoutMessage);
   }
 
   async stop() {
     this.setStatus('stopping');
     const child = this.child;
     this.child = null;
+    // The launch token dies with its process, so both the captured URL and the
+    // proxy's cookie must go too.
+    this.authUrl = null;
+    this.internalPort = 0;
     if (child !== null && child.exitCode === null) {
       const exited = new Promise((resolve) => {
         child.once('exit', resolve);
@@ -577,6 +1163,7 @@ class DshService {
       child.kill();
       await exited;
     }
+    await this.proxy.close();
     this.setStatus('stopped');
   }
 
@@ -597,12 +1184,25 @@ const SKIN_FALLBACK_END = "# --- end skin-disable fallback ---";
 // notes-assistant.patch.yml overlay only when BOTH the toggle is on AND a web
 // profile exists to mirror the @linxin666 packages from; degrade mode (no web
 // profile) skips it so boot never dies with ERR_MODULE_NOT_FOUND.
+//
+// Status under dsh 0.1.5 / dsh-web-all 0.3.20 (docs/dsh-0.1.5-adaptation.md
+// §3.5): the aggregate web bundle now mounts its own `web-ui-skin-center` row,
+// so on a machine that has the aggregate this block is REDUNDANT — the host
+// half runs once and the browser half is deduped by package name, i.e. it is
+// harmless but adds nothing. It still carries its weight on the one setup the
+// aggregate cannot cover: a `web` profile whose skin packages exist WITHOUT the
+// aggregate, where this is the only way the Obsidian-side UI gets a skin
+// picker. Kept intentionally; the default stays off.
 const SKIN_CENTER_INSERT = [
   '',
   '# Optional skin center (settings.enableSkinCenter): mount the dsh-web-ui skin',
   '# picker + its settings card host. Only appended when the web profile exists',
   '# to mirror the @linxin666 packages from; otherwise boot would fail with',
   '# ERR_MODULE_NOT_FOUND, so degrade mode skips this block.',
+  '# NOTE: when the web profile ships the @linxin666/dsh-web-all aggregate, that',
+  '# bundle already mounts its own web-ui-skin-center row and this insert is a',
+  '# no-op in practice (host half runs once, browser half deduped by package',
+  '# name). See docs/dsh-0.1.5-adaptation.md §4 B2.',
   '- insert:',
   "    - id: ui-skin-center",
   "      name: '@linxin666/dsh-client-ui-skin-center'",
@@ -822,18 +1422,44 @@ function syncGlobalPackageLinks(home) {
     return { linked: 0, degraded: true };
   }
   mkdirSync(obsScope, { recursive: true });
+  // `existsSync` FOLLOWS a junction, so a link whose target was removed by a
+  // web-profile reinstall (or a package rename — the 0.3.20 aggregate replaced
+  // `dsh-web-ui-all`, retired `dsh-perf`/`dsh-desktop-launcher`, …) reports
+  // "absent", `symlinkSync` then fails EEXIST, and the bare catch swallowed it:
+  // the durable skin fix silently stopped working forever. Detect the entry with
+  // lstat, and drop it only when it is a junction whose target is gone.
   let linked = 0;
+  let repaired = 0;
+  const failures = [];
   for (const name of readdirSync(webScope)) {
     const target = join(obsScope, name);
-    if (existsSync(target)) continue;
+    let entry = null;
+    try {
+      entry = lstatSync(target);
+    } catch {
+      entry = null;
+    }
+    if (entry !== null) {
+      if (existsSync(target)) continue; // healthy link or real directory
+      if (!entry.isSymbolicLink()) continue; // real file/dir: never touch it
+      try {
+        rmSync(target, { force: true });
+        repaired += 1;
+      } catch (error) {
+        failures.push(`${name}: ${String(error)}`);
+        continue;
+      }
+    }
     try {
       symlinkSync(join(webScope, name), target, 'junction');
       linked += 1;
-    } catch {
+    } catch (error) {
       // Skip unlinkable entries; the profile must still boot.
+      failures.push(`${name}: ${String(error)}`);
     }
   }
-  return { linked, degraded: false };
+  if (failures.length > 0) writeDebugLog('[skin] 镜像失败 ' + failures.length + ' 项：' + failures.slice(0, 3).join(' | '));
+  return { linked, repaired, degraded: false };
 }
 
 function bootstrapVaultTemplates(plugin, force = false) {
@@ -861,6 +1487,10 @@ class DshMathView extends ItemView {
     this.plugin = plugin;
     this.offStatus = null;
     this.iframe = null;
+    /** '' = rendered, otherwise the reason the iframe is suspended. */
+    this.suspendReason = '';
+    /** Self-healing re-check while suspended (see syncSuspension). */
+    this.suspendRecheck = undefined;
   }
 
   getViewType() {
@@ -881,8 +1511,79 @@ class DshMathView extends ItemView {
     this.statusRow = this.contentEl.createDiv({ cls: 'dsh-math-assistant-status' });
     this.body = this.contentEl.createDiv({ cls: 'dsh-math-assistant-body' });
     this.offStatus = this.plugin.service.onChange((status) => this.render(status));
+    // The iframe is a whole web app. When the sidebar that holds this view is
+    // collapsed — or another tab of the same sidebar is active — it must stop
+    // rendering: a live frame keeps painting, animating and compositing while
+    // invisible. `display:none` suspends the guest's rendering entirely (its
+    // session survives), and every workspace event is a chance to notice.
+    this.registerEvent(this.app.workspace.on('layout-change', () => this.syncSuspension()));
+    this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.syncSuspension()));
+    this.registerEvent(this.app.workspace.on('resize', () => this.syncSuspension()));
+    this.registerDomEvent(window, 'resize', () => this.syncSuspension());
+    // First paint has no size yet: re-check right after layout, then once more
+    // after the sidebar animation would have finished.
+    for (const delay of [0, 120, 400]) {
+      const timer = setTimeout(() => this.syncSuspension(), delay);
+      this.register(() => clearTimeout(timer));
+    }
     const status = await this.plugin.service.ensureStarted().then(() => this.plugin.service.status).catch(() => this.plugin.service.status);
     this.render(status);
+  }
+
+  onResize() {
+    this.syncSuspension();
+  }
+
+  /**
+   * Why the frame may stop rendering, checked from the view's own container.
+   * Only unambiguous signals count: a false "hidden" would blank the panel, so
+   * anything uncertain reports '' (rendered), and `syncSuspension` re-checks
+   * once a second while suspended.
+   */
+  hiddenReason() {
+    const container = this.containerEl;
+    if (container === undefined || container === null) return 'no-container';
+    try {
+      if (typeof container.isShown === 'function' && container.isShown() === false) return 'isShown=false';
+      for (let node = container; node !== null && node !== undefined; node = node.parentElement) {
+        if (node.style?.display === 'none') return 'display:none';
+      }
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return 'zero-rect';
+      if (container.clientWidth === 0 || container.clientHeight === 0) return 'zero-size';
+    } catch {
+      return '';
+    }
+    return '';
+  }
+
+  /**
+   * Apply the suspension state. Cheap enough to call on every workspace event.
+   *
+   * While suspended it also re-checks every second: the iframe must never stay
+   * hidden because an event was missed, and a repeating check that only runs in
+   * the hidden state costs nothing when the panel is visible.
+   */
+  syncSuspension() {
+    if (this.suspendRecheck !== undefined) {
+      clearTimeout(this.suspendRecheck);
+      this.suspendRecheck = undefined;
+    }
+    if (this.iframe === null || this.iframe === undefined) return;
+    const reason = this.hiddenReason();
+    if (reason !== this.suspendReason) {
+      this.suspendReason = reason;
+      try {
+        this.iframe.style.display = reason === '' ? '' : 'none';
+        this.iframe.toggleAttribute('data-dsh-suspended', reason !== '');
+      } catch {
+        // never let an API surprise break the view
+      }
+      writeDebugLog('[view] iframe ' + (reason === '' ? 'resumed' : 'suspended (' + reason + ')'));
+    }
+    if (this.suspendReason !== '') {
+      this.suspendRecheck = setTimeout(() => this.syncSuspension(), 1000);
+    }
   }
 
   render(status) {
@@ -890,13 +1591,32 @@ class DshMathView extends ItemView {
     if (status === 'running') {
       this.statusRow.empty();
       this.statusRow.style.display = 'none';
-      const expectedSrc = `http://127.0.0.1:${this.plugin.settings.port}/`;
+      // dsh >= 0.1.5 requires the launch-token URL: loading the bare root would
+      // render the 401 text page while the status row said "running".
+      const expectedSrc = this.plugin.service.iframeSrc;
+      // Diagnostic: keep the record of what the iframe actually loads — a live
+      // 401 turned out to be a cookie problem, not a navigation problem.
+      writeDebugLog('[render] status=running iframe=' + expectedSrc);
       if (this.iframe === null) {
         this.iframe = this.body.createEl('iframe', {
           cls: 'dsh-math-assistant-iframe',
           attr: { src: expectedSrc }
         });
+        this.iframe.addEventListener('load', () => {
+          let href = '(unreadable)';
+          let text = '';
+          try {
+            href = this.iframe.contentWindow?.location?.href ?? '(null)';
+            text = (this.iframe.contentDocument?.body?.textContent ?? '').slice(0, 60);
+          } catch {
+            href = '(cross-origin)';
+          }
+          writeDebugLog('[iframe] load href=' + href + ' text=' + JSON.stringify(text));
+        });
+        this.syncSuspension();
       } else if (this.iframe.getAttribute('src') !== expectedSrc) {
+        // Also the re-auth path: a new token (restart, port change) must reload.
+        writeDebugLog('[render] iframe src -> ' + expectedSrc);
         this.iframe.setAttribute('src', expectedSrc);
       }
       return;
@@ -905,6 +1625,7 @@ class DshMathView extends ItemView {
     if (this.iframe !== null) {
       this.iframe.remove();
       this.iframe = null;
+      this.suspendReason = '';
     }
     this.statusRow.empty();
     const message = {
@@ -913,14 +1634,19 @@ class DshMathView extends ItemView {
       error: 'dsh 服务启动失败。请打开插件设置查看日志。',
       stopped: 'dsh 服务已停止。',
       stopping: '正在停止服务…',
+      // dsh >= 0.1.5 serves the UI only to a browser session that was opened
+      // with the launch-token URL. Without that token the port answers 401, so
+      // say so instead of showing a dead pane.
+      unauthorized: '端口上的 dsh 服务需要认证（未取得带 token 的启动地址）。点「重启服务」让本插件重新启动它并取得地址。',
       unknown: '服务状态未知。'
     }[status] ?? '服务状态未知。';
     this.statusRow.setText(message);
     const actions = this.statusRow.createDiv({ cls: 'dsh-math-assistant-actions' });
-    const retry = actions.createEl('button', { text: '重试' });
+    const retry = actions.createEl('button', { text: status === 'unauthorized' ? '重启服务' : '重试' });
     retry.addEventListener('click', async () => {
       this.render('starting');
-      await this.plugin.service.ensureStarted().catch((error) => new Notice(String(error)));
+      if (status === 'unauthorized') await this.plugin.service.restart().catch((error) => new Notice(String(error)));
+      else await this.plugin.service.ensureStarted().catch((error) => new Notice(String(error)));
       this.render(this.plugin.service.status);
     });
     const settings = actions.createEl('button', { text: '打开设置' });
@@ -928,7 +1654,26 @@ class DshMathView extends ItemView {
   }
 
   async onClose() {
+    if (this.suspendRecheck !== undefined) {
+      clearTimeout(this.suspendRecheck);
+      this.suspendRecheck = undefined;
+    }
     if (this.offStatus !== null) this.offStatus();
+  }
+
+  /**
+   * Reload the frame through a blank document, so a changed proxy behaviour
+   * (侧栏性能模式) applies without restarting the dsh service. The conversation
+   * itself lives in the service, not in the frame.
+   */
+  reloadFrame() {
+    if (this.iframe === null || this.iframe === undefined) return;
+    const src = this.iframe.getAttribute('src');
+    if (src === null || src === '') return;
+    this.iframe.setAttribute('src', 'about:blank');
+    setTimeout(() => {
+      if (this.iframe !== null && this.iframe !== undefined) this.iframe.setAttribute('src', src);
+    }, 30);
   }
 }
 
@@ -941,6 +1686,25 @@ const VERIFIED_BADGES = {
   'cross-referenced': '⚖️',
   'single-source': '❓'
 };
+
+/** Panel vocabulary: the user reads "记住了什么 / 哪些可信 / 要我处理什么",
+ *  never the internal field names (hook / success_rate / verified / superseded). */
+const MEMO_STATUS_TEXT = { inbox: '待打磨', polishing: '打磨中', done: '已完成' };
+
+/** Card status in words: `superseded` is what the panel's own 过期 button writes
+ *  (so the click must be visible in the row) and `candidate` is a strategy card
+ *  the audit has not promoted yet. Anything else stays verbatim. */
+const CARD_STATUS_TEXT = { superseded: '已过期', candidate: '候选' };
+
+const CAPTURE_MODE_TEXT = { auto: '自动写入', ask: '先询问', off: '不捕获' };
+
+/** Episodes show only the newest 8 rows by default: the old 30-row wall of file
+ *  names + mtimes pushed the cards and the audit conclusion out of view, which
+ *  is exactly the "this is just the assistant's log dump" complaint. */
+const EPISODE_PREVIEW = 8;
+
+/** Window in which the second click on 归档 actually archives. */
+const ARCHIVE_CONFIRM_MS = 3000;
 
 /** Parse frontmatter scalars plus an optional block-style hook block. */
 const parseMemoryFrontmatter = (text) => MEMORY_ADMIN.parseMemoryFrontmatter(text, HOOK_FRONTMATTER.parseHookFrontmatter);
@@ -1068,6 +1832,14 @@ class MemoryView extends ItemView {
     super(leaf);
     this.plugin = plugin;
     this.filter = '';
+    // View-local transient state: 「展开全部」and the pending 归档 confirmation
+    // are never persisted, so reopening the panel always starts from the
+    // collapsed / disarmed state.
+    this.episodesExpanded = false;
+    this.archiveTimer = undefined;
+    this.archiveArmed = null;
+    /** Pending debounced search render (see the toolbar input handler). */
+    this.filterTimer = undefined;
   }
 
   getViewType() {
@@ -1108,14 +1880,21 @@ class MemoryView extends ItemView {
     try {
       this.contentEl.addClass('dsh-memory-panel');
       const toolbar = this.contentEl.createDiv({ cls: 'dsh-memory-toolbar' });
-      const search = toolbar.createEl('input', { type: 'search', placeholder: '搜索记忆卡（标题 / 算子 / 类型 / 主题）' });
+      const search = toolbar.createEl('input', { type: 'search', placeholder: '搜索记忆（标题 / 主题 / 类型 / 算子）' });
       search.value = this.filter;
       search.addEventListener('input', () => {
         this.filter = search.value.trim().toLowerCase();
-        this.render();
+        // Every render re-collects the whole memory state (a synchronous vault
+        // scan plus the stats/history JSON reads). Doing that per keystroke
+        // stalls the renderer, so the filter settles first.
+        if (this.filterTimer !== undefined) clearTimeout(this.filterTimer);
+        this.filterTimer = setTimeout(() => {
+          this.filterTimer = undefined;
+          this.render();
+        }, 220);
       });
       const refresh = toolbar.createEl('button', { text: '刷新' });
-      refresh.addEventListener('click', () => this.render());
+      refresh.addEventListener('click', () => this.renderNow());
       const archive = toolbar.createEl('button', { text: '归档 >90 天事件' });
       archive.addEventListener('click', () => {
         try {
@@ -1124,12 +1903,11 @@ class MemoryView extends ItemView {
         } catch (error) {
           new Notice(`记忆维护失败：${String(error)}`);
         }
-        this.render();
+        this.renderNow();
       });
       const capture = toolbar.createEl('button', { text: '立即保存对话' });
       const captureBadge = toolbar.createEl('span', { cls: 'dsh-memory-meta' });
       const refreshBadge = () => this.refreshCaptureBadge(captureBadge);
-      refreshBadge();
       capture.addEventListener('click', () => {
         try {
           const result = runSessionCapture(this.vaultPath(), this.sessionsRoot());
@@ -1138,10 +1916,16 @@ class MemoryView extends ItemView {
           new Notice(`保存对话失败：${String(error)}`);
         }
         refreshBadge();
-        this.render();
+        this.renderNow();
       });
       this.body = this.contentEl.createDiv({ cls: 'dsh-memory-body' });
       this.render();
+      // The badge reads the session log store with SYNCHRONOUS fs calls on the
+      // renderer main thread, so it must never sit in front of the first paint.
+      // The scan is cache-backed (an unchanged log is one stat, and another
+      // workspace's logs are never decoded again), but a cold first pass still
+      // walks the whole store, so it runs on a later tick.
+      this.badgeTimer = setTimeout(refreshBadge, 0);
     } catch (error) {
       const detail = `记忆面板初始化失败：${String(error)}`;
       this.contentEl.setText(detail);
@@ -1149,6 +1933,28 @@ class MemoryView extends ItemView {
       return;
     }
     loading.remove();
+  }
+
+  async onClose() {
+    if (this.badgeTimer !== undefined) {
+      clearTimeout(this.badgeTimer);
+      this.badgeTimer = undefined;
+    }
+    if (this.filterTimer !== undefined) {
+      clearTimeout(this.filterTimer);
+      this.filterTimer = undefined;
+    }
+    // A pending 归档 confirmation would otherwise fire against a detached button.
+    this.disarmArchive();
+  }
+
+  /** Immediate render; also cancels a pending debounced one (search input). */
+  renderNow() {
+    if (this.filterTimer !== undefined) {
+      clearTimeout(this.filterTimer);
+      this.filterTimer = undefined;
+    }
+    this.render();
   }
 
   render() {
@@ -1164,55 +1970,209 @@ class MemoryView extends ItemView {
   }
 
   renderBody(body) {
+    // The body is emptied on every render: release any armed 归档 first, or its
+    // 3-second timer would later rewrite a button that is no longer in the DOM.
+    this.disarmArchive();
     const state = collectMemoryState(this.vaultPath(), this.filter);
+    const layers = this.layerEntries(state);
+    const memos = Array.isArray(state.memos) ? state.memos : [];
+    const episodes = Array.isArray(state.episodes) ? state.episodes : [];
+    const audit = state.audit !== null && typeof state.audit === 'object' ? state.audit : null;
+    const auditToday = typeof audit?.today === 'string' ? audit.today : '';
+    const cardsTotal = layers.reduce((sum, layer) => sum + layer.cards.length, 0);
+
+    // Legend first: without it the three badges on every row are just symbols.
+    body.createDiv({ cls: 'dsh-memory-legend', text: '✅ 已确认 · ⚖️ 与他处互证 · ❓ 单次来源（点标题可预览与编辑）' });
+
+    // Status strip: one glance answers "what is in my memory right now?".
     const summary = [];
     if (state.profile) summary.push('画像 ✅');
-    summary.push(`记录 ${state.records.length}`, `模板 ${state.templates.length}`, `备忘录 ${state.memos.length}`, `事件 ${state.episodes.length}`);
+    for (const layer of layers) summary.push(`${layer.label} ${layer.cards.length}`);
+    summary.push(`备忘录 ${memos.length}`, `事件 ${episodes.length}`);
+    if (auditToday !== '') summary.push(`上次体检 ${auditToday}`);
     body.createDiv({ cls: 'dsh-memory-summary', text: summary.join(' · ') });
-    const policyLink = body.createEl('a', { cls: 'dsh-memory-policy-link', text: `⚙️ 捕获 ${state.capturePolicy.idea}/${state.capturePolicy.fact}/${state.capturePolicy.preference}（点击编辑策略）` });
+
+    // Capture policy in words (auto/ask/off → 自动写入/先询问/不捕获); the click
+    // target is unchanged, it still opens the policy file.
+    const policy = state.capturePolicy ?? {};
+    // Fallback per field: an older host (deployed panel vs not-yet-restarted
+    // service) does not send `structure`, and its real default is `auto`, not
+    // the content gates' `ask`.
+    const policyDefault = (field) => (field === 'structure' ? 'auto' : 'ask');
+    const modeOf = (field) => CAPTURE_MODE_TEXT[policy[field]] ?? CAPTURE_MODE_TEXT[policyDefault(field)];
+    const policyLink = body.createEl('a', {
+      cls: 'dsh-memory-policy-link',
+      text: `捕获策略：想法=${modeOf('idea')} · 事实=${modeOf('fact')} · 偏好=${modeOf('preference')} · 结构=${modeOf('structure')}（点击修改）`
+    });
     policyLink.addEventListener('click', () => this.openNote('.deepseek/capture-policy.md', '捕获策略 capture-policy.md'));
 
-    if (state.records.length > 0) {
-      this.section(body, '记忆记录 .deepseek/memory/records/', state.records.length);
-      for (const card of state.records) this.cardRow(body, card);
-    }
-    if (state.templates.length > 0) {
-      this.section(body, '问题模板 .deepseek/memory/templates/', state.templates.length);
-      for (const card of state.templates) this.cardRow(body, card);
-    }
-    if (state.memos.length > 0) {
-      this.section(body, '备忘录 .deepseek/inbox/', state.memos.length);
-      for (const memo of state.memos) this.memoRow(body, memo);
-    }
-    if (state.episodes.length > 0) {
-      this.section(body, '事件时间线 .deepseek/memory/episodes/', state.episodes.length);
+    // "What needs me?" comes above the browsing sections: it is the only part of
+    // the panel that asks the user to act.
+    const pending = this.pendingItems(audit);
+    if (pending.total > 0) this.pendingBlock(body, pending);
+
+    for (const layer of layers) this.cardSection(body, layer);
+
+    if (memos.length > 0) {
+      this.sectionHead(body, `备忘录（${memos.length}）`);
       const list = body.createDiv({ cls: 'dsh-memory-rows' });
-      for (const episode of state.episodes.slice(0, 30)) {
-        const row = list.createDiv({ cls: 'dsh-memory-row' });
-        const link = row.createEl('a', { text: episode.name, cls: 'dsh-memory-title' });
-        link.addEventListener('click', () => this.openNote(episode.rel));
-        row.createDiv({ cls: 'dsh-memory-meta', text: new Date(episode.mtimeMs).toLocaleString('zh-CN', { hour12: false }) });
+      for (const memo of memos) this.memoRow(list, memo);
+    }
+
+    if (episodes.length > 0) {
+      this.sectionHead(body, `事件时间线（${episodes.length}）`);
+      const list = body.createDiv({ cls: 'dsh-memory-rows' });
+      const shown = this.episodesExpanded ? episodes : episodes.slice(0, EPISODE_PREVIEW);
+      for (const episode of shown) this.episodeRow(list, episode);
+      if (episodes.length > EPISODE_PREVIEW) {
+        const toggle = body.createEl('button', {
+          cls: 'dsh-memory-toggle',
+          text: this.episodesExpanded ? '收起' : `展开全部（${episodes.length}）`
+        });
+        toggle.addEventListener('click', () => {
+          this.episodesExpanded = !this.episodesExpanded;
+          this.render();
+        });
       }
-      if (state.episodes.length > 30) {
-        list.createDiv({ cls: 'dsh-memory-meta', text: `… 另有 ${state.episodes.length - 30} 个` });
-      }
     }
-    if (state.auditText !== '') {
-      this.section(body, '记忆体检 .deepseek/cache/memory-audit.json', 1);
-      body.createDiv({ cls: 'dsh-memory-audit' }).setText(state.auditText);
+
+    if (cardsTotal === 0 && memos.length === 0 && episodes.length === 0) {
+      body.createDiv({
+        cls: 'dsh-memory-empty',
+        text: this.filter === ''
+          ? '记忆库还是空的。与助手对话后，记忆会逐层写入：记录 / 主题 / 定理 / 模板 / 策略 / 备忘录 / 事件。'
+          : '没有匹配的记忆。'
+      });
     }
-    if (state.records.length === 0 && state.templates.length === 0 && state.memos.length === 0 && state.episodes.length === 0) {
-      body.createDiv({ cls: 'dsh-memory-meta', text: this.filter === '' ? '记忆库还是空的。与助手对话后，记忆会按 AGENTS.md 逐层写入。' : '没有匹配的记忆。' });
+
+    this.sectionHead(body, '记忆体检');
+    body.createDiv({
+      cls: 'dsh-memory-audit',
+      text: typeof state.auditHuman === 'string' && state.auditHuman !== ''
+        ? state.auditHuman
+        : '（还没有体检记录：与助手对话后会自动生成。）'
+    });
+    if (auditToday !== '') body.createDiv({ cls: 'dsh-memory-audit-time', text: `体检时间：${auditToday}` });
+    const auditText = typeof state.auditText === 'string' ? state.auditText : '';
+    if (auditText !== '') {
+      // The model-facing checklist stays folded: it is an imperative list of
+      // paths and thresholds addressed to the agent, and rendering it open is
+      // what made this panel read as a log dump.
+      const toggle = body.createEl('button', { cls: 'dsh-memory-toggle', text: '查看模型版清单' });
+      const pre = body.createEl('pre', { cls: 'dsh-memory-audit-full is-hidden', text: auditText });
+      toggle.addEventListener('click', () => {
+        const hidden = pre.hasClass('is-hidden');
+        if (hidden) pre.removeClass('is-hidden');
+        else pre.addClass('is-hidden');
+        toggle.setText(hidden ? '收起模型版清单' : '查看模型版清单');
+      });
     }
+
     // Diagnostics footer: always visible so an "empty" panel is self-explanatory.
-    body.createDiv({ cls: 'dsh-memory-footer', text: `vault: ${this.vaultPath()} · 过滤: ${this.filter === '' ? '（无）' : this.filter}` });
-    writeDebugLog('[memory-view] render done: 记录 ' + state.records.length + ' / 模板 ' + state.templates.length + ' / 备忘录 ' + state.memos.length + ' / 事件 ' + state.episodes.length);
+    body.createDiv({ cls: 'dsh-memory-footer', text: `本面板读取的 vault：${this.vaultPath()} · 过滤: ${this.filter === '' ? '（无）' : this.filter}` });
+    writeDebugLog('[memory-view] render done: ' + layers.map((layer) => `${layer.label} ${layer.cards.length}`).join(' / ') + ' / 备忘录 ' + memos.length + ' / 事件 ' + episodes.length);
   }
 
-  section(parent, title, count) {
+  /**
+   * Layer list for the card sections. The data layer always sends `layers`
+   * (insertion order = display order); the flat records/templates fallback only
+   * keeps an older host from blanking the whole panel.
+   */
+  layerEntries(state) {
+    const raw = state.layers !== null && typeof state.layers === 'object' ? state.layers : null;
+    if (raw !== null && Object.keys(raw).length > 0) {
+      return Object.entries(raw).map(([key, value]) => {
+        const layer = value !== null && typeof value === 'object' ? value : {};
+        return {
+          key,
+          label: typeof layer.label === 'string' && layer.label !== '' ? layer.label : key,
+          dir: typeof layer.dir === 'string' ? layer.dir : '',
+          cards: Array.isArray(layer.cards) ? layer.cards : []
+        };
+      });
+    }
+    return [
+      { key: 'records', label: '记录', dir: '.deepseek/memory/records', cards: Array.isArray(state.records) ? state.records : [] },
+      { key: 'templates', label: '模板', dir: '.deepseek/memory/templates', cards: Array.isArray(state.templates) ? state.templates : [] }
+    ];
+  }
+
+  /**
+   * The two audit sections that need a human decision, with the same per-card
+   * buttons as a normal card row (so the fix is one click away). Every read is
+   * guarded: `audit` may be null and an older cached report may lack `decisions`
+   * or individual `sections` keys.
+   */
+  pendingItems(audit) {
+    const sections = audit !== null && audit.sections !== null && typeof audit.sections === 'object' ? audit.sections : {};
+    const pendingReview = Array.isArray(sections.pendingReview) ? sections.pendingReview : [];
+    const archiveCandidates = Array.isArray(sections.archiveCandidates) ? sections.archiveCandidates : [];
+    const listed = pendingReview.length + archiveCandidates.length;
+    // decisions.total also counts 疑似重复 (not listed row by row here), so it
+    // wins — but a row that IS listed must never be hidden by a stale smaller
+    // total, and a report whose sections are missing shows no block at all.
+    const declared = Number(audit?.decisions?.total);
+    const total = listed === 0 ? 0 : (Number.isFinite(declared) ? Math.max(declared, listed) : listed);
+    return { pendingReview, archiveCandidates, total };
+  }
+
+  pendingBlock(body, pending) {
+    const block = body.createDiv({ cls: 'dsh-memory-pending' });
+    block.createDiv({ cls: 'dsh-memory-pending-head', text: `⚠️ 待处理（${pending.total}）` });
+    for (const item of pending.pendingReview) {
+      const row = block.createDiv({ cls: 'dsh-memory-pending-row' });
+      const text = row.createDiv({ cls: 'dsh-memory-pending-text' });
+      text.createSpan({ text: '✍️ 「' });
+      const link = text.createEl('a', { cls: 'dsh-memory-title', text: item.title ?? '' });
+      link.addEventListener('click', () => this.openNote(item.rel));
+      text.createSpan({ text: '」被你标过 ❌，助手会在相关讨论时重审' });
+      text.title = item.lastWrong ? `${item.rel} · 上次标错：${item.lastWrong}` : String(item.rel ?? '');
+      this.cardActions(row, item.rel);
+    }
+    for (const item of pending.archiveCandidates) {
+      const row = block.createDiv({ cls: 'dsh-memory-pending-row' });
+      const text = row.createDiv({ cls: 'dsh-memory-pending-text' });
+      text.createSpan({ text: '⚠️ 「' });
+      const link = text.createEl('a', { cls: 'dsh-memory-title', text: item.title ?? '' });
+      link.addEventListener('click', () => this.openNote(item.rel));
+      text.createSpan({ text: '」效用偏低，建议归档（文件会被移动，不会删除）' });
+      // The 0-1 utility value is a tooltip, never prose: a bare score next to a
+      // title says nothing without the audit's thresholds.
+      text.title = item.utility === undefined || item.utility === null ? String(item.rel ?? '') : `${item.rel} · 效用 ${item.utility}`;
+      const actions = row.createDiv({ cls: 'dsh-memory-actions' });
+      this.archiveButton(actions, item.rel);
+    }
+  }
+
+  /**
+   * One card layer. `记录` always renders (an empty layer must say so itself),
+   * the other four only when they hold cards — five always-on empty headers made
+   * a two-card vault look almost empty.
+   */
+  cardSection(body, layer) {
+    if (layer.key !== 'records' && layer.cards.length === 0) return;
+    this.sectionHead(body, `${layer.label}（${layer.cards.length}）`, layer.dir);
+    if (layer.cards.length === 0) {
+      body.createDiv({ cls: 'dsh-memory-empty-row', text: '（暂无）' });
+      return;
+    }
+    const list = body.createDiv({ cls: 'dsh-memory-rows' });
+    for (const card of layer.cards) this.cardRow(list, card);
+  }
+
+  /** Section header. The vault-relative directory belongs in the tooltip, never
+   *  in the text: `.deepseek/memory/records/` is noise to a reader. */
+  sectionHead(parent, label, dir = '') {
     const head = parent.createDiv({ cls: 'dsh-memory-section' });
-    head.createSpan({ cls: 'dsh-memory-section-title', text: title });
-    head.createSpan({ cls: 'dsh-memory-meta', text: String(count) });
+    head.createSpan({ cls: 'dsh-memory-section-title', text: label });
+    if (dir !== '') head.title = dir;
+    return head;
+  }
+
+  /** 0.7.x signature (title + separate count span), kept for any other caller in
+   *  this file; new code uses sectionHead. */
+  section(parent, title, count) {
+    return this.sectionHead(parent, count === undefined ? title : `${title}（${count}）`);
   }
 
   // NOTE: must NOT be named "open" — Obsidian's view lifecycle calls
@@ -1255,52 +2215,153 @@ class MemoryView extends ItemView {
 
   cardRow(parent, card) {
     const row = parent.createDiv({ cls: 'dsh-memory-row' });
-    const title = row.createEl('a', { text: card.title, cls: 'dsh-memory-title' });
+    // The title and the summary form ONE text column. The row is
+    // `flex-wrap: nowrap`, so a summary added as a sibling of the title would be
+    // laid out BESIDE it and both would be crushed to a few characters (measured
+    // in Chromium at sidebar width: title 25px, summary 19px). A wrapper is what
+    // gives the summary its own line while the title keeps its ellipsis.
+    const head = row.createDiv({ cls: 'dsh-memory-card-head' });
+    const title = head.createEl('a', { text: card.title, cls: 'dsh-memory-title' });
     title.addEventListener('click', () => this.openNote(card.rel));
+    // A title is often a whole mathematical statement, so a list of titles does
+    // not say what the memory CONTAINS. The host clips `summary` to ~90 chars
+    // already, so it is printed verbatim — no ellipsis is appended here — and
+    // only when there is a real string: an empty line would read as a bug.
+    if (typeof card.summary === 'string' && card.summary !== '') {
+      head.createDiv({ cls: 'dsh-memory-card-summary', text: card.summary });
+    }
+    // The path stays in the tooltip: it is diagnostic, not prose.
+    row.createDiv({ cls: 'dsh-memory-meta', text: this.cardMeta(card) }).title = card.rel;
+    this.cardActions(row, card.rel);
+  }
+
+  /**
+   * Card meta line, in words. Empty parts are omitted, and the internal
+   * enumerations are translated (`superseded` → 已过期) — a raw field dump is
+   * what made the panel unreadable.
+   */
+  cardMeta(card) {
     const parts = [];
     if (card.type !== '') parts.push(card.type);
     if (card.operator !== '') parts.push(card.operator);
-    if (card.status !== 'active') parts.push(card.status);
-    const badge = VERIFIED_BADGES[card.verified] ?? (card.hook === null ? '' : '❓');
-    if (badge !== '') parts.push(badge);
-    parts.push(`uses ${card.uses}`);
-    if (card.successRate !== null) parts.push(`成功率 ${card.successRate}`);
-    const points = Array.isArray(card.history) ? card.history.filter((p) => p !== null && typeof p === 'object') : [];
-    if (points.length >= 2) {
-      const trend = points.slice(-5).map((p) => `${typeof p.uses === 'number' ? p.uses : 0}${typeof p.successRate === 'number' ? '@' + p.successRate : ''}`).join('→');
-      parts.push(`📈 ${trend}`);
-    }
+    if (card.topic !== '') parts.push(`#${card.topic}`);
+    // Always a badge: a card with no hook block is the LEAST evidenced one, so
+    // it must not be the one that renders cleanest.
+    parts.push(VERIFIED_BADGES[card.verified] ?? '❓');
+    if (card.status !== '' && card.status !== 'active') parts.push(CARD_STATUS_TEXT[card.status] ?? card.status);
+    parts.push(card.uses > 0 ? `用过 ${card.uses} 次` : '从未用过');
+    // Negative transfer: used AND it made things worse. Shown only when it
+    // actually happened (a permanent `倒忙 0 次` would read as data).
+    if (typeof card.harmed === 'number' && card.harmed > 0) parts.push(`⚠️ 倒忙 ${card.harmed} 次`);
+    if (card.successRate !== null && card.successRate !== undefined) parts.push(`成功率 ${card.successRate}`);
+    const trend = this.trendText(card);
+    if (trend !== '') parts.push(trend);
     if (card.lastUsed !== '') parts.push(`上次 ${card.lastUsed}`);
-    if (card.updated !== '') parts.push(daysSinceText(card.updated));
-    row.createDiv({ cls: 'dsh-memory-meta', text: parts.join(' · ') });
-    const actions = row.createDiv({ cls: 'dsh-memory-actions' });
-    if (card.hook !== null) {
-      const confirm = actions.createEl('button', { text: '✅' });
-      confirm.title = '确认这条记忆正确（verified → user-confirmed，成功率提至 ≥0.9）';
-      confirm.addEventListener('click', () => this.feedback(card.rel, 'confirm'));
-      const wrong = actions.createEl('button', { text: '❌' });
-      wrong.title = '标记错误（成功率减半，次日体检重新评估）';
-      wrong.addEventListener('click', () => this.feedback(card.rel, 'wrong'));
+    if (card.updated !== '') {
+      const days = daysSinceText(card.updated);
+      if (days !== '') parts.push(days);
     }
-    if (card.status !== 'superseded') {
-      const stale = actions.createEl('button', { text: '过期' });
-      stale.title = '标记 superseded（保留证据，不删除）';
-      stale.addEventListener('click', () => this.feedback(card.rel, 'stale'));
+    return parts.join(' · ');
+  }
+
+  /** Usage trend, but only from real history: a bare `📈 0→0` looks like data
+   *  while saying nothing. */
+  trendText(card) {
+    const points = Array.isArray(card.history) ? card.history.filter((point) => point !== null && typeof point === 'object') : [];
+    if (points.length < 2) return '';
+    const uses = (point) => (typeof point.uses === 'number' ? point.uses : 0);
+    if (!points.some((point) => uses(point) > 0)) return '';
+    return '📈 ' + points.slice(-5)
+      .map((point) => `${uses(point)}${typeof point.successRate === 'number' ? '@' + point.successRate : ''}`)
+      .join('→');
+  }
+
+  /** The four things a user can do with a card. They are identical for every
+   *  card (the host appends a `hook:` block when a card has none), so the card
+   *  rows and the 待处理 rows share one builder. */
+  cardActions(parent, rel) {
+    const actions = parent.createDiv({ cls: 'dsh-memory-actions' });
+    const confirm = actions.createEl('button', { text: '✅ 确认' });
+    confirm.title = '确认这张卡内容正确：验证等级升为「用户确认」，检索时会排得更靠前';
+    confirm.addEventListener('click', () => this.feedback(rel, 'confirm'));
+    const wrong = actions.createEl('button', { text: '❌ 有错' });
+    wrong.title = '这张卡的内容有错：降一级验证等级，并在下次体检时重审；文件不会被删除';
+    wrong.addEventListener('click', () => this.feedback(rel, 'wrong'));
+    const stale = actions.createEl('button', { text: '过期' });
+    stale.title = '不再参与检索，文件保留';
+    stale.addEventListener('click', () => this.feedback(rel, 'stale'));
+    this.archiveButton(actions, rel);
+    return actions;
+  }
+
+  /** 归档 is set apart from the three opinion buttons: it MOVES a file, so the
+   *  first click only arms it and the second click (within 3 s) commits. */
+  archiveButton(parent, rel) {
+    const button = parent.createEl('button', { cls: 'dsh-memory-archive', text: '归档' });
+    button.title = '把这张卡移出记忆库（文件会被移动，不会删除，之后可以找回）';
+    button.addEventListener('click', () => {
+      if (button.dataset.armed === '1') {
+        this.disarmArchive();
+        this.feedback(rel, 'forget');
+        return;
+      }
+      this.armArchive(button);
+    });
+    return button;
+  }
+
+  armArchive(button) {
+    this.disarmArchive(); // only one card may be armed at a time
+    this.archiveArmed = { button, text: button.textContent };
+    this.archiveTimer = setTimeout(() => this.disarmArchive(), ARCHIVE_CONFIRM_MS);
+    button.dataset.armed = '1';
+    button.addClass('is-armed');
+    button.setText('确认归档？');
+  }
+
+  disarmArchive() {
+    if (this.archiveTimer !== undefined) {
+      clearTimeout(this.archiveTimer);
+      this.archiveTimer = undefined;
     }
-    const forget = actions.createEl('button', { text: '归档' });
-    forget.title = '移入 .deepseek/archive/records/（不删除）';
-    forget.addEventListener('click', () => this.feedback(card.rel, 'forget'));
+    const armed = this.archiveArmed;
+    this.archiveArmed = null;
+    if (!armed) return;
+    delete armed.button.dataset.armed;
+    armed.button.removeClass('is-armed');
+    armed.button.setText(armed.text);
   }
 
   memoRow(parent, memo) {
     const row = parent.createDiv({ cls: 'dsh-memory-row' });
     const title = row.createEl('a', { text: memo.title, cls: 'dsh-memory-title' });
     title.addEventListener('click', () => this.openNote(memo.rel));
-    const statusText = { inbox: '待打磨', polishing: '打磨中', done: '已完成' }[memo.status] ?? memo.status;
-    const parts = [statusText];
+    const statusText = MEMO_STATUS_TEXT[memo.status] ?? memo.status;
+    const parts = [];
     if (memo.topic !== '') parts.push(memo.topic);
-    if (memo.updated !== '') parts.push(daysSinceText(memo.updated));
-    row.createDiv({ cls: 'dsh-memory-meta', text: parts.join(' · ') });
+    if (typeof statusText === 'string' && statusText !== '') parts.push(statusText);
+    if (memo.updated !== '') {
+      const days = daysSinceText(memo.updated);
+      if (days !== '') parts.push(days);
+    }
+    row.createDiv({ cls: 'dsh-memory-meta', text: parts.join(' · ') }).title = memo.rel;
+  }
+
+  episodeRow(parent, episode) {
+    const row = parent.createDiv({ cls: 'dsh-memory-row' });
+    // The date in the file name is the only stable timestamp (a whole capture
+    // batch shares one mtime), so mtime is a last resort — never printed twice.
+    const date = typeof episode.date === 'string' && episode.date !== ''
+      ? episode.date
+      : (episode.mtimeMs > 0 ? new Date(episode.mtimeMs).toLocaleDateString('zh-CN') : '');
+    if (date !== '') row.createSpan({ cls: 'dsh-memory-episode-date', text: date });
+    const title = row.createEl('a', {
+      text: typeof episode.title === 'string' && episode.title !== '' ? episode.title : episode.name,
+      cls: 'dsh-memory-title'
+    });
+    title.addEventListener('click', () => this.openNote(episode.rel));
+    if (typeof episode.topic === 'string' && episode.topic !== '') row.createDiv({ cls: 'dsh-memory-meta', text: episode.topic });
+    row.title = episode.rel;
   }
 }
 
@@ -1445,9 +2506,47 @@ class DshObsidianMathPlugin extends Plugin {
     if (this.settings.autoStart) {
       this.app.workspace.onLayoutReady(() => {
         setTimeout(() => {
-          this.service.ensureStarted().catch(() => {});
+          this.service.ensureStarted().catch((error) => {
+            // Never swallow a startup failure silently: the settings log and the
+            // file-based debug.log must show exactly why the service failed.
+            const message = String(error);
+            this.service?.appendLog(`启动失败：${message}`);
+            writeDebugLog('[ensureStarted] 启动失败：' + message + '\n' + (error?.stack ?? '(no stack)'));
+            new Notice(`dsh 笔记助手：${message}`);
+          });
         }, 1200);
       });
+    }
+  }
+
+  /**
+   * Re-render every open assistant view. Called when the authenticated index URL
+   * changes (a fresh launch token), because the iframe must reload with it —
+   * otherwise a running view keeps pointing at the address that now 401s.
+   */
+  refreshViews() {
+    try {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+        const view = leaf.view;
+        if (typeof view?.render === 'function') view.render(this.service?.status ?? 'unknown');
+      }
+    } catch {
+      // best-effort: the next status change re-renders anyway
+    }
+  }
+
+  /**
+   * Force every open assistant frame to reload (used when a proxy-level setting
+   * changed — the injected stylesheet only exists in newly served HTML).
+   */
+  reloadViews() {
+    try {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+        const view = leaf.view;
+        if (typeof view?.reloadFrame === 'function') view.reloadFrame();
+      }
+    } catch {
+      // best-effort: closing and reopening the panel does the same thing
     }
   }
 
@@ -1527,6 +2626,9 @@ class DshObsidianMathPlugin extends Plugin {
 
   onunload() {
     this.linkServer?.stop();
+    // Queued debug lines are written before the plugin goes away (the timer
+    // would never fire again otherwise).
+    flushDebugLog();
     window.removeEventListener('error', this.onWindowError);
     window.removeEventListener('unhandledrejection', this.onUnhandledRejection);
     // Restore the toast instrumentation only if it is still ours (another
@@ -1557,7 +2659,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
     containerEl.createEl('p', { text: `版本 ${this.plugin.manifest?.version ?? ''}` });
     containerEl.createEl('p', { text: '在 Obsidian 右侧栏嵌入 DeepSeek Harness 数学记忆助手。插件会自动启动 dsh 服务，无需额外打开命令行窗口。' });
     containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '🔒 安全模式：助手只能写当前 vault 内的文件；权限升级审批默认关闭，不会弹出“是否提权”的窗口；工具集中没有删除类工具。' });
-    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '🧭 适用范围：面向数学类知识（数学、统计学笔记与数学思维方式）设计，其他领域的知识可能需要不同的记忆架构。当前为试做型（0.6.x），记忆架构尚未经过长期使用测试，后续会继续演进。' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: `🧭 适用范围：面向数学类知识（数学、统计学笔记与数学思维方式）设计，其他领域的知识可能需要不同的记忆架构。当前为试做型（${this.plugin.manifest?.version ?? '0.7.x'}），记忆架构尚未经过长期使用测试，后续会继续演进。` });
 
     new Setting(containerEl)
       .setName('端口')
@@ -1650,8 +2752,8 @@ class DshObsidianSettingTab extends PluginSettingTab {
       }));
 
     new Setting(containerEl)
-      .setName('启用皮肤中心（dsh web ui 皮肤设置）')
-      .setDesc('开启后在 dsh web ui 的「设置 → 插件 → Web UI 插件」里显示皮肤中心（皮肤选择 + 背景透明度）。需要本机存在 web profile 以镜像 @linxin666 皮肤包；关闭则完全不挂载 dsh-web-ui UI 插件（默认，独立性最好）。改动需重启 dsh 服务后生效。')
+      .setName('挂载皮肤中心 UI（高级 / 通常无需开启）')
+      .setDesc('在笔记 profile 里额外挂载皮肤中心（皮肤选择 + 背景透明度）与它的设置卡宿主。注意两点：(1) 自 dsh-web-all 0.3.20 起聚合包已自带皮肤中心，装了聚合包的机器上这个开关是冗余的（宿主半边只跑一次、浏览器半边按包名去重）；它只覆盖「有皮肤包、没有聚合包」的 web profile。(2) 关掉它**不会**关掉皮肤——皮肤本体由全局 $DSH_HOME/cordis.patch.yml + junction 镜像生效，侧栏照样跟随你在主 web 界面选的皮肤；这个开关只管那个选择器 UI 要不要出现在这里。改动需重启 dsh 服务后生效。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.enableSkinCenter).onChange(async (value) => {
         this.plugin.settings.enableSkinCenter = value;
         await this.plugin.saveSettings();
@@ -1671,6 +2773,26 @@ class DshObsidianSettingTab extends PluginSettingTab {
         this.display();
       }));
 
+    new Setting(containerEl)
+      .setName('侧栏性能模式（默认开启）')
+      .setDesc('去掉 dsh 侧栏这一份渲染里的高开销特效：皮肤在侧栏区域用的毛玻璃模糊（backdrop-filter）、无限循环的辉光/脉冲动画、以及装饰层的大面积模糊。iframe 内的毛玻璃会让合成器把 Obsidian 自己的内容也算进模糊背景，于是展开/收起侧栏、点按钮这类动画每帧都要重算一次模糊——这是侧栏卡顿的主要来源。颜色、排版、布局不变，只有毛玻璃与常驻动画消失。关闭后侧栏恢复皮肤原样（可能重新卡顿）。切换后面板会自动重新加载。')
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.sidebarPerformanceMode !== false).onChange(async (value) => {
+        this.plugin.settings.sidebarPerformanceMode = value;
+        await this.plugin.saveSettings();
+        this.plugin.reloadViews();
+        new Notice(value ? '侧栏性能模式已开启，面板正在重新加载。' : '侧栏性能模式已关闭（侧栏恢复皮肤原样），面板正在重新加载。');
+      }));
+
+    new Setting(containerEl)
+      .setName('侧栏加载皮肤动态装饰（hero 场景 / 状态角色）')
+      .setDesc('关闭后侧栏不再加载皮肤的客户端脚本（hooks.mjs，内部有约 14 个 subtree MutationObserver、一个约 5 次/秒改内联样式的角色循环，以及一个跟着侧栏动画每帧触发的 ResizeObserver）。实测：这是侧栏展开/收起卡顿的最大来源——脚本在跑时 6 次点击里有 3 帧超过 50ms（最差 84ms），停用后一帧都没有（最差 33ms）。代价是侧栏里不再有 hero 场景、状态角色与信号芯片（配色、字体、布局都来自样式表，不受影响）。皮肤更新后本开关语义不变。切换后面板会自动重新加载。')
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.sidebarSkinScripts !== false).onChange(async (value) => {
+        this.plugin.settings.sidebarSkinScripts = value;
+        await this.plugin.saveSettings();
+        this.plugin.reloadViews();
+        new Notice(value ? '侧栏已恢复皮肤动态装饰，面板正在重新加载。' : '侧栏已停用皮肤动态脚本（最流畅），面板正在重新加载。');
+      }));
+
     containerEl.createEl('h3', { text: '捕获策略' });
     containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制助手把新信息写入记忆的方式。选择结果直接写入 vault 内的 .deepseek/capture-policy.md（模型不得修改此文件；你的口头指令永远优先于策略）。' });
     containerEl.createEl('p', { text: 'auto = 按三写协议直接写入（回复末尾注明）；ask = 先用提问征得同意再写；off = 不主动捕获（你明确要求除外）。' });
@@ -1686,8 +2808,9 @@ class DshObsidianSettingTab extends PluginSettingTab {
     })();
     const captureDescriptions = {
       idea: '💡 想法捕获：识别到一般性思路/方法/技巧时，是否写入 inbox 备忘录。',
-      fact: '📌 事实捕获：新事实/事件/指令是否写入 records 原子卡（三写第 2 步）。',
-      preference: '👤 偏好捕获：稳定偏好/记号/授权是否写入 profile（三写第 3 步）。'
+      fact: '📌 事实捕获：新事实/事件/指令/工作产物是否写入 records 原子卡。',
+      preference: '👤 偏好捕获：稳定偏好/授权是否写入 profile.md、记号是否写入 notation.md。',
+      structure: '🗂 结构捕获（导航与索引）：是否为 topics / 定理索引 / 问题模板 / 策略卡补索引与结构行。默认 auto——它不改写内容，每次都问会打断对话。'
     };
     const addCaptureSetting = (key, fallback) => {
       new Setting(containerEl)
@@ -1708,8 +2831,9 @@ class DshObsidianSettingTab extends PluginSettingTab {
           }));
     };
     addCaptureSetting('idea', 'ask');
-    addCaptureSetting('fact', 'auto');
-    addCaptureSetting('preference', 'auto');
+    addCaptureSetting('fact', 'ask');
+    addCaptureSetting('preference', 'ask');
+    addCaptureSetting('structure', 'auto');
 
     containerEl.createEl('h3', { text: '自动保存对话' });
     containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '每场对话结束后，自动把整场对话（不含思考）保存到记忆证据层（.deepseek/memory/episodes/），不再只靠模型自觉三写。写入 .deepseek/config.md。' });
@@ -1718,14 +2842,14 @@ class DshObsidianSettingTab extends PluginSettingTab {
       try {
         const raw = readFileSync(join(captureVaultRoot, '.deepseek', 'config.md'), 'utf8');
         const { meta } = parseMemoryFrontmatter(raw);
-        return meta.sessionCapture !== 'false';
+        return meta.sessionCapture === 'true';
       } catch {
-        return true;
+        return false;
       }
     })();
     new Setting(containerEl)
       .setName('自动保存对话（sessionCapture）')
-      .setDesc('开启 = 每场对话自动保存到记忆；关闭 = 只靠模型按 AGENTS.md 三写。默认开启。')
+      .setDesc('开启 = 每场对话自动保存到记忆；关闭 = 不自动存档（默认关闭），由模型按 AGENTS.md 与捕获策略写入。')
       .addToggle((toggle) => toggle
         .setValue(sessionCaptureOn)
         .onChange(async (value) => {

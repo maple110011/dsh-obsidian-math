@@ -6,7 +6,7 @@
 // quality is tracked through passive usage signals instead (see
 // docs/memory/v2-proposal.md §6).
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
@@ -21,6 +21,7 @@ import {
   computeCorpusStats,
   classifyVaultDoc,
   composePassage,
+  composePassageViews,
   cjkCharOverlap,
   queryCoverage,
   hookPrior,
@@ -29,7 +30,12 @@ import {
   strategyMoves,
   strategyRetrieve,
   strategyAbstraction,
-  isRecallEligible
+  isRecallEligible,
+  buildRecallDoc,
+  rankRecallDocuments,
+  rankStrategyCards,
+  boundarySegments,
+  boundaryHits
 } from '../dsh/preset/note-tools.mjs';
 import { HOOK_SCHEMA_VERSION } from '../dsh/preset/hook-frontmatter.mjs';
 import {
@@ -48,10 +54,14 @@ import {
   planSessionDelta,
   renderConversationTail,
   localDateFromMs,
-  runSessionCapture
+  runSessionCapture,
+  findSessionLogs,
+  sessionLogKey,
+  selectAuthoritativeLogs,
+  decodeZstdSessionLog,
+  __replaceLeadingFrontmatterForTest
 } from '../dsh/preset/math-memory.mjs';
-import { applyFeedback, setSessionCapture, readSessionCaptureEnabled } from '../dsh/host/memory-admin.mjs';
-
+import { applyFeedback, setSessionCapture, readSessionCaptureEnabled, countUncapturedSessions, archiveMemoryFile, setCapturePolicyMode, frontmatterSpan, replaceFrontmatter, collectMemoryState, parseEpisodeIndex, readAuditReport, summaryOf } from '../dsh/host/memory-admin.mjs';
 const results = [];
 function check(name, condition, detail = '') {
   results.push({ name, ok: Boolean(condition), detail });
@@ -250,6 +260,14 @@ check('nav: notation system injected', navSection.includes('记号体系') && na
 check('nav: no per-request recall section', !navSection.includes('本轮记忆召回'));
 check('nav: total memory section is bounded', navSection.length <= MAX_TOTAL_MEMORY_CHARS, `len=${navSection.length}`);
 check('nav: adaptive-mem applicability guard injected', navSection.includes('记忆是候选') && navSection.includes('任务边界') && navSection.includes('信念扭曲'));
+// Layers added AFTER the injected header was first written (theorems / templates /
+// strategy) used to be missing from it, so the model was told the memory was
+// "五层" with no strategy layer at all (2026-09-10 iteration audit).
+check('nav: the injected header and routes cover the layers added later',
+  navSection.includes('theorems') && navSection.includes('templates') && navSection.includes('strategy')
+  && navSection.includes('note_strategy') && navSection.includes('memory/templates/index.md')
+  && navSection.includes('五个在五层之后长出来的检索面') === false
+  && navSection.includes('三个在五层之后长出来的检索面'));
 
 // working memory (strategy layer §5): injected only when non-empty.
 writeFileSync(join(root, '.deepseek', 'working.md'), '---\nupdated: 2026-08-24\n---\n\n# 工作记忆（草稿）\n\n- 下一步：查反证法\n');
@@ -430,12 +448,12 @@ if (prevLinkUrl === undefined) delete process.env.DSH_OBSIDIAN_LINK_URL; else pr
 if (prevFeedbackToken === undefined) delete process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN; else process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = prevFeedbackToken;
 
 // ── 13. capture policy (control surface 1c) ────────────────────────────────
-check('policy: defaults when missing/empty',
-  parseCapturePolicy('').idea === 'ask' && parseCapturePolicy('').fact === 'auto' && parseCapturePolicy('').preference === 'auto');
+check('policy: defaults when missing/empty (all ask)',
+  parseCapturePolicy('').idea === 'ask' && parseCapturePolicy('').fact === 'ask' && parseCapturePolicy('').preference === 'ask');
 check('policy: parses valid modes',
   (() => { const pol = parseCapturePolicy('---\nidea: ask\nfact: ask\npreference: off\n---'); return pol.fact === 'ask' && pol.preference === 'off'; })());
 check('policy: invalid values keep defaults',
-  (() => { const pol = parseCapturePolicy('---\nidea: auto\nfact: maybe\npreference: off\n---'); return pol.idea === 'auto' && pol.fact === 'auto' && pol.preference === 'off'; })());
+  (() => { const pol = parseCapturePolicy('---\nidea: auto\nfact: maybe\npreference: off\n---'); return pol.idea === 'auto' && pol.fact === 'ask' && pol.preference === 'off'; })());
 check('config: parses standalone settings', (() => { const c = parseMemoryConfig('---\nenabled: false\ndialogueIndex: false\n---'); return c.enabled === false && c.dialogueIndex === false; })());
 check('config: missing/empty → null', parseMemoryConfig('') === null && parseMemoryConfig('no frontmatter') === null);
 writeFileSync(join(root, '.deepseek', 'config.md'), '---\nenabled: false\nreminders: false\n---\n# 说明\n');
@@ -452,7 +470,11 @@ const policySection = buildMemorySection(
   { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
   'live-session', { sources: [], entries: [] }, undefined, '', '');
 check('policy: section injected with modes',
-  policySection.includes('想法 idea: ask') && policySection.includes('事实 fact（事实/事件/指令）: ask') && policySection.includes('偏好 preference: off'));
+  policySection.includes('想法 idea: ask') && policySection.includes('事实 fact（事实/事件/指令/工作产物）: ask')
+  && policySection.includes('偏好 preference（画像/记号）: off')
+  && policySection.includes('结构 structure（主题/定理索引/问题模板/策略卡）: auto'));
+check('policy: the section names which layers each gate owns',
+  policySection.includes('fact→records') && policySection.includes('structure→topics/'));
 check('policy: file present → no missing-file hint', !policySection.includes('策略文件缺失'));
 
 // ── 14. hook usage history (panel trend, handoff item 3) ───────────────────
@@ -627,16 +649,19 @@ check('capture: renderConversationTail keeps the tail', (() => {
 check('capture: localDateFromMs formats local date', /^\d{4}-\d{2}-\d{2}$/.test(localDateFromMs(1787600000000)));
 
 // End-to-end: real zstd session logs → episode files + marker.
+// Artifacts live in their own `<session-id>` directory, matching the harness
+// layout (and the V2/V3 pairing rule the selection logic in §25 relies on).
 const sessionsDir = join(root, 'sessions');
-mkdirSync(sessionsDir, { recursive: true });
+mkdirSync(join(sessionsDir, 's1'), { recursive: true });
+mkdirSync(join(sessionsDir, 's2'), { recursive: true });
 const mkLog = (id, cwd, events) => zstdCompressSync(Buffer.from(events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8'));
 const captureBase = (id) => ({ type: 'session', id, cwd: root, createdAt: Date.now() - 86400000 });
-writeFileSync(join(sessionsDir, 's1.jsonl.zstd'), mkLog('session-cap-1', root, [
+writeFileSync(join(sessionsDir, 's1', 'session.jsonl.zstd'), mkLog('session-cap-1', root, [
   captureBase('session-cap-1'),
   { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '如何从依测度收敛到 a.s.' }] } },
   { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'reasoning', text: '内部思考' }, { type: 'text', text: '用子列论证' }] } } }
 ]));
-writeFileSync(join(sessionsDir, 's2.jsonl.zstd'), mkLog('session-cap-2', join(root, '..'), [
+writeFileSync(join(sessionsDir, 's2', 'session.jsonl.zstd'), mkLog('session-cap-2', join(root, '..'), [
   { type: 'session', id: 'session-cap-2', cwd: join(root, '..'), createdAt: Date.now() },
   { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '不该进来的会话' }] } }
 ]));
@@ -654,7 +679,7 @@ check('capture: marker records lastSeq', capState.sessions?.['session-cap-1']?.l
 check('capture: outside-vault session skipped', !('session-cap-2' in (capState.sessions ?? {})) && !capResult.captured.some((c) => c.id === 'session-cap-2'));
 
 // Resume: same session grows → only the delta is appended.
-writeFileSync(join(sessionsDir, 's1.jsonl.zstd'), mkLog('session-cap-1', root, [
+writeFileSync(join(sessionsDir, 's1', 'session.jsonl.zstd'), mkLog('session-cap-1', root, [
   captureBase('session-cap-1'),
   { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '如何从依测度收敛到 a.s.' }] } },
   { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: '用子列论证' }] } } },
@@ -667,14 +692,893 @@ const epText2 = readFileSync(join(epDir, epFiles[0]), 'utf8');
 check('capture: resume appends only the delta', capState2.sessions?.['session-cap-1']?.lastSeq === 4 && capResult2.captured.length === 1);
 check('capture: resume adds new turn without duplicating old', epText2.includes('反例见测度收敛') && epText2.split('用子列论证').length === 2);
 
+// ── 23b. session-capture scan cache (the fix for the frozen-panel bug) ──────
+// The capture pass and the panel badge used to fully zstd-decode EVERY session
+// log before consulting the marker that would have skipped it, on Obsidian's
+// renderer main thread: on a real 389-log / 367 MB store that froze the whole
+// UI for ~48 s on every panel open. The scan now (a) reads only a log's 64 KiB
+// header frame to decide whether it belongs to this vault, and (b) memoises the
+// verdict per file revision, so an unchanged log is never read again.
+const scanKey1 = join(sessionsDir, 's1', 'session.jsonl.zstd');
+const scanKey2 = join(sessionsDir, 's2', 'session.jsonl.zstd');
+const scanStat1 = statSync(scanKey1);
+check('capture-scan: cache records a verdict for every scanned session',
+  Object.keys(capState2.scanned ?? {}).length === 2);
+check('capture-scan: foreign-workspace log cached as irrelevant (never decoded again)',
+  capState2.scanned?.[scanKey2]?.inVault === false && capState2.scanned?.[scanKey2]?.pending === false);
+check('capture-scan: captured log cached as settled',
+  capState2.scanned?.[scanKey1]?.inVault === true && capState2.scanned?.[scanKey1]?.pending === false);
+check('capture-scan: cache is keyed by the exact file revision',
+  capState2.scanned?.[scanKey1]?.fp === `${scanKey1}|${scanStat1.mtimeMs}|${scanStat1.size}`);
+check('capture-scan: unchanged store stays settled', countUncapturedSessions(root, sessionsDir) === 0);
+
+// A grown log must invalidate its own record and re-enter the pending state.
+writeFileSync(scanKey1, mkLog('session-cap-1', root, [
+  captureBase('session-cap-1'),
+  { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '如何从依测度收敛到 a.s.' }] } },
+  { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: '用子列论证' }] } } },
+  { type: 'user/message', seq: 3, time: 3, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '再问：反例呢？' }] } },
+  { type: 'assistant/message', seq: 4, time: 4, data: { message: { content: [{ type: 'text', text: '反例见测度收敛不蕴含 a.s.' }] } } },
+  { type: 'user/message', seq: 5, time: 5, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '第三轮追问' }] } },
+  { type: 'assistant/message', seq: 6, time: 6, data: { message: { content: [{ type: 'text', text: '第三轮回答' }] } } }
+]));
+check('capture-scan: a grown log re-enters the pending state',
+  countUncapturedSessions(root, sessionsDir) === 1);
+check('capture-scan: growth is captured as a delta',
+  runSessionCapture(root, sessionsDir).captured.length === 1
+  && readFileSync(join(epDir, epFiles[0]), 'utf8').includes('第三轮回答'));
+
+// A log whose FIRST frame exceeds the 64 KiB head cannot be judged from its
+// header. It must fall back to a full decode, not be cached as "irrelevant" —
+// a wrong cached verdict would hide that session from capture forever.
+mkdirSync(join(sessionsDir, 's3'), { recursive: true });
+writeFileSync(join(sessionsDir, 's3', 'session.jsonl.zstd'), zstdCompressSync(Buffer.from([
+  JSON.stringify({
+    type: 'session', id: 'session-cap-big', cwd: root, createdAt: Date.now() - 3600000,
+    // High-entropy padding: defeats compression, so the first frame really is
+    // larger than the header window.
+    pad: Array.from({ length: 70000 }, () => String.fromCharCode(33 + Math.floor(Math.random() * 94))).join('')
+  }),
+  JSON.stringify({ type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '大帧提问' }] } }),
+  JSON.stringify({ type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: '大帧回答' }] } } })
+].join('\n') + '\n', 'utf8')));
+const bigCapture = runSessionCapture(root, sessionsDir);
+const bigState = JSON.parse(readFileSync(join(root, '.deepseek', 'cache', 'captured-sessions.json'), 'utf8'));
+check('capture-scan: oversized first frame is still captured, not skipped',
+  bigCapture.captured.some((c) => c.id === 'session-cap-big')
+  && bigState.scanned?.[join(sessionsDir, 's3', 'session.jsonl.zstd')]?.inVault === true);
+
 // ── 24. session-capture toggle (UI round-trip through config.md) ────────────
-check('capture-toggle: defaults on when field absent', readSessionCaptureEnabled(root) === true);
+check('capture-toggle: defaults off when field absent', readSessionCaptureEnabled(root) === false);
 setSessionCapture(root, false);
 check('capture-toggle: writes false', readSessionCaptureEnabled(root) === false && readFileSync(join(root, '.deepseek', 'config.md'), 'utf8').includes('sessionCapture: false'));
 setSessionCapture(root, true);
 check('capture-toggle: writes true back', readSessionCaptureEnabled(root) === true);
 
+// ── 25. dsh 0.1.5 session data format V3 (docs/dsh-0.1.5-adaptation.md) ──────
+// The V3 migration writes `session.v3.jsonl.zstd` NEXT TO the V2 original it
+// reaps, and keeps the original — so one session owns two artifacts whose names
+// both end in `.jsonl.zstd`. Everything that walks the store must therefore
+// count SESSIONS, not files, or a single conversation enters the dialogue index
+// and the capture marker twice. The pure selection helpers are asserted first,
+// then the real capture pass.
+check('v3: sessionLogKey keys on the session directory, not the artifact name',
+  sessionLogKey('C:\\s\\sessions\\proj-a\\session-abc\\session.v3.jsonl.zstd') === 'session-abc'
+  && sessionLogKey('/home/u/.dsh/sessions/proj-a/session-abc/session.jsonl.zstd') === 'session-abc'
+  // The V2 and V3 artifacts of one session must agree — that is the whole point.
+  && sessionLogKey('C:\\s\\sessions\\proj-a\\session-abc\\session.v3.jsonl.zstd')
+     === sessionLogKey('C:\\s\\sessions\\proj-a\\session-abc\\session.jsonl.zstd'));
+
+check('v3: a V2/V3 pair collapses to the newest artifact (the migrated V3 file)', (() => {
+  const kept = selectAuthoritativeLogs([
+    { path: join(sessionsDir, 'p', 'session-abc', 'session.v3.jsonl.zstd'), mtimeMs: 200 },
+    { path: join(sessionsDir, 'p', 'session-abc', 'session.jsonl.zstd'), mtimeMs: 100 }
+  ]);
+  return kept.length === 1 && kept[0].path.endsWith('session.v3.jsonl.zstd');
+})());
+check('v3: distinct sessions both survive the collapse', (() => {
+  const kept = selectAuthoritativeLogs([
+    { path: join(sessionsDir, 'p', 'session-a', 'session.v3.jsonl.zstd'), mtimeMs: 200 },
+    { path: join(sessionsDir, 'p', 'session-b', 'session.jsonl.zstd'), mtimeMs: 100 }
+  ]);
+  return kept.length === 2;
+})());
+
+// Real store: the migrated V3 file is authoritative and only ONE artifact per
+// session is ever returned, both under a loose and a tight `maxFiles`.
+const v3Root = join(root, 'sessions-v3');
+mkdirSync(join(v3Root, 'v3proj', 'session-v3-1'), { recursive: true });
+const v2Path = join(v3Root, 'v3proj', 'session-v3-1', 'session.jsonl.zstd');
+const v3Path = join(v3Root, 'v3proj', 'session-v3-1', 'session.v3.jsonl.zstd');
+writeFileSync(v2Path, zstdCompressSync(Buffer.from([
+  JSON.stringify({ type: 'session', version: 2, id: 'session-v3-1', cwd: root, createdAt: Date.now() - 7200000 }),
+  JSON.stringify({ type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'V2 原件里的旧提问' }] } }),
+  JSON.stringify({ type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: 'V2 旧回答' }] } } })
+].join('\n') + '\n', 'utf8')));
+writeFileSync(v3Path, zstdCompressSync(Buffer.from([
+  JSON.stringify({ type: 'session', version: 3, id: 'session-v3-1', cwd: root, createdAt: Date.now() - 7200000, isSeeded: false, delegationDepth: 0, agentPreset: 'notes-assistant' }),
+  // V3-only surface: the system prompt became a message, and per-token chunk
+  // events are gone (they live in assistant/message.data.stream[]).
+  JSON.stringify({ type: 'system/message', seq: 1, time: 1, data: { source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt' }, content: [] }, surfaceOp: 'append' }),
+  JSON.stringify({ type: 'user/message', seq: 2, time: 2, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'V2 原件里的旧提问' }] }, surfaceOp: 'append' }),
+  JSON.stringify({ type: 'assistant/message', seq: 3, time: 3, data: { message: { content: [{ type: 'reasoning', text: '内部思考' }, { type: 'text', text: 'V2 旧回答' }] }, stream: [] }, surfaceOp: 'append' }),
+  JSON.stringify({ type: 'user/message', seq: 4, time: 4, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'V3 迁移后的新提问' }] }, surfaceOp: 'append' }),
+  JSON.stringify({ type: 'assistant/message', seq: 5, time: 5, data: { message: { content: [{ type: 'text', text: 'V3 新回答' }] }, stream: [] }, surfaceOp: 'append' })
+].join('\n') + '\n', 'utf8')));
+
+const v3Logs = findSessionLogs(v3Root, 20);
+check('v3: one session pair yields exactly one log', v3Logs.length === 1);
+check('v3: the migrated V3 file is the one selected', v3Logs[0]?.path === v3Path);
+check('v3: maxFiles counts sessions, not files', findSessionLogs(v3Root, 1).length === 1);
+
+// The V2 original is decoded only when its V3 successor is gone. Deleting the
+// successor is the sharpest proof that the pair really collapsed to one entry
+// instead of the V2 file merely being skipped for another reason.
+const v3Decoded = decodeZstdSessionLog(readFileSync(v3Path));
+check('v3: V3 log decodes across frames (header + appended frames)',
+  v3Decoded.length >= 6 && v3Decoded[0]?.version === 3);
+const v3Entry = distillSession(v3Decoded, { userClip: 4000, assistantClip: 4000 });
+check('v3: distill reads V3 events (title/source/reasoning rules unchanged)',
+  v3Entry.id === 'session-v3-1' && v3Entry.cwd === root
+  && v3Entry.messages.length === 4
+  && v3Entry.messages[1].text === 'V2 旧回答'
+  && !v3Entry.messages.map((m) => m.text).join('|').includes('内部思考'));
+
+const v3Captured = runSessionCapture(root, v3Root);
+check('v3: capture takes the migrated artifact as authoritative',
+  v3Captured.captured.some((c) => c.id === 'session-v3-1')
+  && v3Captured.captured.find((c) => c.id === 'session-v3-1')?.lastSeq === 5);
+check('v3: the migrated conversation lands in episode order (old turn, then new)', (() => {
+  const files = readdirSync(epDir).filter((f) => f.includes('session-v3-1'));
+  if (files.length !== 1) return false;
+  const t = readFileSync(join(epDir, files[0]), 'utf8');
+  return t.includes('V2 旧回答') && t.includes('V3 迁移后的新提问') && t.includes('V3 新回答')
+    && !t.includes('内部思考')
+    && t.indexOf('V2 旧回答') < t.indexOf('V3 新回答');
+})());
+check('v3: the session pair is scanned once, so nothing stays pending',
+  countUncapturedSessions(root, v3Root) === 0);
+
+rmSync(v3Path, { force: true });
+check('v3: with the successor gone the V2 original is read again',
+  findSessionLogs(v3Root, 20)[0]?.path === v2Path
+  && runSessionCapture(root, v3Root).captured.some((c) => c.id === 'session-v3-1'));
+
+// ── 26. frontmatter writers: offsets, not replacement strings ───────────────
+// The 2026-09-10 audit found two silent-corruption modes in the writers that
+// back the panel's ✅/❌ buttons (docs/project-assessment-2026-09-10.md §2 P0):
+//   (a) `text.replace(spanText, newText)` treats newText as a REPLACEMENT
+//       STRING, so `$$`/`$&`/`$'`/`` $` `` in AGENT-AUTHORED frontmatter are
+//       expanded — a math vault is exactly where `$$` appears in a title;
+//   (b) an EMPTY frontmatter body makes the search string "", and
+//       `replace("", x)` inserts at offset 0, pushing the closing `---` into the
+//       middle of the file while the caller is told the write succeeded.
+// Both are asserted here against a matrix of degenerate shapes.
+const fmRoot = join(root, 'fm-writers');
+mkdirSync(join(fmRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+const cardPath = (name) => join(fmRoot, '.deepseek', 'memory', 'records', name);
+const CARD_TEMPLATE = (fm) => `---\n${fm}---\nbody line\n`;
+const HOOK_SECTION = 'title: t\nhook:\n  verified: single-source\n';
+
+for (const dollar of ['$$', '$&', "$'", '$`']) {
+  const rel = `dollar-${dollar.replace(/[^a-z$&'`]/gi, '_')}.md`;
+  const abs = cardPath(rel);
+  const original = CARD_TEMPLATE(`title: 关于 ${dollar} 的表示\n${HOOK_SECTION}`);
+  writeFileSync(abs, original, 'utf8');
+  const res = applyFeedback(abs, 'confirm');
+  const after = readFileSync(abs, 'utf8');
+  check(`writers: frontmatter containing ${JSON.stringify(dollar)} survives a ✅ (no $-expansion)`,
+    res.ok === true
+    && after.includes(`title: 关于 ${dollar} 的表示`)
+    && after.includes('verified: user-confirmed')
+    && after.split('\n').filter((l) => l === '---').length === 2
+    && after.trimEnd().endsWith('body line'));
+}
+
+// Empty frontmatter body: still a valid file, and the write lands INSIDE the
+// block instead of before it.
+{
+  const abs = cardPath('empty-fm.md');
+  writeFileSync(abs, '---\n\n---\nbody\n', 'utf8');
+  const res = applyFeedback(abs, 'inapplicable');
+  const after = readFileSync(abs, 'utf8');
+  const lines = after.split('\n');
+  check('writers: an EMPTY frontmatter block stays well-formed after a write',
+    res.ok === true
+    && lines[0] === '---'
+    && lines[1].startsWith('last_not_applicable: ')
+    && lines[2] === '---'
+    && lines.slice(3).join('\n').includes('body'));
+}
+{
+  // capture-policy.md goes through the same helper (setCapturePolicyMode also
+  // refreshes `updated`, so assert the block shape rather than one exact line).
+  const policyDir = join(fmRoot, 'policy-empty');
+  mkdirSync(join(policyDir, '.deepseek'), { recursive: true });
+  writeFileSync(join(policyDir, '.deepseek', 'capture-policy.md'), '---\n\n---\n# 捕获策略\n', 'utf8');
+  setCapturePolicyMode(policyDir, 'fact', 'ask', '');
+  const after = readFileSync(join(policyDir, '.deepseek', 'capture-policy.md'), 'utf8');
+  const block = after.split('\n').slice(0, after.split('\n').indexOf('---', 1) + 1).join('\n');
+  check('writers: empty-frontmatter capture-policy stays well-formed',
+    after.startsWith('---\n')
+    && block.includes('fact: ask')
+    && block.includes('updated: ')
+    && after.split('\n').filter((l) => l === '---').length === 2
+    && after.includes('# 捕获策略'));
+}
+
+// CRLF and a frontmatter-free file: the span helper must not be fooled by
+// either, and a file without frontmatter is refused rather than mangled.
+{
+  const abs = cardPath('crlf.md');
+  writeFileSync(abs, '---\r\ntitle: t\r\nhook:\r\n  verified: single-source\r\n---\r\nbody\r\n', 'utf8');
+  const res = applyFeedback(abs, 'confirm');
+  const after = readFileSync(abs, 'utf8');
+  check('writers: CRLF frontmatter keeps CRLF and only changes the target keys',
+    res.ok === true && after.includes('\r\n') && after.includes('verified: user-confirmed') && !after.includes('\n\n'));
+}
+check('writers: a file with no frontmatter is refused, not rewritten', (() => {
+  const abs = cardPath('no-fm.md');
+  writeFileSync(abs, 'plain note\n', 'utf8');
+  const res = applyFeedback(abs, 'confirm');
+  return res.ok === false && readFileSync(abs, 'utf8') === 'plain note\n';
+})());
+check('writers: replaceFrontmatter returns null without frontmatter',
+  replaceFrontmatter('plain\n', 'x') === null && frontmatterSpan('plain\n') === null);
+check('writers: frontmatterSpan covers exactly the block body', (() => {
+  const raw = '---\na: 1\n---\nbody\n';
+  const span = frontmatterSpan(raw);
+  return span !== null && span.text === 'a: 1' && raw.slice(span.start, span.end) === 'a: 1';
+})());
+
+// ── 27. archiveMemoryFile validates its source ─────────────────────────────
+// It used to move whatever it was handed: a plain note, a whole directory, even
+// the vault root. The route is loopback-reachable, so this is the last gate.
+const archRoot = join(root, 'archive-guard');
+mkdirSync(join(archRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+mkdirSync(join(archRoot, '.deepseek', 'archive'), { recursive: true });
+writeFileSync(join(archRoot, 'IMPORTANT-NOTE.md'), '# user note\n', 'utf8');
+writeFileSync(join(archRoot, '.deepseek', 'capture-policy.md'), '---\nfact: ask\n---\n', 'utf8');
+writeFileSync(join(archRoot, '.deepseek', 'memory', 'records', 'card.md'), '---\n---\n', 'utf8');
+const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+check('archive: a note outside the memory tree is refused',
+  throws(() => archiveMemoryFile(archRoot, ['IMPORTANT-NOTE.md']))
+  && existsSync(join(archRoot, 'IMPORTANT-NOTE.md')));
+check('archive: a directory is refused',
+  throws(() => archiveMemoryFile(archRoot, ['.deepseek', 'memory', 'records']))
+  && existsSync(join(archRoot, '.deepseek', 'memory', 'records')));
+check('archive: the vault root (".") is refused', throws(() => archiveMemoryFile(archRoot, ['.'])));
+check('archive: config/capture-policy.md is refused (not a card)',
+  throws(() => archiveMemoryFile(archRoot, ['.deepseek', 'capture-policy.md'])));
+check('archive: a non-markdown target is refused',
+  throws(() => archiveMemoryFile(archRoot, ['.deepseek', 'memory', 'records', 'x.txt'])));
+check('archive: ".." segments are refused',
+  throws(() => archiveMemoryFile(archRoot, ['.deepseek', 'memory', '..', '..', 'IMPORTANT-NOTE.md'])));
+check('archive: a real memory card is still archived',
+  archiveMemoryFile(archRoot, ['.deepseek', 'memory', 'records', 'card.md']).replace(/\\/g, '/')
+    .endsWith('.deepseek/archive/records/card.md')
+  && !existsSync(join(archRoot, '.deepseek', 'memory', 'records', 'card.md')));
+
+// ── 28. the PRESET's own frontmatter writers (same $-expansion class) ───────
+// dsh/preset/math-memory.mjs writes cards too: the daily audit syncs hook usage
+// stats, marks duplicates and promotes strategy cards, and all four sites used
+// `text.replace(fmMatch[1], rewritten)` — the same replacement-string hazard
+// fixed in memory-admin.mjs. The audit scans records/ templates/ strategy/, so
+// the fixture needs a real card in records/ (index.md is scaffold, skipped) and
+// an ISOLATED vault: nesting it under the shared test root makes the audit walk
+// that root's cards as well.
+{
+  const presetRoot = mkdtempSync(join(tmpdir(), 'dsh-preset-writers-'));
+  for (const dir of ['.deepseek/memory/records', '.deepseek/memory/templates', '.deepseek/strategy', '.deepseek/memory/episodes']) {
+    mkdirSync(join(presetRoot, dir), { recursive: true });
+  }
+  writeFileSync(join(presetRoot, '.deepseek', 'memory', 'profile.md'), '---\ntitle: p\n---\n', 'utf8');
+  for (const scaffold of ['.deepseek/memory/records/index.md', '.deepseek/memory/templates/index.md', '.deepseek/memory/episodes/index.md']) {
+    writeFileSync(join(presetRoot, scaffold), '# 索引\n', 'utf8');
+  }
+
+  const cardAbs = join(presetRoot, '.deepseek', 'memory', 'records', 'dollar-card.md');
+  const original = [
+    '---',
+    'title: 关于 $$ 的表示 与 $& 的含义',
+    'type: fact',
+    'status: active',
+    'verified: single-source',
+    'updated: 2026-01-01',
+    'source: 讨论',
+    'hook:',
+    '  operator: probability',
+    '  pattern: exchangeable_sequence',
+    // `uses: 0` makes the sync rewrite the block, which is what exercises the
+    // offset splice (with a non-zero value the rewrite can be a no-op).
+    '  uses: 0',
+    '---',
+    'body',
+    ''
+  ].join('\n');
+  writeFileSync(cardAbs, original, 'utf8');
+
+  const report = buildAuditReport(presetRoot, { parseHookFrontmatter, tokenize, maintainHookStats: true });
+  const after = readFileSync(cardAbs, 'utf8');
+  check('preset writers: the audit actually saw the card',
+    report?.counts?.cards === 1, `cards=${report?.counts?.cards}`);
+  check('preset writers: a $$/$& title survives the audit stats sync',
+    after.includes('title: 关于 $$ 的表示 与 $& 的含义'));
+  check('preset writers: the file keeps exactly one frontmatter block',
+    after.split('\n').filter((l) => l === '---').length === 2 && after.trimEnd().endsWith('body'));
+
+  // The pathological case, asserted directly: the OLD formulation
+  // (`text.replace(matched, rewritten)`) expands `$`-patterns inside the
+  // rewritten frontmatter, the new one splices by offset. Compare both so the
+  // property is explicit rather than incidental.
+  const pathological = [
+    '---',
+    'title: 关于 $$ 的表示 与 $& 的含义',
+    'hook:',
+    '  uses: 0',
+    '---',
+    'body',
+    ''
+  ].join('\n');
+  const matched = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(pathological)[1];
+  const rewrittenBlock = matched.replace('uses: 0', 'uses: 3');
+  const oldWay = pathological.replace(matched, rewrittenBlock);
+  const newWay = __replaceLeadingFrontmatterForTest(pathological, /^(---\r?\n[\s\S]*?\r?\n---)/.exec(pathological), rewrittenBlock);
+  // oldWay becomes `title: 关于 $ 的表示 与 <the matched block> 的含义` with
+  // `uses: 0` restored and `uses: 3` appended: `$$` lost a `$`, `$&` injected
+  // the block, and the file GROWS. Those three are the corruption.
+  // The corruption is observable as a broken TITLE LINE plus a block leak:
+  //   oldWay[1] === 'title: 关于 $ 的表示 与 ---'   (the `$&` expansion inserted
+  //   the matched block, so the original title text now sits on a new line and
+  //   the block appears twice). `$$` still occurs somewhere inside that leaked
+  //   copy, so it is NOT a usable signal — assert the leak instead.
+  check('preset writers: the old replace() form really did corrupt `$$`/`$&` (control)',
+    oldWay !== pathological
+    && oldWay.split('\n')[1] === 'title: 关于 $ 的表示 与 ---'
+    && oldWay.split('---').length > pathological.split('---').length,
+    `bytes ${pathological.length} -> ${oldWay.length}; title ${JSON.stringify(oldWay.split('\n')[1])}`);
+  check('preset writers: the offset splice preserves the title AND lands the change',
+    newWay.includes('title: 关于 $$ 的表示 与 $& 的含义') && newWay.includes('uses: 3')
+    && newWay.split('\n').filter((l) => l === '---').length === 2,
+    JSON.stringify(newWay.split('\n').slice(0, 4)));
+  rmSync(presetRoot, { recursive: true, force: true });
+}
+
+// ── 29. delegated child sessions are skipped by default ────────────────────
+// A subagent session replays its parent's prefix, so capturing it stores the
+// same conversation again under a second id. V3 headers mark it (`origin`,
+// `delegationDepth`), which is what makes the decision possible at all; a V2
+// header carries neither and stays indistinguishable (kept).
+{
+  const subRoot = mkdtempSync(join(tmpdir(), 'dsh-subagent-'));
+  const sessions = join(subRoot, 'sessions');
+  const parentDir = join(sessions, 'proj', 'session-parent-1');
+  const childDir = join(sessions, 'proj', 'session-child-1');
+  mkdirSync(parentDir, { recursive: true });
+  mkdirSync(childDir, { recursive: true });
+  const log = (events) => zstdCompressSync(Buffer.from(events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8'));
+  const turns = [
+    { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '父会话提问' }] } },
+    { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: '父会话回答' }] } } }
+  ];
+  writeFileSync(join(parentDir, 'session.v3.jsonl.zstd'), log([
+    { type: 'session', version: 3, id: 'session-parent-1', cwd: subRoot, createdAt: Date.now(), isSeeded: false, delegationDepth: 0 },
+    { type: 'session/title', seq: 1, time: 1, data: { title: '父会话' } },
+    ...turns
+  ]));
+  writeFileSync(join(childDir, 'session.v3.jsonl.zstd'), log([
+    { type: 'session', version: 3, id: 'session-child-1', cwd: subRoot, createdAt: Date.now(), isSeeded: true, origin: 'subagent', delegationDepth: 1, parentSession: 'session-parent-1' },
+    { type: 'session/title', seq: 1, time: 1, data: { title: '子代理' } },
+    ...turns
+  ]));
+
+  const entryParent = distillSession(decodeZstdSessionLog(readFileSync(join(parentDir, 'session.v3.jsonl.zstd'))));
+  const entryChild = distillSession(decodeZstdSessionLog(readFileSync(join(childDir, 'session.v3.jsonl.zstd'))));
+  check('subagent: a V3 header marks a delegated child',
+    entryChild.isSubagent === true && entryChild.origin === 'subagent' && entryParent.isSubagent === false);
+
+  const firstPass = runSessionCapture(subRoot, sessions);
+  check('subagent: the parent is captured and the child is not',
+    firstPass.captured.some((c) => c.id === 'session-parent-1')
+    && !firstPass.captured.some((c) => c.id === 'session-child-1'),
+    JSON.stringify(firstPass.captured.map((c) => c.id)));
+
+  const episodes = readdirSync(join(subRoot, '.deepseek', 'memory', 'episodes')).filter((f) => f.endsWith('.md'));
+  check('subagent: no episode file is written for the child',
+    episodes.some((f) => f.includes('session-parent-1')) && !episodes.some((f) => f.includes('session-child-1')),
+    episodes.join(','));
+
+  // Opt-in path: captureSubagents: true stores it after all.
+  const optedIn = runSessionCapture(subRoot, sessions, undefined, { captureSubagents: true });
+  check('subagent: `captureSubagents: true` opts the child back in',
+    optedIn.captured.some((c) => c.id === 'session-child-1'),
+    JSON.stringify(optedIn.captured.map((c) => c.id)));
+
+  // Host-side badge must use the SAME rule, or it reports work capture never does.
+  check('subagent: countUncapturedSessions ignores the child too',
+    countUncapturedSessions(subRoot, sessions) === 0);
+  rmSync(subRoot, { recursive: true, force: true });
+}
+
+// ── 30. panel data layer: what the memory panels actually render ────────────
+// The panels showed a different subset of this JSON each, and neither showed
+// the layers the docs promise (topics/theorems/strategy) or the human title of
+// an episode. These checks pin the data layer the two panels share.
+{
+  const panelRoot = mkdtempSync(join(tmpdir(), 'dsh-panel-state-'));
+  const write = (rel, text) => {
+    const abs = join(panelRoot, ...rel.split('/'));
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, text, 'utf8');
+    return abs;
+  };
+  write('.deepseek/memory/records/index.md', '# 索引\n');
+  write('.deepseek/memory/records/rec-one.md', [
+    '---', 'title: 记录一', 'type: fact', 'status: active', 'updated: 2026-09-01', 'topic: 概率论',
+    'hook:', '  operator: probability', '  verified: single-source', '  uses: 2', '---', '',
+    '# 记录一', '', '第一行正文就是它的说明。', ''
+  ].join('\n'));
+  write('.deepseek/memory/topics/opt.md', [
+    '---', 'title: 最优传输', 'type: topic', 'updated: 2026-08-30', '---', '', '# 最优传输', '',
+    '- 标签：#最优传输 #概率论', '- 状态：活跃', '',
+    '## 概述', '', '抄书笔记系列，主线是存在性与结构定理。', ''
+  ].join('\n'));
+  write('.deepseek/strategy/strat-one.md', '---\ntitle: 结构证明策略\ntype: strategy\nstatus: candidate\nupdated: 2026-08-29\n---\n\n# 结构证明策略\n');
+  write('.deepseek/capture-policy.md', '---\nidea: ask\nfact: ask\npreference: ask\n---\n\n# 捕获策略\n');
+  write('.deepseek/memory/episodes/2026-09-07-definetti.md', '# 事件\n');
+  write('.deepseek/memory/episodes/2026-09-07-other.md', '# 事件\n');
+  write('.deepseek/memory/episodes/index.md', [
+    '# 事件时间索引', '',
+    '- [[2026-09-07-definetti|De Finetti 表示定理：可交换 ⇔ 条件 IID]] — 可交换性、概率论',
+    '- [[2026-09-07-other]]'
+  ].join('\n'));
+  write('.deepseek/inbox/memo-one.md', '---\ntitle: 一个想法\nstatus: inbox\ntopic: 方法论\nupdated: 2026-09-02\n---\n\n# 一个想法\n');
+  write('.deepseek/memory/profile.md', '# 画像\n');
+  write('.deepseek/cache/memory-audit.json', JSON.stringify({
+    schemaVersion: 2, generatedAt: Date.now(), today: '2026-09-09',
+    counts: { cards: 1 }, decisions: { total: 0 },
+    sections: { pendingReview: [], archiveCandidates: [] },
+    human: '记忆体检 2026-09-09 · 1 张卡', report: '记忆体检（2026-09-09，共 1 张卡）'
+  }));
+
+  const indexed = parseEpisodeIndex([
+    '- [[2026-09-07-definetti|De Finetti 表示定理]] — 可交换性、概率论',
+    '* [[2026-09-07-other]]',
+    '- [[archive/2026-01-01-old|旧事件]] — 归档主题'
+  ].join('\n'));
+  check('panel: episodes/index.md parsing keeps title and topic',
+    indexed.get('2026-09-07-definetti')?.title === 'De Finetti 表示定理'
+    && indexed.get('2026-09-07-definetti')?.topic === '可交换性、概率论',
+    JSON.stringify([...indexed.entries()]));
+  check('panel: an index line without a title/topic does not fabricate them',
+    indexed.get('2026-09-07-other')?.title === '' && indexed.get('2026-09-07-other')?.topic === '');
+  check('panel: archived episodes are keyed by stem, not by `archive/…`',
+    indexed.get('2026-01-01-old')?.title === '旧事件');
+
+  const state = collectMemoryState(panelRoot, '', parseHookFrontmatter);
+  check('panel: every card layer is collected (records/templates/topics/theorems/strategy)',
+    Object.keys(state.layers).join(',') === 'records,templates,topics,theorems,strategy',
+    Object.keys(state.layers).join(','));
+  check('panel: a topics-layer card is reachable (the old collector returned 2 layers only)',
+    state.layers.topics.cards.length === 1 && state.layers.strategy.cards.length === 1
+    && state.layers.topics.cards[0].title === '最优传输'
+    && state.layers.topics.cards[0].layer === 'topics');
+  check('panel: back-compat `records`/`templates` still point at the same arrays',
+    state.records.length === 1 && state.records === state.layers.records.cards);
+  check('panel: topic is exported for the card row', state.records[0].topic === '概率论');
+  check('panel: every card carries a one-line summary (titles alone say too little)',
+    state.records[0].summary === '第一行正文就是它的说明。'
+    && state.layers.topics.cards[0].summary === '抄书笔记系列，主线是存在性与结构定理。',
+    JSON.stringify({ record: state.records[0].summary, topic: state.layers.topics.cards[0].summary }));
+  check('panel: bookkeeping lines (标签/状态) are never used as a card summary',
+    !state.layers.topics.cards[0].summary.includes('标签') && !state.layers.topics.cards[0].summary.includes('状态'));
+  check('panel: a frontmatter `summary:` wins over the body',
+    summaryOf('---\nsummary: 一句话说明\n---\n\n# 标题\n\n正文第一行\n', { summary: '一句话说明' }, null) === '一句话说明');
+  check('panel: a body-less card yields an empty summary instead of a stray field',
+    summaryOf('---\ntitle: x\n---\n\n# x\n', { title: 'x' }, null) === '');
+  check('panel: a frontmatter-shaped line left in the body is skipped',
+    summaryOf('---\ntitle: x\n---\n\nuses: 0\n\n真正的说明\n', { title: 'x' }, null) === '真正的说明');
+  check('panel: the capture policy exposes one gate per layer, with `structure` defaulting to auto',
+    state.capturePolicy.structure === 'auto' && state.capturePolicy.idea === 'ask'
+    && parseCapturePolicy('---\nidea: auto\nstructure: ask\n---\n')?.structure === 'ask',
+    JSON.stringify(state.capturePolicy));
+
+  const definetti = state.episodes.find((e) => e.stem === '2026-09-07-definetti');
+  check('panel: an episode carries its human title, topic and date',
+    definetti?.title === 'De Finetti 表示定理：可交换 ⇔ 条件 IID'
+    && definetti?.topic === '可交换性、概率论'
+    && definetti?.date === '2026-09-07',
+    JSON.stringify(definetti));
+  check('panel: an unindexed episode falls back to its stem, never an empty title',
+    state.episodes.find((e) => e.stem === '2026-09-07-other')?.title === '2026-09-07-other');
+  check('panel: the search filter reaches episodes by title (case-insensitively)',
+    collectMemoryState(panelRoot, 'finetti 表示', parseHookFrontmatter).episodes.length === 1
+    && collectMemoryState(panelRoot, 'Finetti 表示', parseHookFrontmatter).episodes.length === 1
+    && collectMemoryState(panelRoot, '不存在的词', parseHookFrontmatter).episodes.length === 0);
+
+  check('panel: the structured audit object reaches the client',
+    state.audit?.today === '2026-09-09' && state.auditHuman.includes('记忆体检')
+    && state.auditText.includes('记忆体检'),
+    JSON.stringify({ audit: state.audit?.today, human: state.auditHuman }));
+  check('panel: auditText stays the MODEL checklist, auditHuman the human one',
+    state.auditText === state.audit.report && state.auditText !== state.auditHuman);
+  // A pre-split (schema v1) audit file has only `report`. The panel must not
+  // claim there is no report at all, must not dump the model checklist, and
+  // must say the text is the old format.
+  write('.deepseek/cache/memory-audit.json', JSON.stringify({
+    generatedAt: Date.parse('2026-09-09T10:00:00'),
+    counts: { cards: 3, strong: 1, weak: 0, unused: 2, pendingReview: 0, archiveCandidates: 2 },
+    pendingReview: [],
+    archiveCandidates: [{ rel: '.deepseek/memory/records/a.md', title: '低效用卡', utility: 0.33 }],
+    passive: { calls: 3, empty: 2, emptyRate: 0.67 },
+    report: '- 低效用归档候选: [[.deepseek/memory/records/a|低效用卡]](0.33)——向用户建议处置，不自行删除。'
+  }));
+  const legacy = collectMemoryState(panelRoot, '', parseHookFrontmatter);
+  check('panel: a v1 audit file is summarized instead of dumped (never "no report")',
+    legacy.auditHuman.includes('旧版报告') && legacy.auditHuman.includes('3 张卡')
+    && legacy.auditHuman.includes('低效用卡') && legacy.auditHuman.includes('检索 3 次')
+    && !legacy.auditHuman.includes('[[.deepseek/') && !legacy.auditHuman.includes('0.33'),
+    JSON.stringify(legacy.auditHuman));
+  check('panel: the v1 summary still routes the user to the archive button',
+    legacy.auditHuman.includes('归档'));
+  check('panel: a v1 audit cache still feeds the ⚠️ 待处理 block (sections + decisions synthesized)',
+    legacy.audit.sections.archiveCandidates.length === 1
+    && legacy.audit.sections.archiveCandidates[0].title === '低效用卡'
+    && legacy.audit.sections.pendingReview.length === 0
+    && legacy.audit.decisions.total === 1
+    && legacy.audit.today === '2026-09-09',
+    JSON.stringify({ sections: legacy.audit.sections, today: legacy.audit.today }));
+  check('panel: a missing audit file yields audit=null instead of throwing',
+    collectMemoryState(join(panelRoot, 'nope'), '', parseHookFrontmatter).audit === null);
+  check('panel: readAuditReport returns the parsed object (readAuditText keeps the string)',
+    readAuditReport(join(panelRoot, '.deepseek', 'cache', 'memory-audit.json'))?.counts?.cards === 3
+    && readAuditReport(join(panelRoot, 'missing.json')) === null);
+
+  // Feedback on a card with NO hook block: the panels used to hide the buttons,
+  // so the least-evidenced cards were the only ones that could never be fixed.
+  const bare = write('.deepseek/memory/records/bare.md', '---\ntitle: 无 hook 卡\ntype: fact\n---\n\n# 无 hook 卡\n');
+  const confirmed = applyFeedback(bare, 'confirm');
+  const afterConfirm = readFileSync(bare, 'utf8');
+  check('panel: ✅ on a hookless card appends a hook block instead of failing',
+    confirmed.ok === true && /hook:\n(\s+.*\n)*\s+verified: user-confirmed/.test(afterConfirm)
+    && afterConfirm.includes('success_rate: 0.9')
+    && afterConfirm.split('\n').filter((l) => l === '---').length === 2,
+    JSON.stringify(afterConfirm.split('\n').slice(0, 8)));
+  check('panel: the ✅ receipt names the consequence, not an internal field',
+    confirmed.message.includes('用户确认') && !confirmed.message.includes('success_rate'));
+
+  const bare2 = write('.deepseek/memory/records/bare2.md', '---\ntitle: 无 hook 卡 2\ntype: fact\n---\n\n# 无 hook 卡 2\n');
+  const wronged = applyFeedback(bare2, 'wrong');
+  const afterWrong = readFileSync(bare2, 'utf8');
+  check('panel: ❌ on an UNRATED card does not invent a success_rate',
+    wronged.ok === true && !afterWrong.includes('success_rate')
+    && afterWrong.includes('needs_review: true') && afterWrong.includes('verified: single-source')
+    && wronged.message.includes('重审'),
+    JSON.stringify(afterWrong.split('\n').slice(0, 8)));
+  const rated = write('.deepseek/memory/records/rated.md', '---\ntitle: 有评级卡\nhook:\n  verified: user-confirmed\n  success_rate: 0.9\n---\n\n# 有评级卡\n');
+  applyFeedback(rated, 'wrong');
+  const afterRated = readFileSync(rated, 'utf8');
+  check('panel: ❌ on a RATED card halves it under the weak threshold and demotes one step',
+    afterRated.includes('success_rate: 0.35') && afterRated.includes('verified: cross-referenced'),
+    JSON.stringify(afterRated.split('\n').slice(0, 8)));
+  check('panel: an unknown feedback action is refused, not silently ignored',
+    applyFeedback(rated, 'nonsense').ok === false);
+
+  rmSync(panelRoot, { recursive: true, force: true });
+}
+
+// ── 31. the audit never recommends archiving what it just archived ──────────
+{
+  const archRoot = mkdtempSync(join(tmpdir(), 'dsh-audit-archive-'));
+  const dir = join(archRoot, '.deepseek', 'memory', 'records');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'index.md'), '# 索引\n');
+  // Zero uses + very old + not user-confirmed ⇒ an auto-archive target AND a
+  // low-utility archive candidate at the same time.
+  writeFileSync(join(dir, 'stale-card.md'), [
+    '---', 'title: 陈旧卡', 'type: fact', 'status: active', 'updated: 2020-01-01',
+    'hook:', '  operator: analysis', '  verified: single-source', '  uses: 0', '---', '', '# 陈旧卡', ''
+  ].join('\n'));
+  writeFileSync(join(dir, 'kept-card.md'), [
+    '---', 'title: 保留卡', 'type: fact', 'status: active', 'updated: 2026-09-01',
+    'hook:', '  operator: analysis', '  verified: user-confirmed', '  uses: 4', '  success_rate: 0.9', '---', '', '# 保留卡', ''
+  ].join('\n'));
+  const moved = buildAuditReport(archRoot, { parseHookFrontmatter, tokenize, maintainHookStats: true, autoArchive: true });
+  check('audit: auto-archive really moved the stale card',
+    moved.counts.autoArchived === 1 && moved.archived.includes('.deepseek/memory/records/stale-card.md'),
+    JSON.stringify(moved.archived));
+  check('audit: an archived card is no longer listed as an archive candidate',
+    !moved.sections.archiveCandidates.some((c) => c.rel.includes('stale-card'))
+    && !moved.archiveCandidates.some((c) => c.rel.includes('stale-card')),
+    JSON.stringify(moved.archiveCandidates));
+  check('audit: an archived card is no longer counted as a live card',
+    moved.counts.cards === 1 && !moved.sections.strong.some((c) => c.rel.includes('stale-card')));
+  check('audit: decisions never point at a card that is already gone',
+    moved.decisions.total === moved.sections.pendingReview.length + moved.sections.archiveCandidates.length + moved.sections.duplicates.length);
+  check('audit: the human summary and the model checklist are both present and different',
+    moved.human.includes('记忆体检') && moved.checklist.includes('记忆体检') && moved.human !== moved.checklist);
+  check('audit: schemaVersion is declared (a reader can detect the split)',
+    moved.schemaVersion === 2 && moved.decisions !== undefined && moved.thresholds !== undefined);
+  rmSync(archRoot, { recursive: true, force: true });
+}
+
+// ── 32. archiving keeps the card's OWN layer (iteration-audit finding) ──────
+// Both archive paths were written when records were the only archivable layer:
+// the destination and the rewritten index were hardcoded to `records`, so a
+// strategy/topics/templates card was filed under `archive/records/` and its line
+// in its own index was never updated (leaving a dangling link).
+{
+  const layerRoot = mkdtempSync(join(tmpdir(), 'dsh-archive-layer-'));
+  const write = (rel, text) => {
+    const abs = join(layerRoot, ...rel.split('/'));
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, text, 'utf8');
+    return abs;
+  };
+  const card = (title) => `---\ntitle: ${title}\ntype: strategy\nstatus: candidate\n---\n\n# ${title}\n`;
+
+  // (a) the panel path
+  write('.deepseek/strategy/panel-card.md', card('面板归档卡'));
+  const target = archiveMemoryFile(layerRoot, ['.deepseek', 'strategy', 'panel-card.md']);
+  check('archive: a strategy card is filed under its OWN layer, not archive/records/',
+    target.replace(/\\/g, '/').endsWith('.deepseek/archive/strategy/panel-card.md')
+    && existsSync(join(layerRoot, '.deepseek', 'archive', 'strategy', 'panel-card.md'))
+    && !existsSync(join(layerRoot, '.deepseek', 'archive', 'records')),
+    target);
+  write('.deepseek/memory/topics/panel-topic.md', card('面板主题卡'));
+  const topicTarget = archiveMemoryFile(layerRoot, ['.deepseek', 'memory', 'topics', 'panel-topic.md']);
+  check('archive: a topics card keeps the same rule (memory/<layer> → archive/<layer>)',
+    topicTarget.replace(/\\/g, '/').endsWith('.deepseek/archive/topics/panel-topic.md'), topicTarget);
+  write('.deepseek/memory/records/panel-rec.md', card('面板记录卡'));
+  const recTarget = archiveMemoryFile(layerRoot, ['.deepseek', 'memory', 'records', 'panel-rec.md']);
+  check('archive: records still land in archive/records/ (existing archives stay valid)',
+    recTarget.replace(/\\/g, '/').endsWith('.deepseek/archive/records/panel-rec.md'), recTarget);
+
+  // (b) the audit path, including the index rewrite
+  write('.deepseek/strategy/index.md', '# 策略索引\n\n- [[stale-strategy|陈旧策略卡]]\n- [[live-strategy|在用策略卡]]\n');
+  write('.deepseek/strategy/stale-strategy.md', [
+    '---', 'title: 陈旧策略卡', 'type: strategy', 'status: active', 'updated: 2020-01-01',
+    'hook:', '  operator: analysis', '  verified: single-source', '  uses: 0', '---', '', '# 陈旧策略卡', ''
+  ].join('\n'));
+  write('.deepseek/strategy/live-strategy.md', [
+    '---', 'title: 在用策略卡', 'type: strategy', 'status: active', 'updated: 2026-09-01',
+    'hook:', '  operator: analysis', '  verified: user-confirmed', '  uses: 5', '  success_rate: 0.9', '---', '', '# 在用策略卡', ''
+  ].join('\n'));
+  const audit = buildAuditReport(layerRoot, { parseHookFrontmatter, tokenize, maintainHookStats: true, autoArchive: true });
+  const strategyIndex = readFileSync(join(layerRoot, '.deepseek', 'strategy', 'index.md'), 'utf8');
+  check('audit: auto-archived strategy card goes to archive/strategy/',
+    audit.counts.autoArchived === 1
+    && existsSync(join(layerRoot, '.deepseek', 'archive', 'strategy', 'stale-strategy.md')),
+    JSON.stringify(audit.archived));
+  check('audit: the strategy index link is rewritten to the archive path (no dangling link)',
+    strategyIndex.includes('[[archive/stale-strategy|') && strategyIndex.includes('[[live-strategy|'),
+    JSON.stringify(strategyIndex));
+  check('audit: the archived notice no longer promises a hard-coded records subdirectory',
+    !audit.human.includes('archive/records/'), audit.human.split('\n').filter((l) => l.includes('📦')).join(''));
+  rmSync(layerRoot, { recursive: true, force: true });
+}
+
+// ── 33. design-intake items (docs/design-intake-2026-09-10.md §1) ───────────
+// Five mechanisms absorbed from two external projects; each is deterministic and
+// model-free, so each gets a direct assertion here.
+{
+  const intakeRoot = mkdtempSync(join(tmpdir(), 'dsh-intake-'));
+  const write = (rel, text) => {
+    const abs = join(intakeRoot, ...rel.split('/'));
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, text, 'utf8');
+    return abs;
+  };
+
+  // ── item 1: applicability boundary gate (R1 anti_conditions) ──────────────
+  write('.deepseek/strategy/bounded.md', [
+    '---', 'title: 结构定理证明链', 'type: strategy', 'status: active',
+    'difficulty: 结构定理 循环单调 内积化 证明',
+    'not_applicable_when: "成本非二次（无内积化）或 μ 非绝对连续（映射形式不成立）时，第 3-4 格需改"',
+    'strategies:', '  - move: 先证存在性（紧性 + 下半连续）', '    retrieve: [theorem]',
+    'abstraction:', '  principle: "结构定理分两层：先建立弱性质，再升级成显式形式"',
+    '---', '', '# 结构定理证明链', '', '正文说明循环单调与内积化的关系。', ''
+  ].join('\n'));
+  write('.deepseek/strategy/open.md', [
+    '---', 'title: 通用策略', 'type: strategy', 'status: active', 'difficulty: 通用 结构定理 证明',
+    'strategies:', '  - move: 通用 结构定理 证明 走法', '    retrieve: [theorem]',
+    'abstraction:', '  principle: "通用 结构定理 证明 原则"',
+    '---', '', '# 通用策略', '', '正文。', ''
+  ].join('\n'));
+
+  const boundedDoc = buildRecallDoc('.deepseek/strategy/bounded.md', readFileSync(join(intakeRoot, '.deepseek', 'strategy', 'bounded.md'), 'utf8'));
+  check('intake1: the boundary is read from the card (top-level not_applicable_when)',
+    boundedDoc.boundary.includes('非绝对连续'), JSON.stringify(boundedDoc.boundary));
+  check('intake1: boundary segments keep the short discriminative phrases only',
+    boundarySegments(boundedDoc.boundary).includes('μ 非绝对连续')
+    && boundarySegments(boundedDoc.boundary).every((s) => s.length <= 12),
+    JSON.stringify(boundarySegments(boundedDoc.boundary)));
+  check('intake1: the gate fires on the boundary phrase and not on an unrelated query',
+    boundaryHits('证明 μ 非绝对连续 时的结构定理', boundedDoc.boundary).length === 1
+    && boundaryHits('证明 a.s. 收敛 子列技巧', boundedDoc.boundary).length === 0);
+  const gated = rankRecallDocuments([boundedDoc], 'μ 非绝对连续 的结构定理 证明', {});
+  check('intake1: an excluded card is withheld WITH its matched boundary, not silently dropped',
+    gated.matches.length === 0 && gated.excluded.length === 1
+    && gated.excluded[0].boundaryHits.includes('μ 非绝对连续'),
+    JSON.stringify(gated.excluded));
+  const openNow = rankRecallDocuments([boundedDoc], '结构定理 证明 循环单调', {});
+  check('intake1: a card with no boundary is never excluded (no false positive)',
+    openNow.excluded.length === 0, JSON.stringify(openNow.excluded));
+  const strategyRanked = rankStrategyCards([boundedDoc], 'μ 非绝对连续 结构定理 证明', {});
+  check('intake1: note_strategy applies the same gate',
+    strategyRanked.matches.length === 0 && strategyRanked.excluded.length === 1);
+
+  // ── item 2: negative-transfer counter (R1 usage.harmed) ───────────────────
+  const harmedCard = write('.deepseek/memory/records/harmed.md', [
+    '---', 'title: 会误导的卡', 'type: fact', 'status: active', 'updated: 2026-09-01',
+    'hook:', '  operator: analysis', '  verified: single-source', '  uses: 4', '---', '', '# 会误导的卡', ''
+  ].join('\n'));
+  applyFeedback(harmedCard, 'wrong');
+  const afterOne = readFileSync(harmedCard, 'utf8');
+  applyFeedback(harmedCard, 'wrong');
+  const afterTwo = readFileSync(harmedCard, 'utf8');
+  check('intake2: ❌ increments hook.harmed (0 → 1 → 2)',
+    /harmed: 1/.test(afterOne) && /harmed: 2/.test(afterTwo.split('needs_review')[0]),
+    JSON.stringify(afterTwo.split('\n').slice(0, 10)));
+
+  // ── item 3: provenance witness (R1 ladder) ────────────────────────────────
+  const witnessCard = write('.deepseek/memory/records/witness.md', [
+    '---', 'title: 待确认卡', 'type: fact', 'status: active', 'updated: 2026-09-01',
+    'hook:', '  operator: analysis', '  verified: single-source', '---', '', '# 待确认卡', ''
+  ].join('\n'));
+  applyFeedback(witnessCard, 'confirm');
+  check('intake3: ✅ writes the provenance witness `verified_by: user`',
+    /verified_by: user/.test(readFileSync(witnessCard, 'utf8')));
+  applyFeedback(witnessCard, 'wrong');
+  const demoted = readFileSync(witnessCard, 'utf8');
+  check('intake3: ❌ on a confirmed card demotes one step AND invalidates the witness',
+    /verified: cross-referenced/.test(demoted) && /verified_by: none/.test(demoted),
+    JSON.stringify(demoted.split('\n').slice(0, 10)));
+
+  // ── items 3 + 4 (audit side): witness check + declared/effective state ────
+  write('.deepseek/memory/records/index.md', '# 索引\n');
+  write('.deepseek/memory/records/unjustified.md', [
+    '---', 'title: 越权升级卡', 'type: fact', 'status: active', 'updated: 2026-09-01',
+    'hook:', '  operator: analysis', '  verified: cross-referenced', '  uses: 0', '---', '', '# 越权升级卡', ''
+  ].join('\n'));
+  write('.deepseek/memory/records/legit.md', [
+    '---', 'title: 合法升级卡', 'type: fact', 'status: active', 'updated: 2026-09-01',
+    'hook:', '  operator: analysis', '  verified: user-confirmed', '  verified_by: user', '  uses: 0', '---', '', '# 合法升级卡', ''
+  ].join('\n'));
+  const auditNoSync = buildAuditReport(intakeRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('intake3: a level above single-source without the witness is flagged (never auto-fixed)',
+    auditNoSync.structural.unjustifiedUpgrade >= 1
+    && auditNoSync.structuralDetail.unjustifiedUpgrade.some((t) => t.includes('越权升级卡'))
+    && auditNoSync.human.includes('验证等级高于'),
+    JSON.stringify(auditNoSync.structuralDetail.unjustifiedUpgrade));
+  check('intake3: a witnessed user-confirmed card is NOT flagged, and ❌ invalidates the witness',
+    !auditNoSync.structuralDetail.unjustifiedUpgrade.some((t) => t.includes('合法升级卡'))
+    && auditNoSync.structuralDetail.unjustifiedUpgrade.some((t) => t.includes('待确认卡')));
+
+  // ── item 4: declared vs effective uses ───────────────────────────────────
+  write('.deepseek/cache/retrieval-stats.json', JSON.stringify({
+    '.deepseek/memory/records/harmed.md': { uses: 2, last_used: '2026-09-10' },
+    '__meta__': { calls: 1, empty: 0 }
+  }, null, 2));
+  const stateWithPending = collectMemoryState(intakeRoot, '', parseHookFrontmatter);
+  const harmedEntry = stateWithPending.records.find((card) => card.rel.endsWith('harmed.md'));
+  check('intake4: the panel shows the EFFECTIVE uses (declared + not-yet-merged hits)',
+    harmedEntry.uses === harmedEntry.usesDeclared + harmedEntry.usesPending
+    && harmedEntry.usesPending === 2,
+    JSON.stringify({ uses: harmedEntry.uses, declared: harmedEntry.usesDeclared, pending: harmedEntry.usesPending }));
+  // Recomputed AFTER the pending stats exist: this is the no-sync pass that sees
+  // the declared value disagreeing with the merged one.
+  const auditWithPending = buildAuditReport(intakeRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('intake4: the audit reports the mismatch instead of pretending it is consistent',
+    auditWithPending.status === 'degraded'
+    && auditWithPending.warnings.some((w) => w.includes('uses'))
+    && auditWithPending.structural.usesMismatch >= 1,
+    JSON.stringify({ status: auditWithPending.status, warnings: auditWithPending.warnings }));
+
+  // ── item 5: degraded instead of silent success ───────────────────────────
+  const synced = buildAuditReport(intakeRoot, { parseHookFrontmatter, tokenize, maintainHookStats: true });
+  const harmedAfterSync = readFileSync(join(intakeRoot, '.deepseek', 'memory', 'records', 'harmed.md'), 'utf8');
+  check('intake5: the stats sync is verified by reading the file back (declared = merged value)',
+    synced.postconditions.statsWrites > 0 && synced.postconditions.statsFailures.length === 0
+    && /uses: 6/.test(harmedAfterSync) && synced.structural.usesMismatch === 0,
+    JSON.stringify({ post: synced.postconditions, file: harmedAfterSync.split('\n').slice(0, 10), mismatch: synced.structural.usesMismatch }));
+  check('intake5: after a successful sync the report is `ok`, with no leftover mismatch',
+    synced.status === 'ok' && synced.warnings.length === 0 && synced.structural.usesMismatch === 0,
+    JSON.stringify({ status: synced.status, warnings: synced.warnings, mismatch: synced.structural.usesMismatch }));
+  check('intake5: a card file that disappears mid-audit degrades the report instead of claiming success', (() => {
+    const probeRoot = mkdtempSync(join(tmpdir(), 'dsh-degraded-'));
+    const dir = join(probeRoot, '.deepseek', 'memory', 'records');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'index.md'), '# 索引\n');
+    // A card with pending hits but nowhere to write them (no hook block, not a
+    // strategy card): the old code zeroed the delta silently; now it must warn.
+    writeFileSync(join(dir, 'gone.md'), ['---', 'title: 无 hook 卡', 'type: fact', 'updated: 2026-09-01', '---', '', '# x', ''].join('\n'), 'utf8');
+    mkdirSync(join(probeRoot, '.deepseek', 'cache'), { recursive: true });
+    writeFileSync(join(probeRoot, '.deepseek', 'cache', 'retrieval-stats.json'), JSON.stringify({
+      '.deepseek/memory/records/gone.md': { uses: 3, last_used: '2026-09-10' }, '__meta__': { calls: 1, empty: 0 }
+    }), 'utf8');
+    const report = buildAuditReport(probeRoot, { parseHookFrontmatter, tokenize, maintainHookStats: true });
+    rmSync(probeRoot, { recursive: true, force: true });
+    return report.status === 'degraded'
+      && report.postconditions.unmergeableStats.length === 1
+      && report.warnings.some((w) => w.includes('无处可写'));
+  })());
+  const harmedCount = synced.counts.harmed;
+  check('intake2: the audit counts cards with negative transfer',
+    harmedCount === 2 && synced.sections.harmed.some((card) => card.title === '会误导的卡' && card.harmed === 2),
+    JSON.stringify(synced.sections.harmed));
+
+  rmSync(intakeRoot, { recursive: true, force: true });
+}
+
+// §34 multi-view pooling (GraphMemix intake, docs/memory/retrieval-v3.md §7.2).
+//
+// The product default stays the single bag; the max-pool exists so the QA probe
+// can A/B it. What MUST hold either way: the views carry exactly the bag's
+// fields, the default is unchanged, empty views never throw, and the boundary
+// gate keeps working under both poolings.
+{
+  const card = {
+    kind: 'record',
+    rel: '.deepseek/memory/records/rec-multiview.md',
+    title: '唯一标题词',
+    topic: '主题词',
+    tags: [],
+    hook: { operator: 'probability', techniques: ['技巧词'], success_rate: 1, uses: 2, verified: 'user-confirmed' },
+    boundary: '',
+    status: '',
+    duplicateOf: '',
+    difficulty: '',
+    updated: '2026-09-10',
+    body: '正文词 '.repeat(20)
+  };
+  const views = composePassageViews('record', card);
+  check('multiview: a record splits into title / keywords / body',
+    views.length === 3 && views.map((v) => v.name).join(',') === 'title,keywords,body',
+    JSON.stringify(views.map((v) => v.name)));
+  check('multiview: the views carry the same fields as the bag (title + topic + hook + body)',
+    views[0].text === card.title
+    && views[1].text.includes('主题词')
+    && views[2].text.includes('技巧词')
+    && views[2].text.includes('正文词'),
+    JSON.stringify(views.map((v) => v.text.slice(0, 20))));
+  check('multiview: every bag token still exists somewhere in the views (no evidence dropped)', (() => {
+    const bag = new Set(tokenize(composePassage('record', card)));
+    const pooled = new Set(views.flatMap((view) => tokenize(view.text)));
+    const missing = [...bag].filter((token) => !pooled.has(token));
+    return missing.length === 0;
+  })(), JSON.stringify(views.map((v) => v.text.length)));
+
+  const docs = [
+    buildRecallDoc('.deepseek/memory/records/rec-multiview.md', [
+      '---', 'title: 唯一标题词', 'type: fact', 'topic: 主题词', 'updated: 2026-09-10',
+      'hook:', '  operator: probability', '  techniques: [技巧词]', '  verified: user-confirmed', '---', '', '正文词 正文词 正文词'
+    ].join('\n')),
+    buildRecallDoc('数学/普通笔记.md', ['---', 'tags: [analysis]', '---', '', '正文词 '.repeat(50)].join('\n'))
+  ].filter((doc) => doc !== null);
+  const bagRanking = rankRecallDocuments(docs, '唯一标题词', { limit: 5 });
+  const maxRanking = rankRecallDocuments(docs, '唯一标题词', { limit: 5, viewPool: 'max' });
+  check('multiview: the default pooling is still the single bag',
+    bagRanking.viewPool === 'bag' && maxRanking.viewPool === 'max',
+    `${bagRanking.viewPool} / ${maxRanking.viewPool}`);
+  check('multiview: a request for max-pooling never has to be assumed (the answer reports it)',
+    rankRecallDocuments(docs, '唯一标题词', { limit: 5, viewPool: 'nonsense' }).viewPool === 'bag');
+  check('multiview: both poolings put the exact-title card first',
+    bagRanking.matches[0]?.path === '.deepseek/memory/records/rec-multiview.md'
+    && maxRanking.matches[0]?.path === '.deepseek/memory/records/rec-multiview.md',
+    JSON.stringify([bagRanking.matches[0]?.score, maxRanking.matches[0]?.score]));
+  check('multiview: a document with an empty title/keywords view is scored, not skipped',
+    maxRanking.matches.some((m) => m.path === '数学/普通笔记.md'));
+  check('multiview: the boundary gate still excludes under max-pooling', (() => {
+    const bounded = docs.map((doc) => (doc.rel.endsWith('rec-multiview.md') ? { ...doc, boundary: '成本非二次、非绝对连续' } : doc));
+    const gated = rankRecallDocuments(bounded, '非绝对连续 唯一标题词', { limit: 5, viewPool: 'max' });
+    return gated.matches.every((m) => m.path !== '.deepseek/memory/records/rec-multiview.md')
+      && gated.excluded.some((entry) => entry.path === '.deepseek/memory/records/rec-multiview.md' && entry.boundaryHits.includes('非绝对连续'));
+  })());
+}
+
 rmSync(root, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok).length;
+console.log(`__CHECKS__ ${results.length - failed}/${results.length}`);
 console.log(`\n${results.length - failed}/${results.length} checks passed`);
 process.exit(failed === 0 ? 0 : 1);

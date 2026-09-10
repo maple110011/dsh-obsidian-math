@@ -24,7 +24,8 @@ hook:                 # 可选：检索特征块（供 note_recall 统一检索�
     - borel-cantelli
   applications: 证明 a.s. 收敛类问题
   verified: single-source
-  # uses / success_rate / last_used 由插件维护，不要手写
+  # uses / success_rate / last_used / harmed / verified_by 由插件维护，不要手写
+not_applicable_when: 成本非二次、μ 非绝对连续   # 适用边界：短句/关键词列表
 ---
 
 # <模板名>
@@ -45,8 +46,9 @@ hook:                 # 可选：检索特征块（供 note_recall 统一检索�
 
 ## hook 块说明（记忆 v2，检索特征）
 
-- 模板卡的 `hook.operator/pattern/heuristics/techniques/applications` 由你创建时填写、reinforce 时追加；`uses/success_rate/last_used` 由插件维护，**不要手写**。
-- `verified` 新建只能写 `single-source`；升级到 `cross-referenced`/`user-confirmed` 必须用户参与。
+- 模板卡的 `hook.operator/pattern/heuristics/techniques/applications` 由你创建时填写、reinforce 时追加；`uses/success_rate/last_used/harmed` 由插件维护，**不要手写**。
+- `verified` 新建只能写 `single-source`；升级到 `cross-referenced`/`user-confirmed` 必须用户参与，凭据 `verified_by` 只在用户点 ✅ 时由插件写入（你不要写）。
+- **适用边界 `not_applicable_when`** 会作为 `note_recall` / `note_strategy` 的**硬门控**：查询命中边界短语时该卡不进候选、只在「因适用边界被排除」里列出。写成短句/关键词列表（每条 ≤12 字）。
 - 有 hook 的模板卡才能被 `note_recall` 按策略加权检索到；solution 类卡片建议必有 hook。
 
 ## 维护规则（AI 执行）

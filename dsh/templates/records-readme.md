@@ -36,7 +36,8 @@ hook:                 # 可选：检索特征块（记忆 v2，供 note_recall �
     - borel-cantelli
   applications: 证明 a.s. 收敛类问题   # 能解决什么挑战（与查询侧对齐）
   verified: single-source   # single-source / cross-referenced / user-confirmed（升级需用户参与）
-  # uses / success_rate / last_used 由插件维护，不要手写
+  # uses / success_rate / last_used / harmed / verified_by 由插件维护，不要手写
+not_applicable_when: 成本非二次、μ 非绝对连续   # 适用边界：短句/关键词列表（见下方说明）
 ---
 
 # <一句话陈述>
@@ -55,8 +56,9 @@ hook:                 # 可选：检索特征块（记忆 v2，供 note_recall �
 ## hook 块说明（记忆 v2，检索特征）
 
 - **写什么**：`operator/pattern/heuristics/quantity/techniques/applications/verified` 由你在创建卡片时填写，`techniques` 在 reinforce 时追加（来自真实证明/解题过程，不得编造）。
-- **谁维护统计**：`uses/success_rate/last_used` 由插件确定性维护——`note_recall` 命中计数写入 `cache/retrieval-stats.json`，每日体检把计数回写进 hook 块。**你永远不手写/手改这三个字段**。
-- **验证等级**：新建只能写 `single-source`；与 vault 内笔记互证后可升级 `cross-referenced`；`user-confirmed` 只能在用户明确确认后写。
+- **谁维护统计**：`uses/success_rate/last_used/harmed` 由插件确定性维护——`note_recall` 命中计数写入 `cache/retrieval-stats.json`，每日体检把计数回写进 hook 块；`harmed` 在用户点 ❌ 时累加（「用过但结果更差」）。**你永远不手写/手改这四个字段**。
+- **验证等级与凭据**：新建只能写 `single-source`；与 vault 内笔记互证后可升级 `cross-referenced`；`user-confirmed` 只能在用户明确确认后写。`verified_by` 是升级的凭据，**只有用户点 ✅ 时由插件写入**——你不要写；体检会把「等级高于 single-source 却没有凭据」的卡列为越权升级。
+- **适用边界 `not_applicable_when`（强烈建议写）**：一句话说明「什么情况下别用这张卡」。它不只是注释：`note_recall` / `note_strategy` 会拿它当**硬门控**——查询里出现边界短语时该卡不进候选，而是在结果里单独列出「因适用边界被排除」。所以**写成短句/关键词列表**（顿号分隔、每条 ≤12 字），例如 `not_applicable_when: 成本非二次、μ 非绝对连续`；写成整段散文会被拆成碎片，门控就不准。
 - **为什么要有 hook**：统一检索（`note_recall`）用 hook 字段加权打分与算子过滤；没有 hook 的卡只能靠全文匹配被找到，检索质量明显更低。artifact 与 solution 类卡片**建议必有**，fact/preference 类可省略。
 
 ## 维护规则（AI 执行）

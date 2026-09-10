@@ -1,13 +1,20 @@
 name: Publish to npm
 
-# npm 与 GitHub Release 是两套独立分发：本 workflow 在版本 tag 推送时把
-# `dsh-math-memory`（dsh preset/profile/installer，见 package.json `files`）
-# 发布到 npm registry；Obsidian 插件（main.js/manifest.json/styles.css）由
-# release.yml 发布为 GitHub Release。两者共用同一版本 tag、同一版本号。
+# npm and the GitHub Release are two independent distributions: this workflow
+# publishes `dsh-math-memory` (dsh preset/profile/installer, see package.json
+# `files`) to the npm registry on a version tag; release.yml publishes the
+# Obsidian plugin (main.js/manifest.json/styles.css) as a GitHub Release. Both
+# share one version tag and one version number.
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
+
+# Least privilege: publishing needs no repository write access, and provenance
+# requires an OIDC token. Without these the default token scope is wider.
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   publish:
@@ -18,6 +25,16 @@ jobs:
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
-      - run: npm publish
+      - name: Install deps
+        run: npm ci
+      # The tag must equal the published version, otherwise `npm publish` either
+      # fails as already-published or ships a build whose version contradicts the
+      # tag the release was cut from.
+      - name: Version consistency (including the tag)
+        run: node scripts/check-version-consistency.mjs --tag "$GITHUB_REF_NAME"
+      - name: Run tests
+        run: npm test
+      - name: Publish
+        run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -4,7 +4,8 @@ dialogueIndex: true
 reminders: true
 audit: true
 autoArchive: false
-sessionCapture: true
+sessionCapture: false
+captureSubagents: false
 ---
 
 # 记忆系统设置（本工作区）
@@ -17,4 +18,5 @@ sessionCapture: true
 - `reminders`：是否在回复里注入 🔔 备忘录提醒候选。
 - `audit`：是否运行每日确定性记忆体检。
 - `autoArchive`：体检时是否把「零使用 + 长期陈旧（>90 天）+ 非用户确认」的低效用卡自动移入 `.deepseek/archive/records/`（移动而非删除，可逆）。默认 `false`（只建议、不自动归档）。
-- `sessionCapture`：是否自动把每场对话**保存到记忆**（整场对话、不含思考，写进 `.deepseek/memory/episodes/` 证据层，与模型三写解耦）。默认 `true`。
+- `sessionCapture`：是否自动把每场对话**保存到记忆**（整场对话、不含思考，写进 `.deepseek/memory/episodes/` 证据层，与模型三写解耦）。默认 `false`（不自动保存；需要时可在插件设置里开启，或把模型三写设为 ask 让每次写入先征得同意）。
+- `captureSubagents`：`sessionCapture` 开启时，是否也保存**子代理会话**。默认 `false`——子代理会话会重放父会话的前缀，保存它等于把同一场对话重复入库。dsh ≥ 0.1.5 的 V3 头部带 `origin: subagent` / `delegationDepth`，据此可判定；旧格式（V2）没有这两个字段，因此无法区分、一律保留。

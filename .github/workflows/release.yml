@@ -1,5 +1,11 @@
 name: Release assets
 
+# Publishes the Obsidian trio (main.js / manifest.json / styles.css) as a GitHub
+# Release when a version tag is pushed. Obsidian's installer fetches the assets
+# from the tag that EQUALS `manifest.json`'s version, so: the tag must equal the
+# version (enforced by check-version-consistency.mjs --tag), and manifest.json
+# must be a plain x.y.z (a prerelease version is rejected by the community
+# registry).
 on:
   push:
     tags:
@@ -16,11 +22,34 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Install deps
+        run: npm ci
+      # Tag-triggered runs used to execute NO tests: anyone able to push a tag
+      # could publish from an arbitrary unverified commit. Now the same gates as
+      # ci.yml, plus "the tag equals the version".
+      - name: Version consistency (including the tag)
+        run: node scripts/check-version-consistency.mjs --tag "$GITHUB_REF_NAME"
       - name: Rebuild generated main.js
         run: node scripts/build-obsidian.mjs
-      - name: Extract release notes from CHANGELOG
+      - name: Ensure main.js is up to date
+        run: git diff --exit-code main.js
+      - name: Run tests
+        run: npm test
+      - name: Extract this version's section from CHANGELOG
         shell: bash
-        run: awk '/^## \[/{n++} n==1{print}' CHANGELOG.md > release-notes.md
+        run: |
+          # The old `awk '/^## \[/{n++} n==1{print}'` took the FIRST `## [` section,
+          # i.e. `## [Unreleased]` — every release notes body was the wrong text.
+          awk -v v="$GITHUB_REF_NAME" '
+            $0 ~ "^## \\[" v "\\]" { inside = 1; print; next }
+            inside && /^## \[/ { exit }
+            inside { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "CHANGELOG has no '## [$GITHUB_REF_NAME]' section; the release body will be minimal" >&2
+            echo "## $GITHUB_REF_NAME" > release-notes.md
+          fi
+          head -5 release-notes.md
       - name: Create GitHub release with Obsidian assets
         uses: softprops/action-gh-release@v2
         with:
@@ -29,3 +58,4 @@ jobs:
             main.js
             manifest.json
             styles.css
+            versions.json

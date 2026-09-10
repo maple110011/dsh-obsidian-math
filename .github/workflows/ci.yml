@@ -7,17 +7,33 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Windows is the primary target platform (CRLF handling in
+    # scripts/build-obsidian.mjs, win32 branches in dsh/install.mjs), and the
+    # project's own notes record Windows-only failures — so the suite runs on
+    # both, with the rebuild gate pinned to Linux to keep the artifact bytes
+    # deterministic.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Version consistency
+        run: node scripts/check-version-consistency.mjs
       - name: Rebuild generated main.js
         run: node scripts/build-obsidian.mjs
       - name: Ensure main.js is up to date
+        if: matrix.os == 'ubuntu-latest'
         run: git diff --exit-code main.js
       - name: Run tests
+        if: matrix.os == 'ubuntu-latest'
         run: |
           npm test 2>&1 | tee /tmp/npm-test.log
           status=${PIPESTATUS[0]}
@@ -25,3 +41,7 @@ jobs:
             python3 -c "import sys; s=open('/tmp/npm-test.log').read(); s=s.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); print('::error::' + s[-2500:])"
           fi
           exit "$status"
+      - name: Run tests (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: npm test

@@ -27,3 +27,10 @@
 # block for those two packages to THIS file at runtime (and only when a web
 # profile exists to mirror them from). This base file mounts neither, so the
 # default boot stays independent of the dsh-web-ui plugin family.
+#
+# dsh 0.1.5 / dsh-web-all 0.3.20: the aggregate web bundle now mounts its own
+# `web-ui-skin-center` row, so on a machine carrying the aggregate this optional
+# block is redundant (harmless: the host half runs once, the browser half is
+# deduped by package name). It remains the only route to a skin picker on a
+# `web` profile that has the skin packages but no aggregate. See
+# docs/dsh-0.1.5-adaptation.md §3.5 and §4 B2.
