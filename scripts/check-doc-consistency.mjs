@@ -20,8 +20,17 @@ const read = (rel) => readFileSync(join(root, rel), 'utf8');
 let ok = true;
 const fail = (msg) => { console.error('FAIL  ' + msg); ok = false; process.exitCode = 1; };
 
-/** Run one suite and return its executed assertion count from `__CHECKS__`. */
-function runSuite(rel) {
+/**
+ * Run one suite and return its executed assertion count from `__CHECKS__`.
+ *
+ * `optional: true` marks a suite that legitimately does not run everywhere: the
+ * sidebar-handshake suite needs a locally installed dsh + profile and reports
+ * SKIP without one (CI, fresh clones). It then prints no `__CHECKS__` line — which
+ * used to be treated as a failure here, so the guard passed locally and failed on
+ * the first CI run of the release tag. A declared SKIP returns null and the
+ * caller skips its anchors instead of inventing a count of 0.
+ */
+function runSuite(rel, { optional = false } = {}) {
   let stdout = '';
   try {
     stdout = execFileSync(process.execPath, [join(root, rel)], { cwd: root, encoding: 'utf8' });
@@ -35,6 +44,10 @@ function runSuite(rel) {
   }
   const m = /__CHECKS__ (\d+)\/(\d+)/.exec(stdout);
   if (m === null) {
+    if (optional && /\bSKIP\b/.test(stdout)) {
+      console.log(`${rel}: SKIP — ${(/^.*\bSKIP\b.*$/m.exec(stdout) ?? [''])[0].trim()}`);
+      return null;
+    }
     fail(`${rel}: no __CHECKS__ line in its output`);
     return 0;
   }
@@ -48,8 +61,8 @@ console.log(`actual executed checks in scripts/test-memory.mjs: ${actual}`);
 const actualRoutes = runSuite('scripts/test-panel-routes.mjs');
 console.log(`actual executed checks in scripts/test-panel-routes.mjs: ${actualRoutes}`);
 
-const actualAuth = runSuite('scripts/test-panel-auth.mjs');
-console.log(`actual executed checks in scripts/test-panel-auth.mjs: ${actualAuth}`);
+const actualAuth = runSuite('scripts/test-panel-auth.mjs', { optional: true });
+console.log(`actual executed checks in scripts/test-panel-auth.mjs: ${actualAuth === null ? 'skipped (no local dsh)' : actualAuth}`);
 
 const actualProxy = runSuite('scripts/test-panel-proxy.mjs');
 console.log(`actual executed checks in scripts/test-panel-proxy.mjs: ${actualProxy}`);
@@ -128,6 +141,13 @@ for (const [file, re] of authAnchors) {
     fail(`${file}: auth anchor not found`);
     continue;
   }
+  // The handshake suite only runs where dsh is installed; a skipped suite cannot
+  // verify its documented count, so the anchors are reported (not compared)
+  // rather than failing the whole guard on CI.
+  if (actualAuth === null) {
+    console.log(`SKIP  ${file}: claims ${Number(m[1])} auth checks (suite skipped locally)`);
+    continue;
+  }
   const claimed = Number(m[1]);
   if (claimed !== actualAuth) {
     fail(`${file}: claims ${claimed} auth checks, actual ${actualAuth}`);
@@ -152,5 +172,6 @@ for (const [file, re] of proxyAnchors) {
 }
 
 if (ok) {
-  console.log(`doc-consistency: all ${anchors.length + routeAnchors.length + authAnchors.length + proxyAnchors.length} anchors match (${actual} memory + ${actualRoutes} route + ${actualAuth} auth + ${actualProxy} proxy)`);
+  const authText = actualAuth === null ? `${authAnchors.length} auth anchors skipped (no local dsh)` : `${actualAuth} auth`;
+  console.log(`doc-consistency: all ${anchors.length + routeAnchors.length + proxyAnchors.length} comparable anchors match (${actual} memory + ${actualRoutes} route + ${actualProxy} proxy + ${authText})`);
 }
