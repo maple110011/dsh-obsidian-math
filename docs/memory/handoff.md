@@ -134,6 +134,9 @@
 53. **改写第三方模块必须「锚点全中才改、否则原样返回」**：皮肤 `hooks.mjs` 的补丁按宽松正则匹配两处锚点，任一缺失就返回原文并写日志——皮肤更新后补丁失效是**降级**，绝不能变成「皮肤崩了」。
 54. **渲染线程上的同步文件 IO 会被当成"界面卡"**：`writeDebugLog` 原用 `appendFileSync`，由 `render()` 调用（启动日志实测 7 ms 内 3 条）。改成队列 + 250 ms 异步批量追加；卸载时 flush 一次。同类：记忆面板搜索框曾**每次按键**重扫整个 vault（`collectMemoryState` 是同步扫盘），现在 220 ms 防抖 + 显式按钮走 `renderNow()`。
 55. **挂起 iframe 必须能自愈**：`display:none` 挂起（侧栏收起/切标签页）能省下整个 guest 的渲染，但判据一旦误判就是"面板永远空白"。两条保险：只认无歧义信号（祖先 `display:none`、容器矩形为 0、`isShown()===false`），且**挂起期间每秒自检**（只在挂起时跑）——漏事件不会永久黑屏。
+56. **★ 守卫必须容忍"这个套件在本机不跑"**：`check-doc-consistency.mjs` 会真的运行各套件并解析它们的 `__CHECKS__` 行，而 `test-panel-auth.mjs` 在没有本地 dsh 时**按设计 SKIP**（CI runner、任何新克隆都是这种情况）——于是守卫把"没有 `__CHECKS__` 行"判成失败，并把文档里写的 7 项认证断言与凭空得到的 0 相比。**这个缺陷让 0.7.5 的第一次 tag 发布在 CI 上挂掉，而本机全绿**。现在 `runSuite(rel, { optional: true })` 识别 SKIP 并返回 null，认证锚点只报告不比较；其它套件缺 `__CHECKS__` 仍然算失败。教训：**任何"在 CI 上不跑"的套件都要在守卫里显式声明**。
+57. **★ 守卫必须容忍 CRLF**：CI 是双平台（ubuntu + windows），Windows runner 检出的是 **CRLF**。两个嵌入守卫用多行字面量/逐字节比较解析文本，于是 Windows 上分别报「appended loader helper is unterminated」与「main.js 里的 memory-admin 是旧版」——**Linux 全绿**。修法：读入即 `replace(/\r\n/g, '\n')`（`build-obsidian.mjs` 早就这么做了，所以嵌入体本来就是 LF 形态），比较时两侧都归一化。复现方法：`git -c core.autocrlf=true archive <commit> | tar -x` 得到一个 CRLF 检出（本机验证过 `npm test` 现在 exit 0）。
+58. **`npm publish` 失败时日志什么也不说**：0.7.5 的 Release 与 npm 是两条独立流水线——Release 成功（GitHub Release + 4 个资产），npm 那条在 `Publish` 步失败（前 6 步全过）。`npm publish` 对"token 缺失/过期/无发布权/需要 2FA"一律只有非零退出码，光看日志无法区分。因此 `npm-publish.yml` 现在在 publish **之前**加一步 `npm whoami`（`|| true`，不改变成败），把答案留在日志里。**刷新 `NPM_TOKEN` 是用户侧动作**（npm → Access Tokens → Granular，勾 publish 权限与 bypass 2FA），改完可以直接在 Actions 页面 re-run 那条 workflow。
 
 ## 5. 用户决策记录（不要推翻）
 

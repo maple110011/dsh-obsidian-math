@@ -63,6 +63,8 @@ git push origin 0.7.6  # ← 这一步才会真正产出 Release
 - 推 tag 的工作流曾**不跑任何测试**：任何能推 tag 的人都能从任意未验证提交发版。
 - 版本号曾三方漂移（package 0.7.3 / manifest 0.7.4 / npm latest 0.7.1），
   于是「插件商店拿不到新版本」——见 §3。
+- **本机全绿 ≠ CI 全绿（0.7.5 第一次推 tag 就栽在这上面）**：两个只在 CI 环境暴露的守卫缺陷——① `check-doc-consistency.mjs` 把「套件在本机 SKIP（没有 dsh）」当成失败；② 两个嵌入守卫用多行字面量解析文本，Windows runner 的 **CRLF** 检出让它们误报。修法见 `handoff.md` 坑 56/57。**推 tag 前先看一眼 `ci.yml` 的两个 job 是否都绿**（Ubuntu + Windows）。
+- **`npm publish` 的失败信息为零**：token 缺失/过期/无发布权/需要 2FA 都只有非零退出码。`npm-publish.yml` 现在在 publish 前加一步 `npm whoami`（`|| true`，日志里能看到到底是不是认证问题）；**刷新 `NPM_TOKEN`（Granular，勾 publish 权限 + bypass 2FA）是用户侧动作**，改完可在 Actions 页面直接 re-run 那条 workflow，不必重新推 tag。
 
 ## 3. 为什么 Obsidian「插件商店」看不到新版本
 

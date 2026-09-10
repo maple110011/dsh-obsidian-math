@@ -1,5 +1,15 @@
 # 记忆系统变更日志
 
+## 2026-09 · 0.7.5 首次推 tag 暴露的三个流水线缺陷（已修）
+
+推 tag 后 **Release 成功、npm 失败、CI 在 Windows 上失败**——三件都在本机不可见：
+
+1. **守卫把「本机不跑」当失败**：`check-doc-consistency.mjs` 会真跑各套件并解析 `__CHECKS__`，而 `test-panel-auth.mjs` 在没有本地 dsh 时按设计 SKIP（CI runner 正是如此）⇒ 守卫报 `no __CHECKS__ line` 并把文档里的 7 项认证断言与 0 比较。改为：`runSuite(rel, { optional: true })` 识别 SKIP 返回 null，认证锚点只报告不比较；其它套件缺行仍算失败。
+2. **守卫不容忍 CRLF**：Windows runner 检出 CRLF，两个嵌入守卫用多行字面量/逐字节比较 ⇒ 误报「appended loader helper is unterminated」与「embedded memory-admin 是旧版」。改为读入即归一化到 LF（与 `build-obsidian.mjs` 一致），比较两侧都归一化。复现：`git -c core.autocrlf=true archive <commit>` 解出的 CRLF 检出。
+3. **`npm publish` 无诊断**：token 缺失/过期/无发布权/2FA 都只有非零退出码。`npm-publish.yml` 在 publish 前加 `npm whoami`（`|| true`）；刷新 `NPM_TOKEN` 属用户侧动作。
+
+另：为了拿到 CI 的真实报错，临时加过一个 `ci-debug.yml`（把失败命令的输出发到 job summary + 一个 issue）——已随分支删除，issue 也已自动关闭。教训写进 `handoff.md` 坑 56-58 与 `docs/release.md`。**推 tag 前确认 `ci.yml` 的 ubuntu 与 windows 两个 job 都绿。**
+
 > 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
 ## 2026-09 · 侧栏卡顿排查 + GraphMemix 吸纳决策（0.7.5）
