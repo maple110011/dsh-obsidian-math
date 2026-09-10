@@ -47,9 +47,15 @@ function embeddedPresetMap() {
 // otherwise ship a bundle whose embedded half silently differs from the file
 // every other test exercises — the exact class of drift the old
 // check-embedded-loader.mjs could not see.
+//
+// Line endings are normalized on BOTH sides: the build embeds the LF form
+// (build-obsidian.mjs normalizes), while a CRLF working copy — the Windows CI
+// runner — has the shipped file in CRLF. Comparing raw bytes there reported a
+// stale bundle that did not exist.
 {
-  const shipped = readFileSync('dsh/host/memory-admin.mjs', 'utf8');
-  const okEmbedded = embeddedPresetMap()['host-memory-admin.mjs'] === shipped;
+  const lf = (text) => text.replace(/\r\n/g, '\n');
+  const shipped = lf(readFileSync('dsh/host/memory-admin.mjs', 'utf8'));
+  const okEmbedded = lf(embeddedPresetMap()['host-memory-admin.mjs']) === shipped;
   check('main.js embeds the current dsh/host/memory-admin.mjs (no stale bundle)',
     okEmbedded,
     okEmbedded ? '' : 'run: node scripts/build-obsidian.mjs');

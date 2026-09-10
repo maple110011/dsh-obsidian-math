@@ -30,7 +30,13 @@ import { zstdDecompressSync } from 'node:zlib';
 import * as http from 'node:http';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
-const template = readFileSync(join(repo, 'obsidian', 'main.template.js'), 'utf8');
+// Normalized to LF before parsing. The anchors below are multi-line literals
+// (`\n` inside indexOf strings), so a CRLF working copy — which is what the
+// Windows CI runner checks out — turned every one of them into "not found" and
+// failed the guard on Windows while Linux stayed green. build-obsidian.mjs reads
+// the template through the same normalization, so the parsed text matches what
+// the build actually embeds.
+const template = readFileSync(join(repo, 'obsidian', 'main.template.js'), 'utf8').replace(/\r\n/g, '\n');
 
 let failed = 0;
 const fail = (message) => {

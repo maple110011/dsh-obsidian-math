@@ -34,6 +34,18 @@ jobs:
         run: node scripts/check-version-consistency.mjs --tag "$GITHUB_REF_NAME"
       - name: Run tests
         run: npm test
+      # Auth diagnostics BEFORE the publish attempt: when the token is missing,
+      # expired, revoked or lacks publish rights, `npm publish` fails with a bare
+      # non-zero exit and the log says nothing about which of those it was. This
+      # step never fails the run (`|| true`) — it only leaves the answer in the log.
+      - name: Registry auth diagnostics
+        run: |
+          echo "registry: $(npm config get registry)"
+          echo "npm: $(npm --version)"
+          echo -n "whoami: "
+          npm whoami --registry=https://registry.npmjs.org || echo "(not authenticated — check the NPM_TOKEN secret)"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish
         run: npm publish --provenance
         env:
