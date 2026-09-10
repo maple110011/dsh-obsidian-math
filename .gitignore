@@ -18,3 +18,6 @@ scripts/qa/runs/**/sessions/
 
 # benchmark seed-vault cache (machine-generated during test runs; not part of the frozen seed)
 scripts/qa/benchmark-vault/.deepseek/cache/
+
+# local promo/draft notes (user decided these stay out of the repo; use `git add -f` to override)
+推文-*.md
