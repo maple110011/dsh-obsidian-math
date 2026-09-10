@@ -108,13 +108,20 @@ node scripts/lit-import.mjs --source <源目录> --out <输出目录>           
 
 ## 7. 施行状态与下一步
 
-**已完成（仓库 `literature/`）**：19 条 BibTeX 全部匹配 19 个 PDF，19 篇全部有 MinerU `full.md`；产出 19 张卡、`notes/_README.md`、`notes/retrieval-alignment-2026-08.md`、`index.md`/`.index.json`/`.manifest.json`/`library.bib`，`.raw/` 含 19 份 PDF + full.md + images。19 篇全部已蒸馏（cards + reading 齐全）：前批 14 篇 + `wangMemTrapBenchBenchmarkingCognitive2026` + 本批 4 篇（`yangRetrievalAugmentedLanguageModels2025`=Dual RAG、`huQueryLinkLeveragingQueryMemory2026`、`vakeBridgingQuestionAnswerGap2025`=HyPE、`yuanMemSearcherIterativeMemory2026`）。
+**已完成（仓库 `literature/`）**：**20** 条 BibTeX 全部匹配 20 个 PDF，20 篇全部有 MinerU `full.md`；产出 20 张卡、`notes/_README.md`、`notes/retrieval-alignment-2026-08.md`、`index.md`/`.index.json`/`.manifest.json`/`library.bib`，`.raw/` 含 20 份 PDF + full.md + images。20 篇全部已蒸馏（cards + reading 齐全）：前批 14 篇 + `wangMemTrapBenchBenchmarkingCognitive2026` + 第二批 4 篇（`yangRetrievalAugmentedLanguageModels2025`=Dual RAG、`huQueryLinkLeveragingQueryMemory2026`、`vakeBridgingQuestionAnswerGap2025`=HyPE、`yuanMemSearcherIterativeMemory2026`）+ 第三批 1 篇（`liGraphMemixQueryAwareEvidence2026`=GraphMemix，2026-09-10 按 §8 流程导入并蒸馏）。
+
+> **源目录缺 BibTeX 条目时的做法**（GraphMemix 的实际情形）：`lit-import.mjs` 只遍历 BibTeX 条目，**源目录里的 PDF 若没有对应条目就是不可见的**（dry-run 里不会出现）。做法是：从 MinerU `full.md` 首页取标题/作者，用网络核对卷期/arXiv 号，**另写一个临时 bib（不改源目录）**并把它与原 bib 合并后 `--bib` 传入：
+> ```bash
+> node scripts/lit-import.mjs --source <源目录> --out literature --bib <临时合并 bib>
+> ```
+> 合并后的 bib 含全部条目，因此已导入的条目只是被幂等刷新（卡片保留），新条目被追加进 `library.bib`。**注意**：`--bib` 是「本次要处理的条目全集」，传一个只含新条目的 bib 不会删除已有条目（index/manifest 按 citekey 合并），但为了让 dry-run 能一次核对全部匹配，仍建议传全集。
 
 **下一步候选（需拍板后再动）**：
 1. **git 处理**：`.raw/` 是约 42MB 二进制（PDF + 图片），建议加入 `.gitignore`（工作区保留、不进 git 历史），或整体纳入版本库做备份——由你定；
 2. **蒸馏流程**：从 `unread` 开始研读，把可迁移机制写进卡片「核心机制 / 映射」两节，并回流到 vault 记忆的 records/hook、theorems、templates；
 3. **纳入统一检索**：让 `note_recall` 把 `literature/cards/`（或 full.md 摘要级）纳入统一语料（需改 `note-tools.mjs`）；
-4. **AGENTS.md 增文献路由**：告诉 agent「找论文先读 index → 卡片 → full.md → 蒸馏进 records/hook」（需改模板 + 重建 `main.js`）。
+4. **AGENTS.md 增文献路由**：告诉 agent「找论文先读 index → 卡片 → full.md → 蒸馏进 records/hook」（需改模板 + 重建 `main.js`）；
+5. **GraphMemix 带来的三项检索改进（2026-09-10 研读产出，待评估）**：① `composePassage` 的「拼接成一个 bag」改成**按视图打分取 max**（长正文正在稀释 hook 的强匹配）；② `note_recall` 加**确定性角色字段**（新增/澄清/佐证/冗余/冲突/无关）——这是我们 1.0 缺口「技巧调用体系」最小可落地的一件；③ `engine-probe.mjs` 加**可达性分层**断言（Direct / Recoverable / No access），零 token 量化「顺链扩读」的实际收益。详见 `docs/memory/references.md` §12 与卡片。
 
 ## 8. 新增单篇文献 SOP（后续 agent 照此执行）
 
@@ -128,6 +135,14 @@ node scripts/lit-import.mjs --source <源目录> --out <输出目录>           
    - 按 citekey 增量合并 `.index.json` / `.manifest.json`，`index.md` 自动块从合并结果重生成，`library.bib` 只追加缺失的 @entry——**不会覆盖已有条目**（已修复，幂等可重复跑）。
    - 有 MinerU `full.md` → 状态 `unread`；缺 → `to-process`（待转换）。
 3. **通读**：读 `.raw/<citekey>/full.md`（MinerU 全文，事实源）。
+   - ⚠️ **MinerU 会偶发大面积破坏行内文本**：2026-09-10 的 GraphMemix（arXiv:2608.26983）就是实例——`full.md` 与 `content_list.json` 里出现 5613 个 `<sub>` 标签，其中 **3954 处把词从中间切开**（`Memor<sub>y</sub>`、`consistenc<sub>y</sub>`），两套独立 MinerU 运行结果一致 ⇒ 是 MinerU 的行内公式检测器把普通正文误判成公式，**不是 full.md 渲染层的问题**（`content_list.json` 同样坏）。
+   - **判别**：`full.md` 里 `<sub>` 计数上千、或出现 `[a-z]<sub>` 这种「字母后紧跟 `<sub>`」的模式时，判定为破坏。
+   - **替代路径（已验证可用）**：直接从源 PDF 抽取——
+     ```bash
+     pdftotext -layout -enc UTF-8 ".raw/<citekey>/source.pdf" <out.txt>
+     ```
+     本机 `pdftotext` 随 TeXLive 提供（`D:\texlive\2026\bin\windows\pdftotext.exe`）；`-layout` 保留表格结构。抽取结果干净（该论文 108,779 字符）。
+   - **纪律**：**不要在有噪声的源上做蒸馏**。若已基于坏源写过卡片/笔记，修好源后**复读并更正**（GraphMemix 的复读就补出了超参数、控制实验，并纠正了一处误读）。复读时在 reading 顶部标注「本版以 pdftotext 抽取文本为准」。
 4. **写卡片**：把 `cards/<citekey>.md` 的 TODO 换成蒸馏——「一句话」+「核心机制 / 方法」+「与我的工作 / 记忆的映射」，frontmatter `status` 改为 `distilled`。
 5. **写研读记录**：按 `reading/_TEMPLATE.md` 的 14 节写 `reading/<citekey>.md`（重点：可迁移机制清单 + 映射/差距 + 行动项）。
 6. **回流记忆（可选）**：把可复用机制蒸馏进 vault 记忆的 records/hook、theorems、templates。

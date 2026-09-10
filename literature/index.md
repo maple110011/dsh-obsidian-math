@@ -30,6 +30,7 @@
 | 未读 | [Retrieval-Augmented Language Models are Mimetic Theorem Provers](cards/yangRetrievalAugmentedLanguageModels2025.md) | Yang, Wenjie 等 | 2025 | — |
 | 未读 | [MemSearcher: Iterative Memory Integration for Search Agent via End-to-End Reinforcement Learning](cards/yuanMemSearcherIterativeMemory2026.md) | Yuan, Qianhao 等 | 2026 | — |
 | 未读 | [QueryLink: Leveraging Query-Memory Alignment for Long-Term Reasoning in LLM Agents](cards/huQueryLinkLeveragingQueryMemory2026.md) | Hu, Xuxian 等 | 2026 | — |
+| 未读 | [GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory](cards/liGraphMemixQueryAwareEvidence2026.md) | Li, Geng 等 | 2026 | Computer Science - Computation and Language |
 <!-- END AUTO-INDEX -->
 
 ## 使用

@@ -43,7 +43,7 @@
 - `memory/theorems/index.md`：个人 Matlas 定理索引（一行一条，领域/关键词/状态）；
 - `memory/templates/<slug>.md`：问题模板卡（题型/解法 ↔ 定理关联图），索引注入 ≤600 字符；
 - `memory/notation.md`：记号体系（已采纳/候选/已否决三表 + 修订历史；收集→统一→维护，≤800 字符随提示注入）；
-- `capture-policy.md`：捕获策略（idea/fact/preference × auto/ask/off，frontmatter，用户维护；随系统提示注入，默认 ask/auto/auto 与既有行为一致）；
+- `capture-policy.md`：捕获策略（idea/fact/preference × auto/ask/off，frontmatter，用户维护；随系统提示注入，默认 ask/ask/ask——写入记忆前一律先征得同意）；
 - `strategy/<slug>.md`：策略层方法卡（困难→策略→检索目标 + 抽象阶梯 + 反模式），`note_strategy` 按需检索，不逐轮注入；
 - `working.md`：工作记忆草稿（覆写、有未闭合线程才写、≤500 字符注入、空则跳过）；
 - `cache/`：机器生成的对话索引、记忆体检报告与 hook 历史快照（用户勿动）。
@@ -96,8 +96,10 @@
 
 ## 7. 跨会话线索（dialogue index）
 
-- 扫描 `$DSH_HOME/sessions/**/*.jsonl.zstd` 最近 20 个文件（递归、mtime 倒序），**只保留 cwd 位于本 vault 内的会话**（其他工作区的会话不进索引）；
-- zstd 拼接帧手动解析（Node ≥22.5 `zlib.zstdDecompressSync`），只取 `source.kind === "user"` 的真实用户消息；
+- 扫描 `$DSH_HOME/sessions/**/*.jsonl.zstd` 最近 20 个**会话**（递归、mtime 倒序），**只保留 cwd 位于本 vault 内的会话**（其他工作区的会话不进索引）；
+  - **一个会话 = 一份日志**：dsh ≥ 0.1.5 的会话格式 V3 会为同一会话生成 `session.v3.jsonl.zstd` 并保留 V2 原件，两份都以 `.jsonl.zstd` 结尾。`findSessionLogs` 在排序后、切片前按 `sessionLogKey` 折叠（`selectAuthoritativeLogs`，**显式优先 `.v3.` 变体**，其次 mtime 新者），所以 `maxFiles` 计的是会话数而不是文件数。详见 [../dsh-0.1.5-adaptation.md](../dsh-0.1.5-adaptation.md)。
+- zstd 拼接帧手动解析（Node ≥22.5 `zlib.zstdDecompressSync`；V2/V3 帧格式相同、无字典），只取 `source.kind === "user"` 的真实用户消息；
+  - V3 没有逐块流事件（`assistant/chunk` 等改为 `assistant/message.data.stream[]`），读取方依赖的 `user/message` / `assistant/message` / `session/title` 事件名与内容块结构均未变，因此蒸馏逻辑与两个版本共用。
 - 每条用户消息配该轮**最后一条** assistant 回复（下一用户消息前最后一条 assistant）组成问答对，时间正序、取最近 maxHistoryEntries 条、字符预算 maxHistoryChars；
 - 缓存：进程内 + `cache/dialogue-index.json`（fingerprint = path|mtime|size 列表），组装时排除当前会话 id。
 

@@ -44,12 +44,12 @@
 
 - **现状**：`wrong` 只 `success_rate = max(0.05, base*0.5)`，`verified` 不动。
 - **方案**：
-  1. `wrong` 时 `success_rate = min(base*0.5, 0.35)`——一次 ❌ 必落 weak 区（阈值 0.4）以下，兑现「明日体检重新评估」；
-  2. `wrong` 时降一级 `verified`：`user-confirmed → cross-referenced → single-source`（已在 `single-source` 则不降）；
+  1. `wrong` 时 `success_rate = min(base*0.5, 0.35)`——一次 ❌ 必落 weak 区（阈值 0.4）以下，兑现「明日体检重新评估」；**仅当卡上已有 `success_rate`**：给一张从未评级的卡凭空写 0.25 会让"没有数据"变成"看起来量过的数据"（2026-09-10 修，见 §6）；
+  2. `wrong` 时降一级 `verified`：`user-confirmed → cross-referenced → single-source`（已在 `single-source` 则不降；字段缺失时写 `single-source`，让状态显式）；
   3. 追加顶层 `last_wrong: <date>`，供体检的「待重审」段（P2）消费。
 - **评估**：
   - 影响：高——徽标与内容对错不再脱节；一次 ❌ 即触发体检介入。
-  - 风险：中低——误点 ❌ 会降一级 verified；但「不适用」有独立按钮 `inapplicable`（本就不降），所以 ❌ 语义就是「内容错」，降 verified 合理。
+  - 风险：中低——误点 ❌ 会降一级 verified；❌ 的语义因此明确为「内容错」。~~「不适用」有独立按钮 `inapplicable`（本就不降）~~ —— `inapplicable` 已于 2026-09-10 退出 UI（它写的 `last_not_applicable` 没有任何读取方），「记忆正确但不该用」改由 `AGENTS.md` §5 的推理期适用性纪律处理。
   - 成本：低——`memory-admin.mjs` 一处函数，回归 +2~3 断言。
   - 取舍：是否降 `verified` 是唯一争议点，见 §5（默认降，可配）。
 
@@ -177,3 +177,24 @@
 | P3 自动归档（off 默认） | ✅ 已实现 | `math-memory.mjs`（`moveCardsToArchive`）+ `config.md`/`agent.cordis.yml` 开关 |
 | P4 duplicate_of 标记 | ✅ 已实现 | `math-memory.mjs` buildAuditReport + note_recall 去重 |
 | P5 strategy 统一生命周期 | ✅ 已实现 | `note-tools.mjs` note_strategy + 体检顶层字段回退/回写/promote |
+
+## 8. 2026-09-10 后续修正（反馈三选项与体检报告呈现）
+
+用户反馈：「记录层的『对、错、归档』三选项令人不明所以，从日常使用来看感觉意义不大」、
+「体检报告展示的几乎是 ds 的输出记录」。核查结论：**机制本身是好的，坏的是分层与回执**——
+真实 vault 里该功能从未被使用过（`last_wrong`/`needs_review`/`last_not_applicable`/`status: superseded`/
+`verified: user-confirmed`/`success_rate` 全部为 0，`.deepseek/archive/` 不存在，🔁 字符全库 0 次）。
+据此做了三件事，理由记录在此以免回退：
+
+1. **`归档` 从评估行移出。** 它是 `renameSync` 到 `.deepseek/archive/records/`，会让卡**同时**退出检索与面板列表；
+   把它摆在 ✅/❌ 旁边等于暗示它是"第三种评价"。现在它是面板的生命周期动作，带二次确认与危险样式。
+2. **回复行的反馈链接改为"每张卡一行 + 写明卡标题"，并去掉 🔁。** 旧模板给 N 张卡发 N 行一模一样的
+   `[✅ 这条对]`（只有 URL 不同），而「这条」读作"这个回答对不对"、实现却是对该卡的永久判定。
+   连接 `🔁 不适用` 一起删掉：它只写 `last_not_applicable`，**全仓库无读取方**、排序影响为零——
+   "看起来像 ❌、实际什么都不发生"是最坏的一种选项。宿主保留该 action 以兼容旧对话里的历史链接。
+3. **回执必须显示。** web 面板的 `run()` 丢弃响应体（Obsidian 侧有 `Notice`），点任何按钮界面无变化；
+   而面板唯一显示的 `success=` 对真实卡片永远是 `—`——等于让人对一个不存在的数字表态。
+   现在两个面板都显示"对哪张卡做了什么"的中文回执，`applyFeedback` 的 `message` 由**实际写入**生成
+   （旧文案在没有 `success_rate` 的卡上写「成功率减半」，实际是 0（无）→ 0.25）。
+4. **`needs_review` 与 `last_wrong` 的分工不变**：`wrong` 同时写两者，但重审清单只按 `needs_review` 判定，
+   `last_wrong` 只是时间戳——否则一张卡会被历史时间戳永久钉在清单里。

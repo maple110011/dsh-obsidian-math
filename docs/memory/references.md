@@ -123,6 +123,24 @@
 - 吸收落点：见 `docs/memory/obelisk-comparison.md`——「自动保存对话」（0.7.3 已实现引擎：整场对话、尾截断、seq 增量、vault 过滤、`sessionCapture` 开关）。
 - 不适用的部分：SQLite 替换 markdown（vault 文件是特性不是缺陷）；多 agent/子代理记忆；「活动轨迹全量可回放」本身（我们要的是语义蒸馏，不是操作日志）。
 
+## 12. GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory（arXiv:2608.26983）
+
+- 来源：https://arxiv.org/abs/2608.26983（Geng Li, Yuhao Wang, Dong Li, Jianye Hao, Yuxin Peng；北京大学王选计算机研究所 / MemoraX AI）。卡片 `literature/cards/liGraphMemixQueryAwareEvidence2026.md`，研读记录 `literature/reading/liGraphMemixQueryAwareEvidence2026.md`。
+- 定位：把「长期记忆给模型看什么」从**写时压缩**搬到**查询时选择**，并把选择写成带预算与结构的组合优化（查询条件下的**证据森林**）。
+- 核心机制（对我们有价值的部分）：
+  1. **多视图 max-pool**：同一记忆的多个视图（图/caption/OCR/帧）**各自打分取 max**，而不是拼成一个文本 bag 打一次分（式 3）——只为「捞进候选集」，不用于最终排序。
+  2. **两种验证职责分离**（式 6–8）：**节点验证器**判「这条自身是否支持该问题」（listwise，把候选放在同一语义尺度上比）；**证据链验证器 ECV** 判「相对某个锚点，这条是**增量**还是冗余」，给六种角色 `new_fact / clarification / corroboration / redundant / conflict / irrelevant`，只有正分且属前三种的最优锚点边被保留。实测：合成一次调用 → 分离两调用，macro **Acc +2.00 / R@10 +3.00**（Table 7），两者并行、无串行代价。
+  3. **开链成本 ⇒ 自适应 k**（式 10–12）：$C_{\text{open}}=\kappa\,m(S,F)$（$m$=独立证据链条数），森林下 $m=|S|-|F|$，目标化为 $\sum_{i\in S}(p_i-\kappa)+\sum_{e\in F}(\kappa-\lambda c_e)$——**孤立记忆要自证 $p_i>\kappa$ 才值得单开一条链**，能挂到已选分量上的只按边际收益收。
+  4. **关系可信度是查询条件化的**：给所有边一个 query 无关的固定可靠性（0.99）反而更差；ECV 把每题边数从 6–7 压到 0.25–1.47，Hit@10 反升 1.83~5.60（Table 6）。
+  5. **★ 通用多样性/去冗余没有价值（控制实验，Table 9/10）**：冻结候选与节点效用、固定 $K=10$ 时，MMR 56.84 / Rel.–Red. 56.82 / Facility 56.80 / DPP 52.69 **都不优于**朴素 Top-K 56.87，按净回收是负的（−6 / −4 / −2 / −36）；而用**已验证关系**的 Anchor–Neighbor +14、ECV Pointwise +12、Greedy Forest +18、**Forest Proposal +43**。**「让列表更不相似」本身没有价值，甚至有害**——价值在把已验证的关系路径变成低排名证据的回收。
+  6. **可达性分层**：gold 证据分 Direct（top-10 内）/ Recoverable（top-10 外但候选图内）/ No access。四基准里 Recoverable 占 **15.14% / 37.87% / 39.70% / 33.93%**（Table 4）；问题级回收 40.08–68.48%，占全部保留 gold 对的 12.01–19.58%（Table 5）。
+  7. 关键超参（§4.1/§A.2）：$L{=}24$、$H{=}1$、$k{=}8$、$M{=}48$、$K{=}10$；$(\alpha,\tau,\delta)=(0.8,5.2,0.7)$ ≡ $p_i=\sigma(4.2s_i+0.2v_i-3.6)$（**检索先验 4.2 vs 验证器 0.2**，验证器只是修正项）；$\lambda=0.1$、$\kappa_{\text{prop}}=0.2$、$\kappa=0.12$；序列化 = 分量按根效用排序、分量内宽优先（§A.5）。
+  8. 结果：Qwen3-VL-8B 下四基准 macro Judge Acc 61.55（第二好 49.80，+11.75）；Gemma 4 12B 下 67.42；ATM 全生命周期比 A-MEM/VimRAG/LightMem 缩短 1.78×/4.27×/4.74×。增量消融：多视图 +4.40 / 节点验证器 +5.20 / ECV 重排 +0.90 / 森林优化 +1.85。
+- 映射：① **多视图 max-pool 可直接替换** `composePassage` 的「拼接成一个 bag」——现在 `title + hook + topic + body(≤800)` 拼接会让长正文稀释 hook 的强匹配；② 六角色是 `note_recall` 加「结构化适用性字段」的具体设计（1.0 缺口**技巧调用体系**最缺的一环，但落地方式是**角色门控**而非列表惩罚项——见 ★）；③ 「开链成本」解释了为何固定 `maxResults` 是错的方向；④ 可达性分层 + **带符号净回收**可以直接进 `engine-probe.mjs`，量化我们「顺链扩读」到底值多少（AGENTS.md §5 要求顺链扩读，但从未测过）。
+- **落地状态（2026-09-10，决策与数字见 `retrieval-v3.md` §7）**：④ 已落地为引擎探针 §2（可达性分层 + 有符号净恢复 Δ + 目标排名，探针每轮输出）；① 已实现为 `{ viewPool: "max" }` 可选路径并**实测后不采纳**（真实 vault：Direct 11→11、目标排名均值 1.73→2.27、0 改善 / 2 变差 ⇒ 保持单袋默认）；② 的六角色与 ③ 的自适应 k 记录在 §7.4（各带触发条件）；★ 已写进 `AGENTS.md` §5 与 handoff 坑 46（禁止通用去冗余重排）。
+- 不适用的部分：LVLM 验证器与图优化求解器（Kruskal / 1-swap）——前者违背「插件不调模型」，后者对我们的个位数候选是过度工程；全部多模态分支；**它的写路径是空的**（不做写时压缩、无 audit/merge/prune/reinforce，记忆只增）——我们体检比它强，吸收时只取读路径结构。
+- ⚠️ **源质量（教训已写进 `docs/literature.md` §8）**：这份 MinerU `full.md`/`content_list.json` 对该 PDF 有**系统性 `<sub>` 破坏**（5613 个标签、3954 处词中被切开），两套独立运行一致 ⇒ MinerU 的行内公式检测器误判。**已用 `pdftotext -layout` 从 `source.pdf` 复读并更正**（补齐超参数/控制实验，并纠正首版「靠去冗余取胜」的误读）。
+
 ## 待读清单（后续追加）
 
 - arXiv:2606.24775 原文细读（当前只有二手摘要）；

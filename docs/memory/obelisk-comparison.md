@@ -76,7 +76,7 @@ Obelisk 解决「agent 把做过的所有事**都**记下来、随时查得到�
 
 ### 5.5 开关（已拍板）
 
-- `.deepseek/config.md` 加 `sessionCapture: true`（**默认开**）；`parseMemoryConfig`/`normalizeConfig` 贯通；`agent.cordis.yml` 同步默认值。
+- `.deepseek/config.md` 加 `sessionCapture`（**默认关**，opt-in）；`parseMemoryConfig`/`normalizeConfig` 贯通；`agent.cordis.yml` 同步默认值。0.7.4 起默认从「开」改为「关」——不自动存档整场对话，避免不经用户同意就记录一大堆；需要时在插件设置或 config.md 开启。
 - **双面板图形开关（下一小步）**：Obsidian 设置页 toggle + dsh web 面板 toggle，写回 `config.md`（UI 无法零 token 回归，需构建 + 用户点击实测，故与手动按钮同批做）。
 
 ### 5.6 边界

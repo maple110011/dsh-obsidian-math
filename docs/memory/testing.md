@@ -10,6 +10,17 @@
 
 - 断言三类：`must rank top-k`（目标文件须进入前 k 名）、`__WEAK__`（无答案查询 top-1 coverage 必须 < 0.35）；
 - ground truth 与本机 vault 绑定（`DSH_WORKSPACE_ROOT` 可覆盖，旧名 `DSH_OBSIDIAN_VAULT` 兼容），vault 内容变化时同步维护断言。
+- **§2 可达性分层 + 池化 A/B（2026-09-10 加，GraphMemix 式测量）**：抽 vault 原文里的 `related`/`source`/`[[wikilink]]` 边（**断链不算可达**），把每条 ground truth 目标分成 **Direct / Recoverable / No access**，对 `viewPool: "bag"`（默认）与 `"max"` 各算一次，报告有符号净恢复 Δ 与**目标排名**均值。
+  - 为什么两个口径都要：分层是粗粒度的——本轮 11/11 全是 Direct，只看分层会得出「两种池化没差别」，而排名显示 max-pool 更差（0 改善 / 2 变差）。
+  - **读法约定（改检索的门槛）**：必须「Direct 数不降**且**目标排名均值不升」。只有分层改善而排名变差 → 按未通过处理。
+  - 决策记录与数字：`retrieval-v3.md` §7.2/§7.5。
+
+### 侧栏交互性能探针（零 token，按需运行，不进 CI）
+
+`scripts/qa/sidebar-perf-probe.mjs`：起真实 dsh +（可选）插件已发布的反代 `DshWebProxy`，用 headless Chromium 的 CDP 以**真实鼠标事件**点侧栏开合，输出帧间隔 / 长动画帧(LoAF) / Task·Layout·RecalcStyle。**不进 `npm test` / `npm run qa`**（需本机 Chrome + 真实 dsh）。
+
+- 用途：皮肤升级、dsh 升级、换机器后复测「面板卡不卡」；`--mutations` 模式用来找「谁在空转」。
+- 这是「Obsidian 面板卡顿」排查留下的尺子：第一轮凭静态资源推断改错了地方，第二轮靠它定位到真因（皮肤客户端脚本 `hooks.mjs`）。用法、判读与未解决项见 `sidebar-performance.md` §9。
 
 ### 真实会话 E2E（消耗模型 tokens）
 

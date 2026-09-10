@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-24T01:59:41.229Z",
-  "count": 19,
+  "generatedAt": "2026-09-10T15:03:49.527Z",
+  "count": 20,
   "entries": [
     {
       "citekey": "gaoLeanSearchV2Global2026",
@@ -417,6 +417,26 @@
       "card": "cards/huQueryLinkLeveragingQueryMemory2026.md",
       "fullText": ".raw/huQueryLinkLeveragingQueryMemory2026/full.md",
       "pdf": ".raw/huQueryLinkLeveragingQueryMemory2026/source.pdf"
+    },
+    {
+      "citekey": "liGraphMemixQueryAwareEvidence2026",
+      "title": "GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory",
+      "shorttitle": "GraphMemix",
+      "authors": [
+        "Li, Geng",
+        "Wang, Yuhao",
+        "Li, Dong",
+        "Hao, Jianye",
+        "Peng, Yuxin"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Computation and Language, Computer Science - Artificial Intelligence",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2608.26983",
+      "url": "http://arxiv.org/abs/2608.26983",
+      "card": "cards/liGraphMemixQueryAwareEvidence2026.md",
+      "fullText": ".raw/liGraphMemixQueryAwareEvidence2026/full.md",
+      "pdf": ".raw/liGraphMemixQueryAwareEvidence2026/source.pdf"
     }
   ]
 }
