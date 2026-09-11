@@ -73,6 +73,32 @@ jobs:
           echo "id-token endpoint: ${ACTIONS_ID_TOKEN_REQUEST_URL:+available}${ACTIONS_ID_TOKEN_REQUEST_URL:-MISSING (needs permissions: id-token: write)}"
           echo -n "whoami: "
           npm whoami --registry=https://registry.npmjs.org || echo "(no token — expected: publishing goes through trusted publishing)"
+      # Print the claims npm matches against the stored trusted-publisher config
+      # (repository / job_workflow_ref = repo + workflow FILENAME / environment).
+      # A 403 "OIDC permission denied for this action" almost always means one of
+      # these differs from what npmjs.com has — usually an environment, or a
+      # filename typo. Best effort: never fails the run.
+      - name: Decode the OIDC token claims
+        run: |
+          set +e
+          : > oidc-claims.txt
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "no id-token endpoint (permissions: id-token: write missing?)" >> oidc-claims.txt
+            exit 0
+          fi
+          token=$(curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
+            | node -e "let s='';process.stdin.on('data',(d)=>{s+=d});process.stdin.on('end',()=>{try{process.stdout.write(JSON.parse(s).value||'')}catch{process.stdout.write('')}})")
+          node -e '
+            const token = process.argv[1] || "";
+            const part = token.split(".")[1];
+            if (!part) { console.log("no id-token returned"); process.exit(0); }
+            const claims = JSON.parse(Buffer.from(part.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+            for (const key of ["repository", "repository_owner", "job_workflow_ref", "workflow_ref", "environment", "event_name", "ref", "ref_type", "aud", "sub"]) {
+              if (claims[key] !== undefined) console.log(key + " = " + claims[key]);
+            }
+          ' "$token" >> oidc-claims.txt
+          cat oidc-claims.txt
       - name: Publish (trusted publishing, no long-lived token)
         id: publish
         continue-on-error: true
@@ -121,6 +147,12 @@ jobs:
             echo ""
             echo '```'
             tail -30 publish.log || true
+            echo '```'
+            echo ""
+            echo "OIDC claims this run presented (compare with \`npm trust list dsh-math-memory\`):"
+            echo ""
+            echo '```'
+            cat oidc-claims.txt 2>/dev/null || echo "(not captured)"
             echo '```'
             echo ""
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
