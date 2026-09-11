@@ -1,4 +1,4 @@
-﻿// Regression for the loopback reverse proxy that carries the dsh web UI.
+// Regression for the loopback reverse proxy that carries dsh web.
 //
 // WHY: dsh >= 0.1.5 mints a `SameSite=Strict` session cookie named after the
 // request authority. Obsidian's sidebar iframe is cross-site (app://obsidian.md
@@ -24,12 +24,15 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const template = readFileSync('obsidian/main.template.js', 'utf8');
 
-/** Assertions in this suite; the tail prints it so docs can be anchored. */
-const EXPECTED_CHECKS = 31;
-
-let failed = 0;
+// Assertions are COUNTED as they run, never declared. This suite used to carry
+// `const EXPECTED_CHECKS = 31` while 32 `check(` call sites executed, so its
+// tail line "31/31 passed" was arithmetic on a stale constant rather than
+// evidence of coverage — and the docs, anchored to that line, repeated 31.
+let passed = 0;
+let total = 0;
 const check = (name, cond, detail = '') => {
-  if (!cond) failed += 1;
+  total += 1;
+  if (cond) passed += 1;
   console.log((cond ? '[ok] ' : '[FAIL] ') + name + (detail ? ' | ' + detail : ''));
 };
 
@@ -336,6 +339,6 @@ await new Promise((resolve) => {
   upstream.close(() => resolve());
   setTimeout(resolve, 500).unref?.();
 });
-console.log(`__CHECKS__ ${EXPECTED_CHECKS - failed}/${EXPECTED_CHECKS}`);
-console.log(failed === 0 ? '\nproxy: OK' : `\nproxy: ${failed} FAILED`);
-process.exit(failed === 0 ? 0 : 1);
+console.log(`__CHECKS__ ${passed}/${total}`);
+console.log(passed === total ? '\nproxy: OK' : `\nproxy: ${total - passed} FAILED`);
+process.exit(passed === total ? 0 : 1);
