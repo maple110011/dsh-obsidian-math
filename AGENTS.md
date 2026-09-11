@@ -52,7 +52,7 @@
 
 ## 4. 验证：什么才算"通过"
 
-**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 33/33）。
+**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 34/34）。
 
 ```bash
 node scripts/run-gates.mjs               # 全部门禁（= npm test）
@@ -95,6 +95,7 @@ node scripts/run-gates.mjs --only panel  # 只跑名字含 panel 的
 - **不要只测"已配置"的分支。** 面板安全问题能长期潜伏，正是因为在它之前每个用例都设了环境变量。**没有用例走到的分支，不算被测过。**
 - **加守卫必须做变异验证**：故意制造它要抓的缺陷 → 确认它报错 → 恢复 → 确认 `git diff` 为空。验收标准是"**它在该报错时确实报错**"，不是"跑了没报错"。
 - **解析 frontmatter 不要自己写正则**：`/^---\r?\n([\s\S]*?)\r?\n---/` 曾被复制 15 次，是坑 21/22/43 三次数据损坏的共同根因。用 `dsh/preset/hook-frontmatter.mjs` 的 `frontmatterSpan`/`readFrontmatter`/`replaceFrontmatter`，守卫 `check-frontmatter-source.mjs` 会拒绝新的拷贝（坑 65）。
+- **只有一个自动发现的指令文件**：仓库根 `AGENTS.md`（就是本文件）。任何其它 `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `.github/copilot-instructions.md` 都会被 harness 当成"**本仓库**的指令"注入给 agent——不管它本来写给谁。本仓库已经中过两次（坑 60：`dsh/templates/AGENTS.md` 是给用户 vault 的协议；`scripts/qa/benchmark-vault/AGENTS.md` 是合成基准 vault 的协议，一动那个目录就被注入全文）。**守卫：`node scripts/check-agent-instructions.mjs`**——除根 `AGENTS.md` 外一律拒绝，"一个都没找到"也算失败。修法是**改源文件名**（安装名由清单映射），不是删文件，也不能只是"记得别打开它"。
 - 完整清单见 `docs/handoff.md` §4（68 条）——改动前扫一遍与你要动的东西相关的条目。
 
 ## 7. 提交信息与工作方式
