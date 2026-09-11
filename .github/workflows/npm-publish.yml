@@ -108,37 +108,41 @@ jobs:
           # summary below never ran.
           set -o pipefail
           npm publish --provenance 2>&1 | tee publish.log
-      # An exit code of 0 does NOT mean the version is public: with staged
-      # publishing the upload waits for a human 2FA approval, and the public
-      # registry then has nothing — a green pipeline that ships nothing, the same
-      # failure mode as the tee masking above. Verify the registry's OWN state
-      # (declared vs effective).
-      - name: Verify the version is public on the registry
-        id: verify
-        if: steps.publish.outcome == 'success'
-        continue-on-error: true
+      # Ask the registry which of three cases this is. Neither exit code is
+      # enough on its own:
+      #   * exit 0 does NOT mean shipped — with staged publishing the upload waits
+      #     for a human 2FA approval and the public registry stays empty;
+      #   * exit != 0 does NOT mean not shipped — re-pushing a tag whose version is
+      #     already published fails with "cannot publish over the previously
+      #     published versions", which is a no-op we want to treat as success.
+      # So the decision comes from the registry's own state (declared vs
+      # effective), not from npm's exit code.
+      - name: Confirm the registry state
+        id: state
         run: |
           version=$(node -p "require('./package.json').version")
           for attempt in 1 2 3 4 5 6; do
             if npm view "dsh-math-memory@${version}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
-              echo "verified: dsh-math-memory@${version} is public on registry.npmjs.org"
+              echo "state=public" >> "$GITHUB_OUTPUT"
+              echo "registry state: dsh-math-memory@${version} IS public"
               exit 0
             fi
             sleep 15
           done
-          {
-            echo "npm publish exited 0 but dsh-math-memory@${version} is NOT on the public registry."
-            echo ""
-            echo "Most likely: the trusted publisher allows only STAGED publishing, so the"
-            echo "upload is waiting for a human 2FA approval — npmjs.com → package"
-            echo "dsh-math-memory → 'Staged publishes' → approve — or change the trusted"
-            echo "publisher configuration so 'npm publish' is an allowed action."
-            echo ""
-            echo '```'
-            tail -25 publish.log || true
-            echo '```'
-          } | tee verify-failure.txt
-          exit 1
+          echo "state=missing" >> "$GITHUB_OUTPUT"
+          echo "registry state: dsh-math-memory@${version} is NOT public"
+      # A tag can be re-pushed (this repository moved the 0.7.5 tag several times
+      # while its release pipeline was being fixed), so an open report from an
+      # earlier attempt has to be closed once the version is really out.
+      - name: Close stale publish-failure issues
+        if: steps.state.outputs.state == 'public'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          numbers=$(gh issue list --state open --search "npm publish failed in:title" --json number --jq '.[].number')
+          for number in $numbers; do
+            gh issue close "$number" --comment "dsh-math-memory@$(node -p "require('./package.json').version") is public on registry.npmjs.org (tag \`${GITHUB_REF_NAME}\`, run ${GITHUB_RUN_ID}) — closing." || true
+          done
       # Job summaries are readable in the run page without repo admin rights, so
       # the registry's own error text (404 = no trusted publisher configured,
       # 403 = a claim mismatch, 401 = OIDC not accepted) lands where whoever
@@ -149,45 +153,41 @@ jobs:
       # rescue them (GitHub evaluates later steps with an implicit success()), so
       # filing the issue has to happen before the job is failed on purpose.
       - name: Publish failure summary
-        if: steps.publish.outcome == 'failure' || steps.verify.outcome == 'failure'
+        if: steps.state.outputs.state == 'missing'
         run: |
           {
             echo "## npm publish did not ship"
             echo ""
-            if [ "${{ steps.verify.outcome }}" = "failure" ]; then
-              cat verify-failure.txt || true
-            else
-              echo "Registry error (last 30 lines of publish.log):"
-              echo ""
-              echo '```'
-              tail -30 publish.log || true
-              echo '```'
-            fi
+            echo "dsh-math-memory@$(node -p "require('./package.json').version") is not on the public registry."
             echo ""
-            echo "Checklist: (1) Trusted Publisher configured on npmjs.com for \`dsh-math-memory\`"
-            echo "→ GitHub Actions, repo \`maple110011/dsh-obsidian-math\`, workflow filename \`npm-publish.yml\`,"
-            echo "environment EMPTY, and \`npm publish\` among the allowed actions;"
-            echo "(2) \`npm --version\` above is >= 11.5.1; (3) the tag equals \`package.json\` version."
+            echo "npm said (last 30 lines):"
+            echo ""
+            echo '```'
+            tail -30 publish.log || true
+            echo '```'
+            echo ""
+            echo "If npm exited 0, the upload is probably STAGED and waits for a human"
+            echo "2FA approval: npmjs.com → package dsh-math-memory → 'Staged publishes'."
+            echo ""
+            echo "Otherwise check the trusted publisher: repo \`maple110011/dsh-obsidian-math\`,"
+            echo "workflow filename \`npm-publish.yml\`, environment EMPTY, and \`npm publish\`"
+            echo "among the allowed actions (see the OIDC claims printed above)."
           } >> "$GITHUB_STEP_SUMMARY"
       # Also open an issue with the same text: reading a job log requires repo
       # admin rights, so otherwise a rejected publish is invisible to everyone
       # except the person who can already open the run page. Re-running the same
       # tag comments on the existing issue instead of filing a new one.
       - name: Publish failure issue
-        if: steps.publish.outcome == 'failure' || steps.verify.outcome == 'failure'
+        if: steps.state.outputs.state == 'missing'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
             echo "Tag \`${GITHUB_REF_NAME}\` (commit \`${GITHUB_SHA:0:7}\`) did not reach npm."
             echo ""
-            if [ "${{ steps.verify.outcome }}" = "failure" ]; then
-              cat verify-failure.txt || true
-            else
-              echo '```'
-              tail -30 publish.log || true
-              echo '```'
-            fi
+            echo '```'
+            tail -30 publish.log || true
+            echo '```'
             echo ""
             echo "OIDC claims this run presented (compare with the stored trusted publisher):"
             echo ""
@@ -206,5 +206,5 @@ jobs:
       # Last step on purpose: fail the job only after the report is filed, so
       # "Re-run failed jobs" stays available.
       - name: Fail the job when nothing shipped
-        if: steps.publish.outcome == 'failure' || steps.verify.outcome == 'failure'
+        if: steps.state.outputs.state == 'missing'
         run: exit 1
