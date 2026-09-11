@@ -228,10 +228,10 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **可溯源（source 链 + 引用次数）** | `control-panel.md` §2.3 要求的「每条记忆显示 source 证据链与引用次数」**仍未交付**：`collectMemoryState` 至今不解析 `source`，两个面板都没有 | 中 |
 | **发布 0.7.5（推 tag）** | 版本号已对齐、守卫已就位、`docs/release.md` 已写；**推 tag 需要用户口令**，推完才会产出 Release 与 npm 包 | 高（发布前） |
 | **persona / AGENTS.md 语义解耦** | persona 仍自称「Obsidian …」，改「工作区」措辞（语义改动，需拍板） | 中 |
-| **Obsidian 插件自动化测试** | `main.template.js` 的反馈/面板/归档/捕获策略逻辑零自动化测试，全靠手测 | 中 |
+| **侧栏性能：Obsidian 侧栏面板从未测量（本次调查的空白）** | 用户报告的动作是「**在 Obsidian 里展开侧栏**」，而所有 CDP 数字都来自**独立浏览器里的 dsh 侧栏**（探针跑 headless Chromium，看不到也点不到 Obsidian 的 Electron 界面）。**Obsidian 侧栏面板的展开/收起 + iframe 重排/合成 + 宿主渲染成本 = 未测量**（原因 3/4 属推理后处置）。量法已写进 `docs/memory/sidebar-performance.md` §6：给 Obsidian 开 `--remote-debugging-port`（它也是 Electron），**同一套 CDP 代码换 target**，可同时量到面板开合与 iframe 内部 DOM 规模。**在量到之前不要声称"侧栏卡顿已定位"覆盖了 Obsidian 侧。** 另有两条旧缺口：① 同机 3080 的 `dsh web` 空闲 ~15% 单核；② iframe 内 DOM 规模（长会话） | 中（下一步） |
 | **命名空间隔离** | `.deepseek` → 可配置 `memoryRoot`（多套记忆共存时再做，需迁移） | 低（延后） |
 | **（可选）3180 内嵌面板** | 方案 A 已决策**不做**（保持 3180 fail-closed）；如需再议 | 低 |
-| **侧栏性能：两项未量到的原因** | ① 同机 3080 的 `dsh web` 持续吃 ~15% 单核（与本插件无关，但会放大动画抖动）；② iframe 内 dsh UI 的 DOM 规模（长会话）。量法与 A/B 复核步骤见 `docs/memory/sidebar-performance.md` §4 | 中 |
+| **侧栏性能：两项未量到的原因** | ① 同机 3080 的 `dsh web` 持续吃 ~15% 单核（与本插件无关，但会放大动画抖动）；② iframe 内 dsh UI 的 DOM 规模（长会话）。量法与 A/B 复核步骤见 `docs/memory/sidebar-performance.md` §4/§6 | 中 |
 | **★ 运行卡顿（已存档，用户决定之后再解决）** | 真因已测出：皮肤 `orca-link` 的客户端脚本 `hooks.mjs`（14 个 MutationObserver + 5 次/秒的角色样式循环 + 跟着侧栏动画每帧触发的 ResizeObserver）。已交付两档修复（性能模式改写两处热循环；可关皮肤装饰）。**未解决的三件**：① 3080 不走我们的代理，同一份脚本仍在跑——换皮肤 / 关皮肤 / 给皮肤文件打同样补丁（需备份、皮肤更新会覆盖）/ 上报作者，等用户选；② dsh 前端自身每次点击仍有 ~110ms 样式重算（侧栏宽度是 CSS grid 轨道），插件无法从外部修，需要时可拿探针输出做最小复现；③ 用户真机（长会话 + 完整插件家族）实测数字未取。**复现工具已入库**：`node scripts/qa/sidebar-perf-probe.mjs --vault=<vault> [--via-proxy] [--mutations]`；结论与判读约定见 `docs/memory/sidebar-performance.md`（§9 是接续入口） | **下次接着做** |
 | **检索：关系信任 + 锚点槽位** | GraphMemix 的「查询条件化关系信任」需要 `related`/`source` 边带可信度（可用 `verified_by`/`harmed` 当先验）；触发条件写在 `retrieval-v3.md` §7.4 | 低（有触发条件） |
 | **多视图 max-pool 复测** | 本轮实测 Δ=0 且排名变差，保持单袋默认；出现「标题精确命中却排在 5 名之后」的真实稀释案例时，先补 ground-truth 用例再复测（`retrieval-v3.md` §7.2） | 低（有触发条件） |
