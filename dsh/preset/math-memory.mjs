@@ -47,6 +47,17 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
+// The single implementation of the frontmatter DELIMITER rule (see that file's
+// header). This module used to carry 12 copies of the regex literal, which is
+// how "where does the block end" drifted between readers (2026-09-11 review,
+// P1-6; handoff.md traps 21/22/43).
+import {
+  frontmatterSpan,
+  frontmatterBlock,
+  readFrontmatter,
+  stripFrontmatter,
+  replaceFrontmatterBlock
+} from "./hook-frontmatter.mjs";
 
 export const name = "math-memory";
 export const inject = ["tools", "fs", "systemPrompt", "loader"];
@@ -236,7 +247,7 @@ function isVaultSessionLog(root, log) {
   const header = readSessionHeader(log.path);
   const cwd = header !== null && header.type === "session" && typeof header.cwd === "string" ? header.cwd : null;
   if (sessionHeaderCache.size >= SESSION_HEADER_CACHE_MAX) sessionHeaderCache.clear();
-  const verdict = cwd !== null && pathIsInside(root, cwd);
+  const verdict = cwd !== null && pathInside(root, cwd);
   sessionHeaderCache.set(key, verdict);
   return verdict;
 }
@@ -475,7 +486,7 @@ export function buildDialogueIndex(sessionsRoot, maxEntries, maxChars, maxFiles 
     if (entry.id !== undefined && entry.messages.length > 0) {
       // Only sessions that ran inside this vault join the index: coding
       // sessions from other workspaces must not leak into the math assistant.
-      if (vaultRoot !== "" && !pathIsInside(vaultRoot, entry.cwd ?? "")) continue;
+      if (vaultRoot !== "" && !pathInside(vaultRoot, entry.cwd ?? "")) continue;
       sources.push({ path: log.path, mtimeMs: log.mtimeMs, size: log.size });
       sessions.push(entry);
     }
@@ -594,7 +605,13 @@ function readCaptureState(root) {
  * logs, compares each against the capture marker (by file fingerprint), and
  * only decodes/appends sessions that grew or are new. Vault containment filter
  * keeps other workspaces out. Best-effort: a failure on one session must not
- * stop the rest. Returns `{ captured, state }`; writes the marker itself.
+ * stop the rest. Returns `{ captured, state, warnings }`; writes the marker itself.
+ *
+ * `warnings` exists because every write on this path used to fail SILENTLY: a
+ * vault whose episode writes kept failing looked exactly like a vault with
+ * nothing to capture (`captured: []` either way). Trap 44 names "treating a
+ * write as done because no error surfaced" as the most recurrent defect shape in
+ * this repo, and an empty catch block is where it breeds (2026-09-11 review, P2-7).
  */
 export function runSessionCapture(root, sessionsRoot, state = undefined, opts = {}) {
   const { captureSubagents = false } = opts;
@@ -602,6 +619,7 @@ export function runSessionCapture(root, sessionsRoot, state = undefined, opts = 
     ? { schemaVersion: state.schemaVersion, sessions: { ...(state.sessions ?? {}) }, scanned: { ...(state.scanned ?? {}) } }
     : { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {}, scanned: {} };
   const captured = [];
+  const warnings = [];
   // Per-log scan cache: `scanned[logPath] = { fp, inVault, pending }` at the
   // given `path|mtimeMs|size` revision. A log is decoded only when it is new,
   // has grown, or is known to still hold an unwritten delta — so another
@@ -615,7 +633,7 @@ export function runSessionCapture(root, sessionsRoot, state = undefined, opts = 
     if (record !== undefined && record.fp === fingerprint && !(record.inVault === true && record.pending === true)) continue;
     // Cheap gate: only this vault's sessions are ever captured.
     const header = readSessionHeader(log.path);
-    if (header !== null && (header.type !== "session" || typeof header.id !== "string" || !pathIsInside(root, header.cwd ?? ""))) {
+    if (header !== null && (header.type !== "session" || typeof header.id !== "string" || !pathInside(root, header.cwd ?? ""))) {
       scanned[log.path] = { fp: fingerprint, inVault: false, pending: false };
       dirty = true;
       continue;
@@ -627,7 +645,7 @@ export function runSessionCapture(root, sessionsRoot, state = undefined, opts = 
       continue;
     }
     const entry = distillSession(events, { userClip: CAPTURE_USER_CLIP, assistantClip: CAPTURE_ASSISTANT_CLIP });
-    if (entry.id === undefined || entry.messages.length === 0 || !pathIsInside(root, entry.cwd ?? "")) {
+    if (entry.id === undefined || entry.messages.length === 0 || !pathInside(root, entry.cwd ?? "")) {
       scanned[log.path] = { fp: fingerprint, inVault: false, pending: false };
       dirty = true;
       continue;
@@ -678,37 +696,53 @@ export function runSessionCapture(root, sessionsRoot, state = undefined, opts = 
         const sep = existing.endsWith("\n") ? "" : "\n";
         writeFileSync(abs, `${existing}${sep}${body}\n`, "utf8");
       }
-      appendEpisodeIndex(root, stem, entry.title ?? entry.id);
+      // A failed index line no longer aborts the session: the episode body IS
+      // persisted, and un-advancing the marker would re-append that same delta
+      // on the next pass (duplicated content). Report it instead.
+      if (appendEpisodeIndex(root, stem, entry.title ?? entry.id) === false) {
+        warnings.push(`episodes/index.md 未补上 ${stem}（正文已写入，面板时间线可能漏这一条）`);
+      }
       captured.push({ id: entry.id, rel, lastSeq: plan.lastSeq });
       next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: rel };
       scanned[log.path] = { fp: fingerprint, inVault: true, pending: false };
       dirty = true;
-    } catch {
-      // best-effort; leave the marker untouched so it retries next time
+    } catch (error) {
+      // Leave the marker untouched so the next pass retries — but say so: a vault
+      // that keeps failing here is otherwise indistinguishable from an idle one.
+      warnings.push(`会话 ${entry.id} 落盘失败，本次未捕获（下次重试）：${String(error?.message ?? error)}`);
     }
   }
   if (dirty) {
     try {
       mkdirSync(join(root, CACHE_DIR), { recursive: true });
       writeFileSync(join(root, CAPTURE_FILE), JSON.stringify(next, null, 2), "utf8");
-    } catch {
-      // marker persistence is best-effort
+    } catch (error) {
+      // The marker is what stops the next pass from re-appending the same deltas,
+      // so failing to write it risks duplicated episodes — worth a warning, not
+      // worth failing the capture.
+      warnings.push(`捕获 marker 写入失败，下次可能重复捕获同一批会话：${String(error?.message ?? error)}`);
     }
   }
-  return { captured, state: next };
+  return { captured, state: next, warnings };
 }
 
-/** Add a capture file to episodes/index.md (idempotent, one line per session). */
+/**
+ * Add a capture file to episodes/index.md (idempotent, one line per session).
+ * Returns `false` when the write could not be confirmed, so the caller can
+ * report it (see `runSessionCapture`); the check is a read-back, not just "no
+ * throw" — trap 44.
+ */
 function appendEpisodeIndex(root, stem, title) {
   const indexPath = join(root, MEMORY_DIR, "memory", "episodes", "index.md");
   const line = `- [[${stem}|${title}]]`;
   try {
     let text = existsSync(indexPath) ? readFileSync(indexPath, "utf8") : "";
-    if (text.includes(`[[${stem}`)) return; // already indexed
+    if (text.includes(`[[${stem}`)) return true; // already indexed
     if (text !== "" && !text.endsWith("\n")) text += "\n";
     writeFileSync(indexPath, `${text}${line}\n`, "utf8");
+    return readFileSync(indexPath, "utf8").includes(`[[${stem}`);
   } catch {
-    // index update is best-effort
+    return false;
   }
 }
 
@@ -733,9 +767,9 @@ const MEMO_STALE_POLISHING_DAYS = 3;
 /** Parse the YAML-ish frontmatter of one memo plus its first `#` title. */
 export function parseMemoFrontmatter(text) {
   const meta = {};
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text ?? "");
-  if (match !== null) {
-    for (const line of match[1].split(/\r?\n/)) {
+  const inner = readFrontmatter(text ?? "");
+  if (inner !== "") {
+    for (const line of inner.split(/\r?\n/)) {
       const pair = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line.trim());
       if (pair !== null) meta[pair[1]] = pair[2].trim().replace(/^["']|["']$/g, "");
     }
@@ -767,9 +801,9 @@ const DEFAULT_CAPTURE_POLICY = { idea: "ask", fact: "ask", preference: "ask", st
 export function parseCapturePolicy(text) {
   const policy = { ...DEFAULT_CAPTURE_POLICY };
   if (typeof text !== "string" || text === "") return policy;
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (match === null) return policy;
-  for (const line of match[1].split(/\r?\n/)) {
+  const inner = readFrontmatter(text);
+  if (inner === "") return policy;
+  for (const line of inner.split(/\r?\n/)) {
     const pair = /^(idea|fact|preference|structure):\s*([A-Za-z_-]+)\s*$/.exec(line.trim());
     if (pair !== null && CAPTURE_MODES.has(pair[2])) policy[pair[1]] = pair[2];
   }
@@ -793,16 +827,16 @@ const MEMORY_CONFIG_FILE = join(MEMORY_DIR, "config.md");
 /**
  * Parse the workspace's standalone memory settings (.deepseek/config.md
  * frontmatter): enabled / dialogueIndex / reminders / audit. Host-agnostic
- * settings surface — editable without Obsidian or the dsh web UI, and each
+ * settings surface — editable without Obsidian or dsh web, and each
  * workspace (vault/folder) can carry its own overrides. A missing file/field
  * returns null so the preset config (agent.cordis.yml) applies.
  */
 export function parseMemoryConfig(text) {
   if (typeof text !== "string" || text === "") return null;
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (match === null) return null;
+  const inner = readFrontmatter(text);
+  if (inner === "") return null;
   const config = {};
-  for (const line of match[1].split(/\r?\n/)) {
+  for (const line of inner.split(/\r?\n/)) {
     const pair = /^(enabled|dialogueIndex|reminders|audit|autoArchive|sessionCapture|captureSubagents):\s*(true|false)\s*$/i.exec(line.trim());
     if (pair !== null) config[pair[1]] = pair[2].toLowerCase() === "true";
   }
@@ -874,7 +908,7 @@ export function memoDigest(root, maxChars, query = "", helpers = undefined, incl
   // helpers is optional (see the `canScore` guard above); only tokenize when
   // relevance scoring can actually run, so a caller without helpers (e.g. the
   // buildMemorySection fallback) still lists memos instead of crashing.
-  const tokenizedDocs = canScore ? memoDocs.map((doc) => helpers.tokenize((doc.file + " " + doc.text.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").slice(0, 1500)))) : [];
+  const tokenizedDocs = canScore ? memoDocs.map((doc) => helpers.tokenize((doc.file + " " + stripFrontmatter(doc.text).slice(0, 1500)))) : [];
   const docFreq = canScore ? helpers.computeDocFreq(tokenizedDocs) : null;
 
   for (let i = 0; i < memoDocs.length; i += 1) {
@@ -994,13 +1028,13 @@ function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
   } catch {
     return false;
   }
-  const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
-  if (fmMatch === null) return false;
-  const rewritten = rewriteHookStats(fmMatch[1], effectiveUses, lastUsed);
+  const block = frontmatterBlock(text);
+  if (block === null) return false;
+  const rewritten = rewriteHookStats(block, effectiveUses, lastUsed);
   if (rewritten === null) return false;
-  if (rewritten === fmMatch[1]) return verifyUsesWritten(text, effectiveUses, true);
+  if (rewritten === block) return verifyUsesWritten(text, effectiveUses, true);
   try {
-    const next = replaceLeadingFrontmatter(text, fmMatch, rewritten);
+    const next = replaceFrontmatterBlock(text, rewritten);
     writeFileSync(filePath, next, "utf8");
     // Post-condition, not an assumption: read back what we just claimed to write.
     return verifyUsesWritten(next, effectiveUses, true);
@@ -1015,10 +1049,10 @@ function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
  * strategy cards).
  */
 function verifyUsesWritten(text, expected, anyIndent) {
-  const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
-  if (fmMatch === null) return false;
+  const block = frontmatterBlock(text);
+  if (block === null) return false;
   const pattern = anyIndent ? /^\s*uses:\s*(-?\d+)\s*$/m : /^uses:\s*(-?\d+)\s*$/m;
-  const found = pattern.exec(fmMatch[1]);
+  const found = pattern.exec(block);
   return found !== null && Number(found[1]) === Number(expected);
 }
 
@@ -1041,25 +1075,20 @@ function setTopFieldText(frontmatterText, field, value) {
 /**
  * Splice a rewritten frontmatter block back into a file BY OFFSET.
  *
- * The obvious `text.replace(fmMatch[1], rewritten)` is wrong here in two ways,
- * both reachable from agent-authored cards:
+ * The obvious `text.replace(block, rewritten)` is wrong here in two ways, both
+ * reachable from agent-authored cards:
  *   1. the second argument is a REPLACEMENT STRING, so `$$`/`$&`/`$'`/`` $` ``
  *      inside the frontmatter get expanded (`title: 关于 $$ 的表示` would lose a
  *      `$`; `$&` would inject the entire matched block). memory-admin.mjs had the
  *      same defect, fixed there; a math vault is exactly where `$$` shows up in
  *      a title.
  *   2. a string needle replaces the first occurrence ANYWHERE in the file, not
- *      necessarily the leading block the regex matched.
- * Offsets remove both hazards.
+ *      necessarily the leading block.
+ * Offsets remove both hazards. The implementation moved to the shared
+ * frontmatter module (`hook-frontmatter.mjs`) on 2026-09-11; the property is
+ * asserted directly in `scripts/test-memory.mjs` because it is invisible until
+ * it corrupts a real card.
  */
-function replaceLeadingFrontmatter(text, fmMatch, rewritten) {
-  return text.slice(0, fmMatch.index) + rewritten + text.slice(fmMatch.index + fmMatch[1].length);
-}
-
-// Exported for the regression suite: the hazard it removes (a `$`-bearing
-// frontmatter used as a replacement STRING) is invisible until it corrupts a
-// real card, so the property is asserted directly.
-export { replaceLeadingFrontmatter as __replaceLeadingFrontmatterForTest };
 
 /**
  * Best-effort sync of usage stats into a strategy card's TOP-LEVEL frontmatter
@@ -1074,25 +1103,24 @@ function syncTopLevelStatsToCard(filePath, effectiveUses, lastUsed) {
   } catch {
     return false;
   }
-  const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
-  if (fmMatch === null) return false;
-  // `fmMatch[1]` INCLUDES both `---` delimiters, so appending a field to it puts
+  const span = frontmatterSpan(text);
+  if (span === null) return false;
+  // `span.block` INCLUDES both `---` delimiters, so appending a field to it puts
   // the line AFTER the closing delimiter — i.e. in the BODY. That is exactly how
   // `strategy/strat-ot-structure-proof.md` ended up with two stray `uses: 0`
   // lines outside its frontmatter: the first audit appended one, the next added
   // another, and every reader (which parses the frontmatter) ignored them. The
-  // read-back verification in `syncTopLevelStatsToCard`'s caller is what finally
-  // exposed it; splice inside the delimiters here.
-  const inner = /^---\r?\n([\s\S]*?)\r?\n---$/.exec(fmMatch[1]);
-  if (inner === null) return false;
-  const crlf = fmMatch[1].includes("\r\n");
+  // read-back verification in this function's caller is what finally exposed
+  // it; `span.text` is the body INSIDE the delimiters, so build the block from
+  // that and splice it back by offset.
+  const crlf = span.block.includes("\r\n");
   const sep = crlf ? "\r\n" : "\n";
-  let body = setTopFieldText(inner[1], "uses", String(effectiveUses));
+  let body = setTopFieldText(span.text, "uses", String(effectiveUses));
   if (lastUsed !== "") body = setTopFieldText(body, "last_used", lastUsed);
   const fm = `---${sep}${body}${sep}---`;
-  if (fm === fmMatch[1]) return verifyUsesWritten(text, effectiveUses, false);
+  if (fm === span.block) return verifyUsesWritten(text, effectiveUses, false);
   try {
-    const next = replaceLeadingFrontmatter(text, fmMatch, fm);
+    const next = replaceFrontmatterBlock(text, fm);
     writeFileSync(filePath, next, "utf8");
     return verifyUsesWritten(next, effectiveUses, false);
   } catch {
@@ -1189,8 +1217,8 @@ export function buildAuditReport(root, helpers) {
         continue;
       }
       const meta = parseMemoFrontmatter(text);
-      const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-      const hook = fmMatch === null ? null : (helpers.parseHookFrontmatter?.(fmMatch[1]) ?? null);
+      const inner = readFrontmatter(text);
+      const hook = inner === "" ? null : (helpers.parseHookFrontmatter?.(inner) ?? null);
       const rel = join(dir, file).replace(/\\/g, "/");
       const statEntry = stats[rel] ?? {};
       const statUses = Number.isFinite(statEntry.uses) ? statEntry.uses : 0;
@@ -1366,7 +1394,7 @@ export function buildAuditReport(root, helpers) {
       structural.usesMismatch.push(card.rel);
       continue;
     }
-    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
+    const fm = readFrontmatter(text);
     const declared = /^\s*uses:\s*(-?\d+)\s*$/m.exec(fm);
     const value = declared === null ? 0 : Number(declared[1]);
     if (!Number.isFinite(value) || value !== card.uses) structural.usesMismatch.push(card.rel);
@@ -1430,11 +1458,11 @@ export function buildAuditReport(root, helpers) {
     if (redundant.duplicateOf !== "") continue; // already marked
     try {
       const text = readFileSync(redundant.filePath, "utf8");
-      const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
-      if (fmMatch === null) continue;
+      const block = frontmatterBlock(text);
+      if (block === null) continue;
       const keptStem = kept.rel.split("/").at(-1).replace(/\.md$/, "");
-      const rewritten = setTopFieldText(fmMatch[1], "duplicate_of", `[[${keptStem}]]`);
-      if (rewritten !== fmMatch[1]) writeFileSync(redundant.filePath, replaceLeadingFrontmatter(text, fmMatch, rewritten), "utf8");
+      const rewritten = setTopFieldText(block, "duplicate_of", `[[${keptStem}]]`);
+      if (rewritten !== block) writeFileSync(redundant.filePath, replaceFrontmatterBlock(text, rewritten), "utf8");
     } catch {
       // best-effort; never break the audit
     }
@@ -1492,10 +1520,10 @@ export function buildAuditReport(root, helpers) {
     if (card.uses < PROMOTE_USES || card.successRate === null || card.successRate < PROMOTE_RATE) continue;
     try {
       const text = readFileSync(card.filePath, "utf8");
-      const fmMatch = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(text);
-      if (fmMatch === null) continue;
-      const rewritten = setTopFieldText(fmMatch[1], "status", "active");
-      if (rewritten !== fmMatch[1]) writeFileSync(card.filePath, replaceLeadingFrontmatter(text, fmMatch, rewritten), "utf8");
+      const block = frontmatterBlock(text);
+      if (block === null) continue;
+      const rewritten = setTopFieldText(block, "status", "active");
+      if (rewritten !== block) writeFileSync(card.filePath, replaceFrontmatterBlock(text, rewritten), "utf8");
     } catch {
       // best-effort
     }
@@ -1833,7 +1861,7 @@ export function pairMessages(messages) {
 }
 
 /** Case/separator-robust prefix containment (win32 lowercases). */
-function pathIsInside(root, child) {
+function pathInside(root, child) {
   if (typeof root !== "string" || typeof child !== "string" || root === "" || child === "") return false;
   const norm = (value) => {
     const n = value.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -1975,7 +2003,9 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   // agent to render note references in replies as clickable links so the
   // user can jump straight into Obsidian from the sidebar iframe. The same
   // server's /open and /feedback endpoints are guarded by a CSRF token that
-  // the plugin passes via DSH_OBSIDIAN_FEEDBACK_TOKEN — the rendered link
+  // the plugin passes as DSH_MATH_MEMORY_FEEDBACK_TOKEN (legacy
+  // DSH_OBSIDIAN_FEEDBACK_TOKEN accepted as a fallback; the host panel reads the
+  // same pair in the same order — docs/env-vars.md) — the rendered link
   // templates MUST carry it as t= or the click is rejected with 403.
   const linkBaseUrl = (process.env.DSH_MATH_MEMORY_LINK_URL ?? process.env.DSH_OBSIDIAN_LINK_URL)?.trim() ?? "";
   if (linkBaseUrl !== "") {

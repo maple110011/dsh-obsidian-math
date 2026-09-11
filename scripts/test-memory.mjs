@@ -59,9 +59,14 @@ import {
   sessionLogKey,
   selectAuthoritativeLogs,
   decodeZstdSessionLog,
-  __replaceLeadingFrontmatterForTest
+  AUDIT_SCHEMA_VERSION
 } from '../dsh/preset/math-memory.mjs';
-import { applyFeedback, setSessionCapture, readSessionCaptureEnabled, countUncapturedSessions, archiveMemoryFile, setCapturePolicyMode, frontmatterSpan, replaceFrontmatter, collectMemoryState, parseEpisodeIndex, readAuditReport, summaryOf } from '../dsh/host/memory-admin.mjs';
+// The shared frontmatter primitives: `frontmatterBlock`/`replaceFrontmatterBlock`
+// are the canonical implementations the preset now uses everywhere, and the
+// "identical to the host's copy" property is asserted in
+// scripts/check-frontmatter-source.mjs.
+import { frontmatterBlock, replaceFrontmatterBlock, stripFrontmatter, readFrontmatter } from '../dsh/preset/hook-frontmatter.mjs';
+import { applyFeedback, setSessionCapture, readSessionCaptureEnabled, countUncapturedSessions, archiveMemoryFile, setCapturePolicyMode, frontmatterSpan, replaceFrontmatter, collectMemoryState, parseEpisodeIndex, readAuditReport, auditSchemaVersionOf, AUDIT_SCHEMA_VERSION_MIN, AUDIT_SCHEMA_VERSION_MAX, summaryOf } from '../dsh/host/memory-admin.mjs';
 const results = [];
 function check(name, condition, detail = '') {
   results.push({ name, ok: Boolean(condition), detail });
@@ -1020,10 +1025,13 @@ check('archive: a real memory card is still archived',
     'body',
     ''
   ].join('\n');
-  const matched = /^(---\r?\n[\s\S]*?\r?\n---)/.exec(pathological)[1];
+  // The block now comes from the shared `frontmatterBlock` helper rather than a
+  // literal regex: since 2026-09-11 that literal may not appear anywhere outside
+  // the canonical implementation (scripts/check-frontmatter-source.mjs).
+  const matched = frontmatterBlock(pathological);
   const rewrittenBlock = matched.replace('uses: 0', 'uses: 3');
   const oldWay = pathological.replace(matched, rewrittenBlock);
-  const newWay = __replaceLeadingFrontmatterForTest(pathological, /^(---\r?\n[\s\S]*?\r?\n---)/.exec(pathological), rewrittenBlock);
+  const newWay = replaceFrontmatterBlock(pathological, rewrittenBlock);
   // oldWay becomes `title: 关于 $ 的表示 与 <the matched block> 的含义` with
   // `uses: 0` restored and `uses: 3` appended: `$$` lost a `$`, `$&` injected
   // the block, and the file GROWS. Those three are the corruption.
@@ -1098,6 +1106,77 @@ check('archive: a real memory card is still archived',
   check('subagent: countUncapturedSessions ignores the child too',
     countUncapturedSessions(subRoot, sessions) === 0);
   rmSync(subRoot, { recursive: true, force: true });
+}
+
+// ── 29b. capture failures are REPORTED, not swallowed ──────────────────────
+// Every write on the capture path used to fail silently, so a vault whose
+// episode writes kept failing looked exactly like a vault with nothing to
+// capture (`captured: []` either way). Trap 44 names "treating a write as done
+// because no error surfaced" as this repo's most recurrent defect shape
+// (2026-09-11 review, P2-7). These checks drive REAL write failures.
+{
+  const warnRoot = mkdtempSync(join(tmpdir(), 'dsh-capture-warn-'));
+  const sessions = join(warnRoot, 'sessions');
+  const logDir = join(sessions, 'proj', 'session-warn-1');
+  mkdirSync(logDir, { recursive: true });
+  const log = (events) => zstdCompressSync(Buffer.from(events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8'));
+  writeFileSync(join(logDir, 'session.v3.jsonl.zstd'), log([
+    { type: 'session', version: 3, id: 'session-warn-1', cwd: warnRoot, createdAt: Date.now(), isSeeded: false, delegationDepth: 0 },
+    { type: 'session/title', seq: 1, time: 1, data: { title: '会写失败的会话' } },
+    { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '提问' }] } },
+    { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: '回答' }] } } }
+  ]));
+
+  // (a) A clean vault must produce NO warnings — otherwise the signal is noise.
+  const clean = runSessionCapture(warnRoot, sessions);
+  check('capture warnings: a successful capture reports none',
+    clean.warnings.length === 0 && clean.captured.length === 1,
+    JSON.stringify({ warnings: clean.warnings, captured: clean.captured.length }));
+
+  // (b) Index row unwritable (index.md replaced by a directory): the episode body
+  // IS written, so the session must still count as captured — aborting would
+  // re-append the same delta on the next pass and duplicate its content.
+  const episodeRel = join('.deepseek', 'memory', 'episodes');
+  const episodeStem = clean.captured[0].rel.split(/[\\/]/).pop().replace(/\.md$/, '');
+  const indexPath = join(warnRoot, episodeRel, 'index.md');
+  rmSync(indexPath, { force: true });
+  rmSync(join(sessions, 'proj', 'session-warn-1', 'session.v3.jsonl.zstd'), { force: true });
+  mkdirSync(indexPath, { recursive: true });
+  const logDir2 = join(sessions, 'proj', 'session-warn-2');
+  mkdirSync(logDir2, { recursive: true });
+  writeFileSync(join(logDir2, 'session.v3.jsonl.zstd'), log([
+    { type: 'session', version: 3, id: 'session-warn-2', cwd: warnRoot, createdAt: Date.now(), isSeeded: false, delegationDepth: 0 },
+    { type: 'session/title', seq: 1, time: 1, data: { title: '索引写不进去' } },
+    { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '提问' }] } },
+    { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: '回答' }] } } }
+  ]));
+  const indexFail = runSessionCapture(warnRoot, sessions);
+  check('capture warnings: an unconfirmable index line is reported, and the session still counts',
+    indexFail.warnings.some((w) => w.includes('index.md'))
+    && indexFail.captured.some((c) => c.id === 'session-warn-2')
+    && existsSync(join(warnRoot, episodeRel, `${indexFail.captured.find((c) => c.id === 'session-warn-2').rel.split(/[\\/]/).pop()}`)),
+    JSON.stringify({ warnings: indexFail.warnings }));
+  rmSync(indexPath, { recursive: true, force: true });
+
+  // (c) Marker unwritable (`.deepseek/cache` replaced by a file): the episodes are
+  // on disk but capture cannot record that it happened, so the next pass would
+  // re-append them. That must be a warning, not silence.
+  const cacheDir = join(warnRoot, '.deepseek', 'cache');
+  rmSync(cacheDir, { recursive: true, force: true });
+  writeFileSync(cacheDir, 'not a directory\n', 'utf8');
+  const logDir3 = join(sessions, 'proj', 'session-warn-3');
+  mkdirSync(logDir3, { recursive: true });
+  writeFileSync(join(logDir3, 'session.v3.jsonl.zstd'), log([
+    { type: 'session', version: 3, id: 'session-warn-3', cwd: warnRoot, createdAt: Date.now(), isSeeded: false, delegationDepth: 0 },
+    { type: 'session/title', seq: 1, time: 1, data: { title: 'marker 写不进去' } },
+    { type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '提问' }] } },
+    { type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: '回答' }] } } }
+  ]));
+  const markerFail = runSessionCapture(warnRoot, sessions);
+  check('capture warnings: an unconfirmable marker is reported (duplicate-risk, not silence)',
+    markerFail.warnings.some((w) => w.includes('marker')) && markerFail.captured.some((c) => c.id === 'session-warn-3'),
+    JSON.stringify({ warnings: markerFail.warnings }));
+  rmSync(warnRoot, { recursive: true, force: true });
 }
 
 // ── 30. panel data layer: what the memory panels actually render ────────────
@@ -1233,6 +1312,27 @@ check('archive: a real memory card is still archived',
   check('panel: readAuditReport returns the parsed object (readAuditText keeps the string)',
     readAuditReport(join(panelRoot, '.deepseek', 'cache', 'memory-audit.json'))?.counts?.cards === 3
     && readAuditReport(join(panelRoot, 'missing.json')) === null);
+
+  // The audit schema version used to be written and never read, so the constant
+  // guarded nothing (2026-09-11 review, P2-5). These pin the read-side gate.
+  const auditSchemaDir = mkdtempSync(join(tmpdir(), 'dsh-audit-schema-'));
+  const writeAudit = (name, obj) => {
+    const p = join(auditSchemaDir, name);
+    writeFileSync(p, JSON.stringify(obj), 'utf8');
+    return p;
+  };
+  check('audit schema: a report with no schemaVersion is read as v1',
+    auditSchemaVersionOf({}) === 1 && readAuditReport(writeAudit('v1.json', { report: 'x' }))?.report === 'x');
+  check('audit schema: the declared range matches the WRITER constant',
+    AUDIT_SCHEMA_VERSION_MIN === 1 && AUDIT_SCHEMA_VERSION_MAX === AUDIT_SCHEMA_VERSION,
+    JSON.stringify({ min: AUDIT_SCHEMA_VERSION_MIN, max: AUDIT_SCHEMA_VERSION_MAX, writer: AUDIT_SCHEMA_VERSION }));
+  check('audit schema: a current-version report is accepted',
+    readAuditReport(writeAudit('v2.json', { schemaVersion: AUDIT_SCHEMA_VERSION, human: 'ok' }))?.human === 'ok');
+  check('audit schema: a NEWER report is refused instead of half-parsed (trap 38 in reverse)',
+    readAuditReport(writeAudit('v99.json', { schemaVersion: 99, human: 'from the future' })) === null);
+  check('audit schema: a malformed version falls back to v1 rather than crashing',
+    auditSchemaVersionOf({ schemaVersion: 'two' }) === 1 && auditSchemaVersionOf(null) === 1);
+  rmSync(auditSchemaDir, { recursive: true, force: true });
 
   // Feedback on a card with NO hook block: the panels used to hide the buttons,
   // so the least-evidenced cards were the only ones that could never be fixed.

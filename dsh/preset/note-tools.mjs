@@ -18,7 +18,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { parseHookFrontmatter } from "./hook-frontmatter.mjs";
+import { parseHookFrontmatter, stripFrontmatter } from "./hook-frontmatter.mjs";
 
 export const name = "note-tools";
 export const inject = ["tools", "fs", "systemPrompt", "loader"];
@@ -368,8 +368,18 @@ const HOOK_OPERATORS = new Set([
   "analysis", "statistics", "calculus", "linear-algebra", "topology", "logic"
 ]);
 
-/** Retrieval-target vocabulary for strategy cards (fixed enum, strategy-layer.md §8). */
-export const RETRIEVE_TARGETS = ["similar-problem", "technique", "theorem", "proven-path", "definition", "notation"];
+/**
+ * Retrieval-target vocabulary for strategy cards (strategy-layer.md §8).
+ *
+ * REMOVED 2026-09-11 — it was exported but nothing read it (`strategyRetrieve`
+ * below flattens/dedupes whatever the card lists, and validates nothing), so
+ * `strategy-layer.md`'s "add a value = change the constant" was a promise the
+ * code did not keep: a maintainer would edit the enum, see all gates stay green,
+ * and change no behaviour. Targets are free-form strings; adding one needs no
+ * code change. Kept here as a comment only so the vocabulary is still discoverable.
+ *
+ *   similar-problem · technique · theorem · proven-path · definition · notation
+ */
 
 function normalizeOperator(raw) {
   return String(raw ?? "").trim().toLowerCase().replace(/\s+/g, "-");
@@ -598,8 +608,6 @@ export function rankStrategyCards(cards, query, options = {}) {
     }))
   };
 }
-
-const MEMORY_SCAFFOLD_FILES = new Set(["index.md", "_README.md"]);
 
 /**
  * Build one recall-corpus document from a path plus its raw text.
@@ -854,7 +862,7 @@ export function composePassage(kind, doc) {
     .filter((part) => Array.isArray(part) ? part.length > 0 : typeof part === "string" && part !== "")
     .flat()
     .join(" ");
-  const body = String(doc.body ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---/, "").trim();
+  const body = stripFrontmatter(String(doc.body ?? "")).trim();
   const title = String(doc.title ?? "");
   const topic = String(doc.topic ?? "");
   const join = (...parts) => parts.filter((part) => part !== "").join(" ");
@@ -894,7 +902,7 @@ export function composePassageViews(kind, doc) {
     .filter((part) => Array.isArray(part) ? part.length > 0 : typeof part === "string" && part !== "")
     .flat()
     .join(" ");
-  const body = String(doc.body ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---/, "").trim();
+  const body = stripFrontmatter(String(doc.body ?? "")).trim();
   const title = String(doc.title ?? "");
   const topic = String(doc.topic ?? "");
   const viewsWith = (keywordText, bodyLimit, bodyPrefix = "") => [

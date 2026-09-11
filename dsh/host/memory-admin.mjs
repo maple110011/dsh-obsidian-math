@@ -26,14 +26,25 @@ export const FEEDBACK_MESSAGES = {
   forget: '已归档：文件移到了 .deepseek/archive/（移动而非删除，可找回）。'
 };
 
+/**
+ * Case/separator-robust prefix containment (win32 lowercases).
+ *
+ * This is the same function as the preset's `pathInside`
+ * (`dsh/preset/math-memory.mjs`). The two were named differently there
+ * (`pathIsInside`), so the engine-sync guard could not see the pair at all —
+ * a silent naming divergence on a *security-relevant* helper. Renamed
+ * 2026-09-11 so the guard covers them. The type guard was preset-only, which
+ * meant this copy threw on a null/absent `child` instead of answering `false`.
+ */
 export function pathInside(root, child) {
-  const norm = (p) => {
-    const n = p.replace(/\\/g, '/').replace(/\/+$/, '');
-    return process.platform === 'win32' ? n.toLowerCase() : n;
+  if (typeof root !== "string" || typeof child !== "string" || root === "" || child === "") return false;
+  const norm = (value) => {
+    const n = value.replace(/\\/g, "/").replace(/\/+$/, "");
+    return process.platform === "win32" ? n.toLowerCase() : n;
   };
   const r = norm(root);
   const c = norm(child);
-  return c === r || c.startsWith(r + '/');
+  return c === r || c.startsWith(r + "/");
 }
 
 /** Join frontmatter lines, dropping the blank line an EMPTY body would leave. */
@@ -156,7 +167,7 @@ export function setCapturePolicyMode(vault, field, mode, fallbackTemplate = '') 
  * Before this, ✅/❌ on a card without a `hook:` block failed with
  * 「该卡片没有 hook 块」 — and the panels hid the buttons entirely, so the
  * least-evidenced cards were also the only ones that could never be corrected
- * (docs/memory/handoff.md listed it as an open item). Returns null for the
+ * (docs/handoff.md listed it as an open item). Returns null for the
  * flow-style `hook: { … }` form, which we refuse to rewrite blindly.
  */
 function ensureHookBlock(frontmatterText) {
@@ -411,11 +422,16 @@ export function archiveOldEpisodes(vault, maxDays = 90) {
 }
 
 export function parseMemoryFrontmatter(text, hookParser) {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text ?? '');
-  if (match === null) return { meta: {}, hook: null };
+  // The delimiter rule comes from `frontmatterSpan` (this file's copy — the
+  // Obsidian loader injects bindings rather than resolving imports, so the host
+  // tree cannot import the canonical `dsh/preset/hook-frontmatter.mjs`; a guard
+  // asserts the two are behaviourally identical, see
+  // scripts/check-frontmatter-source.mjs).
+  const span = frontmatterSpan(text ?? '');
+  if (span === null) return { meta: {}, hook: null };
   const meta = {};
   let inHook = false;
-  for (const line of match[1].split(/\r?\n/)) {
+  for (const line of span.text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!inHook) {
       if (/^hook:\s*$/.test(trimmed)) { inHook = true; continue; }
@@ -425,7 +441,7 @@ export function parseMemoryFrontmatter(text, hookParser) {
     }
     if (line !== '' && !/^\s/.test(line)) { inHook = false; continue; }
   }
-  return { meta, hook: hookParser(match[1]) };
+  return { meta, hook: hookParser(span.text) };
 }
 
 export function titleOf(text, fallback) {
@@ -547,11 +563,43 @@ export function episodeDateOf(name) {
   return match === null ? '' : match[1];
 }
 
+/**
+ * Audit-report schema versions this build can render. Keep in step with the
+ * WRITER's `AUDIT_SCHEMA_VERSION` (`dsh/preset/math-memory.mjs`):
+ *
+ *   v1  no `schemaVersion` field at all — the pre-split format, a model-facing
+ *       `report` string plus a few structured leftovers; rendered through
+ *       `legacyAuditSummary` / `normalizeAuditForPanel`.
+ *   v2  split into `checklist` (model) + `human` (user) + `counts` / `decisions`
+ *       / `thresholds` / `sections` / `structural`.
+ *
+ * Until 2026-09-11 NOTHING on the read side looked at `schemaVersion`, so the
+ * writer's constant guarded nothing: a cache written by a NEWER engine was
+ * parsed as if this build understood its shape. That is not hypothetical —
+ * `handoff.md` trap 38 is a real v1-cache/v2-reader incident (the panels had to
+ * synthesize a summary from v1's leftovers). Declaring the range on the read
+ * side makes the mismatch a deliberate, tested decision instead of an accident.
+ */
+export const AUDIT_SCHEMA_VERSION_MIN = 1;
+export const AUDIT_SCHEMA_VERSION_MAX = 2;
+
+/** The schema version a parsed audit claims; a missing field means the v1 format. */
+export function auditSchemaVersionOf(audit) {
+  const raw = audit?.schemaVersion;
+  return Number.isInteger(raw) && raw > 0 ? raw : AUDIT_SCHEMA_VERSION_MIN;
+}
+
 /** Read `.deepseek/cache/memory-audit.json` and return the parsed object, or null. */
 export function readAuditReport(path) {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8'));
-    if (parsed !== null && typeof parsed === 'object') return parsed;
+    if (parsed === null || typeof parsed !== 'object') return null;
+    const version = auditSchemaVersionOf(parsed);
+    // Outside the declared range the shape is unknown (a newer engine wrote it,
+    // or the file was hand-edited). Report "no usable report" rather than let the
+    // panels render a half-understood one; the next audit rewrites the file.
+    if (version < AUDIT_SCHEMA_VERSION_MIN || version > AUDIT_SCHEMA_VERSION_MAX) return null;
+    return parsed;
   } catch {
     // no report yet
   }
@@ -1197,16 +1245,23 @@ export function readCaptureState(root) {
   return { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {} };
 }
 
+/**
+ * Add a capture file to episodes/index.md (idempotent, one line per session).
+ * Returns `false` when the write could not be confirmed, so the caller can
+ * report it (see `runSessionCapture`); the check is a read-back, not just "no
+ * throw" — trap 44.
+ */
 function appendEpisodeIndex(root, stem, title) {
   const indexPath = join(root, MEMORY_DIR, 'memory', 'episodes', 'index.md');
   const line = `- [[${stem}|${title}]]`;
   try {
     let text = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : '';
-    if (text.includes(`[[${stem}`)) return;
+    if (text.includes(`[[${stem}`)) return true;
     if (text !== '' && !text.endsWith('\n')) text += '\n';
     writeFileSync(indexPath, `${text}${line}\n`, 'utf8');
+    return readFileSync(indexPath, 'utf8').includes(`[[${stem}`);
   } catch {
-    // best-effort
+    return false;
   }
 }
 
@@ -1236,6 +1291,10 @@ function appendEpisodeIndex(root, stem, title) {
 function scanSessionCapture(root, sessionsRoot, next, capture) {
   const scanned = { ...(next.scanned ?? {}) };
   const captured = [];
+  // Anything this pass could not confirm. Returned rather than swallowed: a vault
+  // whose episode writes keep failing used to look exactly like an idle one
+  // (`captured: []` either way) — trap 44 / 2026-09-11 review P2-7.
+  const warnings = [];
   let count = 0;
   // Only rewrite the marker when this pass actually learned something, so a
   // badge refresh on a quiet vault performs no vault write at all.
@@ -1329,21 +1388,32 @@ function scanSessionCapture(root, sessionsRoot, next, capture) {
         const sep = existing.endsWith('\n') ? '' : '\n';
         writeFileSync(abs, `${existing}${sep}${body}\n`, 'utf8');
       }
-      appendEpisodeIndex(root, stem, entry.title ?? entry.id);
+      // A failed index line no longer aborts the session: the episode body IS
+      // persisted, and un-advancing the marker would re-append that same delta
+      // on the next pass (duplicated content). Report it instead.
+      if (appendEpisodeIndex(root, stem, entry.title ?? entry.id) === false) {
+        warnings.push(`episodes/index.md 未补上 ${stem}（正文已写入，面板时间线可能漏这一条）`);
+      }
       captured.push({ id: entry.id, rel, lastSeq: plan.lastSeq });
       next.sessions[entry.id] = { lastSeq: plan.lastSeq, fingerprint, file: rel };
       scanned[log.path] = { fp: fingerprint, inVault: true, pending: false };
       dirty = true;
-    } catch {
-      // best-effort; leave the marker untouched so it retries next time
+    } catch (error) {
+      // Leave the marker untouched so the next pass retries — but say so: a vault
+      // that keeps failing here is otherwise indistinguishable from an idle one.
+      warnings.push(`会话 ${entry.id} 落盘失败，本次未捕获（下次重试）：${String(error?.message ?? error)}`);
     }
   }
   next.scanned = scanned;
-  return { captured, count, dirty };
+  return { captured, count, dirty, warnings };
 }
 
 /**
  * Persist the capture marker plus its scan cache (best-effort).
+ *
+ * Returns `false` when the write could not be confirmed. The marker is what
+ * stops the next pass from re-appending the same deltas, so losing it risks
+ * duplicated episodes — the caller reports that instead of silently retrying.
  *
  * `keepDiskSessions` is for the count path. Obsidian and the dsh host route can
  * both write this file, and `sessions` (the per-session `lastSeq` marker) is the
@@ -1364,18 +1434,30 @@ function persistCaptureState(root, next, keepDiskSessions = false) {
       };
     }
     writeFileSync(join(root, CAPTURE_FILE), JSON.stringify(payload, null, 2), 'utf8');
+    return true;
   } catch {
-    // marker persistence is best-effort
+    // Best-effort, but not silent: the caller turns `false` into a warning.
+    return false;
   }
 }
 
+/**
+ * Capture this vault's uncaptured conversation deltas into episodes.
+ *
+ * Returns `{ captured, state, warnings }`: `warnings` names every write this pass
+ * could not confirm (per-session落盘, index line, marker) so a persistently
+ * failing vault is distinguishable from an idle one. Shares its shape with the
+ * preset's `runSessionCapture` (see check-engine-sync.mjs).
+ */
 export function runSessionCapture(root, sessionsRoot, state = undefined) {
   const next = state !== undefined && state !== null && typeof state === 'object' && state.schemaVersion === CAPTURE_SCHEMA_VERSION
     ? { schemaVersion: state.schemaVersion, sessions: { ...(state.sessions ?? {}) }, scanned: { ...(state.scanned ?? {}) } }
     : { schemaVersion: CAPTURE_SCHEMA_VERSION, sessions: {}, scanned: {} };
-  const { captured, dirty } = scanSessionCapture(root, sessionsRoot, next, true);
-  if (dirty) persistCaptureState(root, next);
-  return { captured, state: next };
+  const { captured, dirty, warnings } = scanSessionCapture(root, sessionsRoot, next, true);
+  if (dirty && persistCaptureState(root, next) === false) {
+    warnings.push('捕获 marker 写入失败，下次可能重复捕获同一批会话');
+  }
+  return { captured, state: next, warnings };
 }
 
 /**
