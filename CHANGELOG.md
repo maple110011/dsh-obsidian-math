@@ -1,124 +1,140 @@
 # Changelog
 
-> 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/memory/handoff.md](docs/memory/handoff.md)。
+> 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/handoff.md](docs/handoff.md)。
 
-## [0.7.5] - 2026-09-10
+## [Unreleased]
+
+> 内容：2026-09-11 可维护性审查（[docs/maintainability-review-2026-09-11.md](docs/maintainability-review-2026-09-11.md)，视角是"agent 能否长期维护这个仓库"）的落地。**未发版**：版本号仍是 0.7.5，发版动作留给维护者。台账见 [docs/maintainability-fixes-2026-09-11.md](docs/maintainability-fixes-2026-09-11.md)。
 
 ### Fixed
 
-- **体检报告不再只是「dsh 的输出记录」**：`buildAuditReport` 过去只产出一根字符串，它同时被①注入模型提示、②写进 `cache/memory-audit.json`、③被两个面板**原样**显示——于是用户看到的字面文本是 `- 低效用归档候选（0.5×可靠性+0.3×频次+0.2×新近度）: [[.deepseek/memory/records/optimal-coupling-cyclically-monotone|最优耦合 ⟹ 集中在 $c$-循环单调集…]](0.327)——向用户建议处置，不自行删除。`（用户原话：「几乎就是 ds 的输出记录，令人不知所云」）`现在拆成**两个渲染、一份数据**：`checklist`（模型看的简明指令清单）与 `human`（人看的中文摘要），结构化事实放进 `counts` / `decisions` / `thresholds` / `sections` / `structural` 并带 `schemaVersion: 2`。两个面板今后渲染 `human` 与结构化字段，模型清单退到「查看模型版清单」折叠里。
-- **体检报告不再把刚归档的卡列成「建议归档」**：`moveCardsToArchive` 在报告行构建**之前**执行，而报告从移动前的数组取数——`autoArchive` 打开时，报告会建议归档一张**已经不在库里**的卡（文件已被移走，点按钮就是死链）。现在所有 section 与 `decisions` 计数统一按「归档后仍在库中」过滤，`counts.cards` 同步扣减。
-- **面板不再丢掉数据层已经算好的信息**（同一份 JSON，两个面板此前各显示不同子集）：
-  - `collectMemoryState` 现在收集**全部五个卡片层**（记录 / 模板 / 主题 / 定理 / 策略）。此前只收集 records + templates，于是文档反复承诺的「五层」里有三层（topics/theorems/strategy，真实 vault 里确实有卡）在两个面板都**不可达**——只有主题卡或策略卡的 vault 会被判成「记忆库还是空的」。
-  - episode 现在带**人类标题、主题与日期**（解析 `memory/episodes/index.md`）。此前只显示 `2026-09-02-session-8e8ae65a….md` 和**捕获写盘时间**——同一次捕获写入的多条 episode 时间戳完全相同（实测两条都显示 `2026/9/10 09:16:21`），所以「事件时间线」既没有时间也没有线。
-  - `topic`（用户按主题浏览记忆的主维度，此前可搜索却从不显示）随卡片返回；卡片还带上 `layer`。
-  - 新增 `readAuditReport`：`readAuditText` 只取字符串，把 `generatedAt`/`counts`/`structural`/`archiveCandidates` 全丢了（面板因此显示 09-09 的「共 3 张卡」而实时摘要是「记录 2」——同屏两个卡数）。
-  - 搜索：haystack 转小写却拿原样 needle 比较，`De Finetti` 这类带大写字母的查询一条也搜不到；episode 此前完全不参与搜索。
-- **「对 / 错 / 归档」三选项改为分层，并补上回执**（用户：「令人不明所以，从日常使用来看感觉意义不大」）：
-  - 回复末尾的反馈行改为**每张卡一行、并写明是哪张卡**：`依据的记忆：<卡标题> — [✅ 这条对] [❌ 这张卡有错]`。旧模板给 N 张卡发 N 行**一模一样**的 `[✅ 这条对]`（只有 URL 里的路径不同），而「这条」在中文里读作「这个回答对不对」，实际动作却是对该卡的**永久判定**。
-  - `归档` 从评估行里移出（它是**文件移动**，不是第三个评价），两个面板的按钮改为 `✅ 确认` / `❌ 有错` / `过期` / `归档`，归档带二次确认与危险样式；补一行徽标图例 `✅ 已确认 · ⚖️ 与他处互证 · ❓ 单次来源`。
-  - **dsh web 面板的按钮第一次有回执**：它的 `run()` 丢弃响应体，点任何按钮界面上什么都不显示（Obsidian 侧有 Notice）；而唯一显示的 `success=` 对真实卡片永远是 `—`——等于让人对一个不存在的数字表态。现在显示宿主返回的中文回执或错误。
-  - **`❌` 不再凭空发明 `success_rate`**：旧实现按 base=0.5 写入 0.25，回执却写「成功率减半」——从"没有评级"变成"看起来量过的评级"。现在只有卡上**已有** `success_rate` 才改它；无评级卡只降 `verified` 一级并写 `needs_review`。
-  - **没有 `hook:` 块的卡不再没有反馈入口**：旧实现直接返回「该卡片没有 hook 块」，两个面板也把 ✅/❌ 藏起来——**证据最弱的卡反而最不能纠错**（`handoff.md` 早已登记为未做项）。现在 `applyFeedback` 为该卡补一个空 `hook:` 块；行内 flow 写法仍明确拒绝而不是盲改。
-- **web 面板刷新不再污染搜索框**：它唯一的刷新杠杆是 `setQ(q === "" ? " " : "")`，点一次「立即保存对话」搜索词就变成一个空格（URL `?q=%20`）。改用已有的 `tick` 计数（`&t=N`）。
-- **版本漂移与发布链路**（package.json 0.7.3 / manifest.json 0.7.4 / CHANGELOG 0.7.4 / npm `latest` 0.7.1，而 0.7.2–0.7.4 **从未推过 tag**）：新增 `scripts/check-version-consistency.mjs`——`package.json` / `manifest.json` / `package-lock.json` / `versions.json` / `CHANGELOG.md` 五处必须同号（带 `--tag` 时还要求 tag 等于版本号、且版本是纯 `x.y.z`，因为 Obsidian 注册表拒绝预发布号）；`versions.json` 补上 `0.7.5`；三方版本对齐到 **0.7.5**。`release.yml` 补上 `npm ci`、版本/tag 一致性、重建 `main.js` + `git diff --exit-code`、`npm test`——**推 tag 的发布流程此前不跑任何测试**；Release notes 改用 `awk -v v="$GITHUB_REF_NAME"` 抽取该版本段落（原来的写法取的是 `## [Unreleased]`）。发布步骤见新增的 [docs/release.md](docs/release.md)。
-- **检索回归网不再测"陈旧的手抄公式"**：两个零 token 探针（`scripts/qa/engine-probe.mjs`、`seed-probe.mjs`）此前各自复刻了一份打分公式 `0.85*BM25 + 0.10*cjk`，而产品用的是 `0.75*BM25 + 0.10*cjk + 0.15*hookPrior`，且探针**从不调用** `isRecallEligible`（superseded/duplicate 排除）、operator 硬过滤与 `maxResults`——权重在 08-30 改过而探针停在 08-25，于是**纠错机制上线后完全没有自动化看守**。现在把产品管线抽成 `buildRecallDoc` / `rankRecallDocuments` / `rankStrategyCards`（`dsh/preset/note-tools.mjs` 导出），`note_recall`、`note_strategy` 与两个探针**调用同一份代码**：探针测的就是产品跑的。
-- **导航索引不再压过它指向的内容**：`episodes/index.md` 列出每条 episode 的标题+主题，因此对几乎任何中文查询都有很高的原始字符覆盖率，实测把「库中无答案应给弱信号」的控制项顶掉（score 0.95 / coverage 0.86），并挤占真实命中的名次。新增按 kind 的语料权重（`episode-index` 0.4、`theorem-index` 0.7）把它降权。**真实 vault 探针因此从 9/12 回到 12/12，且没有改动任何一条 ground truth**（Fubini-Tonelli 由 rank 2 → 1，子序列记法由 rank 7 → 5）。
-- **`captureSubagents`：子代理会话默认不进记忆**。子代理会话会重放父会话前缀，保存它等于把同一场对话重复写进证据层、并稀释每轮注入预算。dsh ≥ 0.1.5 的 V3 头部新增 `origin: subagent` / `delegationDepth`，第一次让这件事**可判定**；preset 的捕获路径与 host 侧的面板计数用同一规则（`distillSession` 记录 `isSubagent`），V2 头部没有这两个字段因此无法区分、一律保留。`config.md` / `agent.cordis.yml` 已加该开关（默认 `false`）。
-- **junction 镜像会自愈了**：`syncGlobalPackageLinks` 只用 `existsSync` 判断是否已镜像，而 `existsSync` **跟随**链接——web profile 重装或包改名（0.3.20 聚合包替换了 `dsh-web-ui-all`、退役了 `dsh-perf`/`dsh-desktop-launcher`）后，悬空链接被判"不存在"，`symlinkSync` 随即 EEXIST 且被裸 catch 吞掉，这段"持久修复"就永久失效且**不留任何日志**（本机实测积了 7 个死链接）。现在用 `lstatSync` 识别条目、只在"是 junction 且目标已消失"时删除重建，并记录失败项。
-- **皮肤中心开关的文案与语义对齐**：自 dsh-web-all 0.3.20 起聚合包已自带皮肤中心，本机这个开关在功能上冗余；改名为「挂载皮肤中心 UI（高级 / 通常无需开启）」并写明两点——它只覆盖"有皮肤包、没有聚合包"的 web profile；**关掉它不会关掉皮肤**（皮肤本体走全局 `$DSH_HOME/cordis.patch.yml` + junction 镜像，侧栏照样跟随主界面选的皮肤）。默认值保持 `false`。
-- **`dsh/preset/math-memory.mjs` 里还有 4 处同类的 `$` 替换模板缺陷**（本轮回归检查时发现）。审计写入路径（`syncHookStatsToCard`、`syncTopLevelStatsToCard`、重复卡标记 `duplicate_of`、候选策略卡转正）都用 `text.replace(fmMatch[1], rewritten)`：第二个参数是**替换模板**，所以 agent 写的 frontmatter 里的 `$$`／`$&`／`$'`／`` $` `` 会被展开——而这是**每日审计自动触发**的，比点按钮更隐蔽。已改为按偏移量拼接（新增 `replaceLeadingFrontmatter`，与 memory-admin 的 `replaceFrontmatter` 同一原理），并补了对照测试：先用旧写法复现损坏（标题行被截断成 `title: 关于 $ 的表示 与 ---` 且 frontmatter 块二次注入），再断言新写法保留原文并落盘改动。
-- **Obsidian 侧栏在 dsh 0.1.5 上不再显示 401 文本页 —— 真正的修法是主进程反代**。上一轮只做到"抓到 token 并让 iframe 加载带 token 的地址"，实测证明导航发生了（`[render] iframe src -> …?token=…` 紧跟 `[iframe] load`）**但界面仍是 401**。根因是 dsh 的会话 cookie 带 **`SameSite=Strict`**：侧栏是 iframe（顶层 `app://obsidian.md`、框架 `http://127.0.0.1:3180`，**跨站**），这种 cookie 在跨站子框架里既存不下也发不出。现在：
-  - dsh 以 `--port 0` 启动（内部端口），**插件在主进程里跑一个反代监听用户配置的端口**（默认 3180），浏览器只与代理通信 —— cookie 的权威（`dsh-auth-<sha256(host:port)>`）因此稳定且第一方；
-  - 代理用 `http.request`（`fetch` 会忽略 Host）**以公共权威**兑换启动 token 并保存 cookie，随后给每个转发请求注入 `cookie`、把 `host` 改写成公共权威（dsh 按 `Host` 决定 cookie 名），并剥掉 `set-cookie`/`x-frame-options`/`content-security-policy`；
-  - `/api/` 前缀的 WebSocket 升级照常转发（实时更新依赖它）；
-  - 就绪判定改为"代理在配置端口上能供出已认证界面"；`stop()` 关闭代理并清 cookie。
-  - 落地前做过一次性可行性实测（权威匹配、首页 200/28884 字节含 `__DSH_BOOT__`、资源 200/516675 字节、`/api` 非 401/403、`/api/remote.mux` 升级 101），全部通过。
-- **`check-embedded-loader.mjs` 不再自证**：它此前比对的**是自己那份** `return {…}` 名单（审计用变异实验证明：从模板删掉 5 个被消费符号后它仍 exit 0）。现在它从模板里**读取**真实的参数表、`return {…}` 白名单与追加的 helper，断言"白名单覆盖模板消费的每一个 `MEMORY_ADMIN.*`"、"白名单里的每个符号都能解析"、"参数表与实参表一致"，并**自测**"抽掉任一被消费符号必须被发现"。
-- 安全性：`/memory-panel/*` 路由不再把"约束根"交给调用方，并拒绝跨源请求。此前 `body.root`／`?root=` 直接**就是**约束根，`pathInside(root, target)` 因此对任何不含 `..` 的 `rel` 都是恒真——攻击者同时决定两端。加上路由只校验 loopback（而"任意网页"可以用 `content-type: text/plain` 发 CORS 简单请求、无需预检），实测后果是**任何网页或本机进程能移动任意路径下的任意文件**（评估报告 §2 P0-1，已复现）。现在：
-  - `root` 只在重启述 profile 启动时确定的 vault（`DSH_WORKSPACE_ROOT`／`DSH_OBSIDIAN_VAULT`），不同路径一律 403 `root not allowed`；
-  - 任何带**非 loopback `Origin`** 的请求直接 403（含 `Origin: null`）；带 loopback Origin 或无 Origin 的本地客户端照常；
-  - 配置了 `DSH_OBSIDIAN_FEEDBACK_TOKEN` 的实例（Obsidian 插件启动的那个）要求每个请求携带 token（`X-DSH-Token` 头、`?t=` 或 body），定时安全比较。
-- **`archiveMemoryFile` 现在校验源**：只接受 `.deepseek/<层>/…` 下的 `.md` **常规文件**，拒绝普通笔记、整个目录、`capture-policy.md`／`config.md`、含 `..` 或盘符的路径、以及 vault 根本身（此前这些全都能被"归档"，已复现）。归档目录改为**校验通过后**才创建——之前被拒的请求会在 vault 里留下空的 `.deepseek/archive/records/`（实测发现并修掉）。
-- **写入记忆卡片不再损坏文件**（两个静默数据损坏模式，均由面板 ✅/❌ 按钮触发）：
-  - `text.replace(spanText, newText)` 会把**第二个参数当替换模板**解释，于是 agent 写的 frontmatter 里的 `$$`／`$&`／`$'`／`` $` `` 被展开——数学库里 `title: 关于 $$ 的表示` 会变成 `关于 $ 的表示`，`$&` 更会把整段 frontmatter 注入标题（62→149 字节）。项目自己在 `scripts/build-obsidian.mjs` 早就为构建脚本规避过同一个坑。
-  - frontmatter **体为空**时搜索串是 `""`，`replace("", x)` 在偏移 0 **插入**而非替换，收尾的 `---` 被推到文件中间，而 UI 报"已成功"。
-  - 改为按**偏移量拼接**（新增 `frontmatterSpan`／`replaceFrontmatter`，两份自包含副本同步），空体与 CRLF 都保持良构；`setHookField`／`setTopField` 也不再给空体留空行。
-- **链接跳转服务不再对已解码的参数二次解码**：`URLSearchParams.get()` 返回的已是解码值，再 `decodeURIComponent` 一次会让**任何含 `%` 的路径**（数学笔记常见）抛 `URIError`；该语句原本在 `try` 之外，异常逃出请求监听器，**点击永久挂起无响应**。现在删掉两处二次解码，并把整个 handler 包进 try/catch，异常一律回 500 并写日志。
-- **`install-into-profile.mjs` 不再静默失败**：它把 insert 锚在结尾的 `]`（flow 风格），而仓库里三个 patch 文件都是 block 风格、没有 `]`，于是 `replace` 原样返回、脚本照样写回并打印成功——客户端面板进 profile 的**唯一**途径从来没生效过。现在改为在末尾**追加** block 风格 `insert:`，写入后断言文件确实含包名，否则 exit 1。
-- **`/memory-panel/workspaces` 不再要求 `?root=`**：root 守卫原本在路由分发之前，而面板前端正是裸 fetch 这条路由 → 400 → 工作区下拉框永远是空的。该分支现在排在 root 门禁之前（它只读 registry，不碰 vault）。
-- **`capture-policy` 路由校验 `field`／`mode`**：`field` 会进入 `new RegExp("^" + field + ":")`，`a.c` 能改到无关行、`idea|fact` 会同时毁掉两个真实键。现在只接受 `^[A-Za-z_][A-Za-z0-9_-]{0,63}$` 与 `^[a-z]{2,16}$`。
+- **面板约束根在"未配置"时会退回请求方自带的 `root`（安全）**：`/memory-panel` 的根锚定此前只在**环境变量已配置**时生效（`DSH_WORKSPACE_ROOT` / `DSH_OBSIDIAN_VAULT`）；两个都没配时，请求里的 `root` 直接成为约束根，于是下游 `pathInside(root, target)` 的**两端都由调用方决定**，形同虚设。现在允许的根 = 环境变量 ∪ 本实例已注册的 workspace（`ctx.workspaceRegistry`），**两者都空则拒绝一切带 root 的请求**。补了 5 项路由断言（含"未配置 + 空注册表 → 403 且文件未被移动"）；**变异验证**：还原旧逻辑，新断言立即失败并报 `status: 200`（确实把卡移走了）。
+- **`npm test` 在受限环境下必然失败，而且静默跳过其后 16 个门禁**：node 子进程在禁止"管道 stdio"的环境里无法被 spawn（`spawn EPERM`），`&&` 链因此在第 5 个门禁断掉；更隐蔽的是 `check-doc-consistency.mjs` 拿到空输出后把计数读成 0，报出 **18 条"文档漂移"**——而文档是对的。现在子进程 stdio 走**真实文件描述符**而非管道（两种环境都能捕获输出），门禁**全部跑完再汇总**，并把"子进程根本没起来"单独标成环境结果。**本机 `npm test` 从"2 处红 + 跳过 16 条"变为 27/27 全绿。**
+- **`dsh/client-panel/lib/client.js` 这个提交进仓库的构建产物此前没有任何门禁引用**：源码改了它不重新构建，所有门禁依然全绿，而它是**实际下发给 dsh web 面板**的代码。新增新鲜度门禁（与一次全新构建逐字节比对）；构建需要 esbuild 子进程，环境不允许时按 SKIP 报告并仍执行形状检查。
+- **`capture-policy.md` 说 `sessionCapture` 默认开，而代码与 `config.md` 都是默认关**：这条错默认值是**安装进用户 vault 的模板**（`handoff.md` 坑 42 早有记载，模板里一直没改）。已改为默认关。
+- **`strategy-layer.md` 的状态停在"提案（未实现，待拍板）"**：策略层自 0.7.2 起已实现（strategy 模板 + `note_strategy` + `working.md` 注入 + AGENTS.md 路由）。状态改为已实现，并点明 §11 仍有 2 项待定。
+- **文档版本横幅腐烂**：`handoff.md` 写着"版本 0.7.2"（仓库在 0.7.5）、`design.md` 停在"v0.6.x 实现规格"。现在活文档用精确标记行 `> 当前版本：x.y.z`，并由版本守卫与 `package.json` 比对（精确标记以免把"0.1.5 adaptation"这类历史引用误判成当下声明）。
+- **构建日志报告的"bytes"其实是 UTF-16 码元数**：`main.js` 是中文密集型文本，`main.length` 比真实字节数少约 10%，而 CI 门禁比对的是字节。改为 `Buffer.byteLength`。
+- **体检报告的 `schemaVersion` 只写不读**：`AUDIT_SCHEMA_VERSION`（写入侧）此前**没有任何读取方**——`readAuditReport` 不看它，于是被**更新版本**的引擎写出的报告会被当作本版本能理解的形状解析（坑 38 记录的 v1/v2 事故正是这一类）。现在读侧声明兼容范围（v1 = 无字段 / v2 = 双渲染）并新增 `auditSchemaVersionOf`；范围外的报告返回 null（fail-closed，"没有可用报告"好过"半懂地渲染"），下一次体检重写该文件。
+- **捕获路径的静默失败**：episode 落盘 / `episodes/index.md` 索引行 / 捕获 marker 三处写入失败此前**全部被吞掉**——于是"持续写失败的 vault"与"空闲的 vault"在行为上完全无法区分（都是 `captured: []`）。现在 `runSessionCapture` 返回 `warnings`（两份实现都改），marker 与索引判定改为**读回校验**而不只是"没抛异常"。顺带修掉一个潜在缺陷：索引行写失败过去会让整个会话重试，从而把同一段对话**重复追加**进 episode 文件；现在正文已写入即算捕获成功，只报索引缺失。
+- **死代码**：`RETRIEVE_TARGETS`（导出但无人读取，且让 `strategy-layer.md` 的"改常量就能加取值"成为**假承诺**）与 `MEMORY_SCAFFOLD_FILES`（零使用方）已删除，`strategy-layer.md` 同步改为"目标是自由字符串、不校验"的实情。
+- **文档漂移清理：产品名 `dsh web ui` → `dsh web`**。产品与插件家族都已改名（聚合包 `@linxin666/dsh-web-ui-all` → **`@linxin666/dsh-web-all`**，子包仍是 `dsh-client-ui-*`），但 README 中英、ARCHITECTURE、`handoff.md`、`testing.md`、`design.md`、`control-panel.md`、`config.md` 模板、插件注释与 profile 注释里仍写旧名。现在**活文档一律写 `dsh web`**，插件家族改称「`@linxin666/dsh-web-all` 聚合的那一族 UI 插件」——**引用可核对的包名，而不是口头的家族名**。历史档案（已发布的 CHANGELOG 段落、日期化审计、已退役的 `REFACTOR-PLAN.md`、调研快照）**不追改**，只就地加更正。
+- **`REFACTOR-PLAN.md` 的状态横幅与事实不符**：它称「Phase 4（web ui 适配）未做」，而记忆面板其实**已经**以另一种形态交付（独立客户端包 + 官方 `settings.section` 槽位 + 宿主路由 `/memory-panel/*`）；未做的只是**自挂右侧 DOM 列**那一种形态。横幅改为按事实区分这两件事。同处「15 个模板」改为不写数字（实际 19，且数字应由 `templates-manifest.json` 决定）。
+- **`docs/dsh-0.1.5-adaptation.md` 的状态停在「计划已定，实施中」**：三条适配（V3 日志按会话去重、401 改主进程反代、junction 镜像自愈）都已落地，§7 的两个待决问题也都已决定。状态改为**已实施**并列出结论。
+- **`docs/dsh-panel-research.md`** 是 2026-08 的调研快照，正文里的包名已过期。加了日期化更正块（说明改名事实 + 权威依据），**不动正文**——正文是当时的证据。
+- **面板元信息在字段缺失时会渲染字面文本 `undefined`**：`cardMeta` 对 `type` / `operator` / `topic` / `status` / `lastUsed` / `updated` 用的是 `!== ''` 守卫，`undefined` 会漏过去，于是残缺卡片显示成 `❓ · 从未用过 · 上次 undefined`。改为 `typeof … === 'string' && … !== ''`。这是新加的呈现层测试当场抓到的（见 `Added`）——数据层目前总会给字符串，所以它一直是**潜伏**的。
+- **一个"看起来在工作"的守卫其实锚错了位置**：`check-embedded-loader.mjs` 的 `loaderCall()` 算出了偏移却返回了一个**从未被赋值**的模块级变量（`fnAt`），于是 `lastIndexOf(marker, undefined)` 按规范等价于**从模板末尾往回搜**，守卫永远校验**最后一个** allowlist，而注释声称的是"最近的前一个"。它今天正确**纯属运气**（memory-admin 的 loader 恰好排最后）——再加一个 loader 它就会去校验错误的名单，还照样打印 OK。现已修好，并加一条自测：往合成模板末尾再接一个 loader，断言取到的仍是 memory-admin 的名单（**变异验证**：改回原样 → 自测报出根因）。
+- **一条永远不可能失败的断言**：`test-installer.mjs` 断言卸载后 `<vault>/.deepseek/cache` 不存在，但安装器从不创建该路径、夹具里也没有，因此它恒真。修法不是删掉断言，而是**让前置条件成立**（夹具先造出真实 vault 会有的缓存文件），再断言 `--purge` 删掉它——修完立刻证明这个行为确实实现了，也就是说这条断言过去既没保护代码、也没保护文档承诺。
+- **用户可见文档里不再出现某个具体的 vault 路径**：README 中英的安装示例、`ARCHITECTURE.md` 的架构图与 `docs/installation.md` 的 dry-run 输出此前都写着同一个 `D:\Obsidian笔记数据库`——它读起来就是维护者的机器，而 npm README 是**包主页，读者是陌生人**。现在一律用占位符（`<path-to-your-vault>` / 「工作区根」/ `<vault>`）。
+- **文档里的「数字」改成从代码取真值**：① README 中英写「四个 / four note tools」，而 `note-tools.mjs` 注册 **5** 个 → 更正并列出工具名；② `design.md` 写捕获策略「默认 ask/ask/ask」，而 `DEFAULT_CAPTURE_POLICY` 是 `structure: auto` → 按代码改写；③ 论文数曾被写出 **14 / 15 / 19 / 20** 四个版本 → 收敛为**单一来源** `docs/literature.md`（现 20 篇，与 `literature/.raw/` 一致），`handoff.md` 的复述改为指向它；④ `sessionCapture` 默认关的**版本**两说并存（0.7.4 / 0.7.5）→ 采信发布时写下的 0.7.4 条目（`0.7.2`–`0.7.4` 从未打 tag，无法用 tag 复核）。
+- **基准的验收声明改为证据支持的说法**：`benchmark.md` 与 `handoff.md` 此前写真实 token E2E「**8/8 通过**」，而唯一一份完整运行的 baseline 记的是 **7/8**，其余两份是单用例重跑的 1/1。现在写明：8 用例套件**从未一次性全绿**；完整运行通过 7 项、余下 1 项单独复跑通过；要拿回「8/8」必须整套重跑（`npm run qa:e2e` 烧钱）。同时点明 `baseline.json` **只写不读**，所以 `testing.md` 的「CI 可比对」是**目标而非现状**。
+- **`docs/memory/obelisk-comparison.md` 仍在引用 `pathIsInside`**：该函数在 P2-6 里已统一改名为 `pathInside`。这是"改名之后靠 grep 补文档"漏掉的一处。
+- **`scripts/test-panel-present.mjs`：呈现层第一次有自动化测试**（第 33 个门禁）。`main.js` 是用户真正安装的文件，而它的呈现层此前**零覆盖**（徽标/元信息组合、「⚠️ 待处理」的计数规则、层级回退都靠手测）。`MemoryView` 恰好把决策留在四个纯方法里（`layerEntries` / `pendingItems` / `cardMeta` / `trendText`），测试**从 `main.template.js` 的源码文本里提取它们并求值**——测真源码而非副本，接缝挪走即报错。20 项断言覆盖五层渲染与降级、待处理计数规则、元信息分段与顺序、趋势的显示条件。**它第一次运行就抓到一个真实缺陷**（见 `Fixed`）。
+- **`scripts/check-doc-constants.mjs`（第 32 个门禁）：把文档里的**语义常量**锚到代码**。`check-doc-consistency` 只锚测试套件的断言数；审查指出更值钱的是"有多少个笔记工具""文献库有多少篇"这类**散文里的常量**——它们会静默漂移，而读者无从核对（实测：论文数被写出 14/15/19/20 四个版本）。现在：笔记工具数由 `note-tools.mjs` 的注册推出（5 个）、论文数由 `literature/.raw` 的目录数推出（`.raw` 是 gitignore 的语料，缺失时**声明 SKIP** 而非静默通过）；**措辞变了导致解析不到锚点也算失败**，否则锚点会腐烂成装饰。**变异验证三项**：README 改回 four、`design.md` 改七个、`literature.md` 改 21 篇 → 各报出精确差异。
+- **`scripts/check-rename.mjs` 增加第二条规则**（原先只管 profile 名）：活文件里再出现**已退役的旧产品名**即失败（真实退役包名 `dsh-web-ui-all` 例外），历史档案须以「路径 + 理由」白名单豁免——**要改历史记录，得先写下理由**。
+- **frontmatter 的边界判断此前在全仓复制了 15 份**：`/^---\r?\n([\s\S]*?)\r?\n---/` 在 `math-memory.mjs`（12 处）、`memory-admin.mjs`（1 处）、`note-tools.mjs`（2 处）各写一遍，6 个解析器各判各的"块到哪里结束"。本仓库历史上最严重的三次数据损坏（坑 21/22/43）全是同一个形状：写入方的"块内"与读取方的"块内"不一致，闭合 `---` 落在文件中间。现在规则只有一个家（`dsh/preset/hook-frontmatter.mjs` 的 `frontmatterSpan` 及其派生：`frontmatterBlock` / `readFrontmatter` / `stripFrontmatter` / `replaceFrontmatter` / `replaceFrontmatterBlock`），15 处全部改调它；6 个解析器仍各自解析**字段**（那部分本来就不同，是正当的）。行为保持：记忆回归仍 **240/240**。
 
 ### Changed
 
-- **侧栏卡顿：第一轮修的**不是**真因，第二轮用 CDP 实测定位后修对了**。用户报告「Obsidian 里的 dsh 界面很卡顿，展开侧边栏时尤其明显」，第一轮从皮肤 CSS 推断是「跨帧毛玻璃」（`backdrop-filter`）并上线了样式注入；**用户复测仍然卡，且主 dsh web（3080）也卡**。第二轮改用 headless Chromium + CDP 驱动**真实 dsh**（真实皮肤、真实前端、真实鼠标事件做 6 次侧栏开合），做同轮对照实验：
-  - 皮肤 **CSS 全部移除**（JS 仍在）：帧 >50ms 3→4、最差帧 84→83ms、样式重算 1172→1165ms —— **一点没变**；
-  - 皮肤 **JS 停用**（CSS 仍在）：帧 >50ms 3→**0**、最差帧 84→**33ms**、长动画帧 8→**0**。
-  真因是皮肤 `orca-link` 的**客户端脚本 `hooks.mjs`**：约 14 个 subtree MutationObserver、一个约 5 次/秒改状态角色内联样式的循环、以及一个跟着侧栏动画**每帧**触发的 ResizeObserver（读布局 → 写 body 级 CSS 变量 → 翻 `body[data-orca-sidebar-wide]`，每次都是全文档样式重算）。同一个皮肤在 Obsidian 侧栏与 3080 都在跑，所以两边一起卡——这也解释了「为什么 CSS 修完还卡」。
-  - 处置（两档，都在代理里完成，**不改皮肤文件**）：**侧栏性能模式**现在除样式表外还会改写 `hooks.mjs` 的两处热循环（ResizeObserver 改 180ms 尾边沿防抖、角色循环下限提到 1s），锚点全中才改、皮肤更新后自动原样返回并记日志；新增开关**「侧栏加载皮肤动态装饰」**（默认开），关掉后把该模块换成空实现（保持导出契约），实测最流畅（Task −18%、样式重算 ops −34%、LoAF 归零），代价是侧栏里的 hero 场景/状态角色/信号芯片消失。
-  - 经**已发布代理**端到端复测：性能模式开（装饰保留）帧 >50ms 2→**0**、最差帧 67→34ms、LoAF 5→1；关装饰后 3 帧 >33ms、0 帧 >50ms、最差 33ms、LoAF 0。
-  - 其余第一轮的改动保留（iframe 隔离 `contain`/`translateZ(0)`、侧栏收起时 `display:none` 挂起并每秒自检、`writeDebugLog` 改异步批量、记忆面板搜索 220ms 防抖）——它们各自省开销，只是**不是**这次卡顿的主因；完整原因清单（11 条）与自查用 DevTools 片段见 [docs/memory/sidebar-performance.md](docs/memory/sidebar-performance.md)。
-  - 回归：`test-panel-proxy.mjs` 15 → **31** 项（注入 9 项 + 皮肤脚本改写 5 项 + 原有反代断言）。**这套断言在开发中抓到一个会白屏的真实缺陷**：改写后的响应同时带着上游的 `transfer-encoding: chunked` 与新的 `content-length`，客户端判协议违规（`Content-Length can't be present with Transfer-Encoding`）。
-- **GraphMemix（Li et al. 2026）可吸纳点：测量、采纳与不采纳都写进设计**。新读的这篇论文（`literature/cards/liGraphMemixQueryAwareEvidence2026.md`）与本项目已有的几件机制重复的部分不再重做（边界门控 / `harmed` / `verified_by` / 声明值与有效值 / `degraded`），本轮把**其余可吸纳点逐条落成决策**（[docs/memory/retrieval-v3.md](docs/memory/retrieval-v3.md) §7）：
-  - **多视图 max-pool：实现了、测过了、不采纳**。`composePassageViews()` 把 passage 拆成 `title` / `keywords` / `body` 三个视图（字段集合与单袋一致，只改池化），`rankRecallDocuments(…, { viewPool: "max" })` 按视图各自的长度统计打分再取最大值，`viewPool` 默认仍是 `"bag"` 并在返回值里如实回报用了哪种池化。真实 vault 的 A/B（11 条 ground truth，top-8）：Direct 11 → 11 不变，**目标排名均值 1.73 → 2.27，0 例改善 / 2 例变差**（Fubini-Tonelli 1→5、Helly 引理 3→5），有符号净恢复 **Δ = +0 − 0 = 0**。原因是我们与论文的语料形态不同：我们的袋已按种类截断且有界，长度稀释本来就小，而 max 丢掉了「查询词分散在标题与正文时两视图分数相加」这一信号。**结论：保持单袋默认**；出现真实稀释案例时先补 ground-truth 再复测。
-  - **可达性分层 + 有符号净恢复 Δ 成为常驻测量**：`npm run qa` 的引擎探针新增 §2——从 vault 原文抽 `related`/`source`/`[[wikilink]]` 边（断链不算可达），把每条 ground truth 目标分成 **Direct / Recoverable / No access** 三层，对两种池化各算一次，并同时报告**目标排名**（分层是粗粒度的：本轮 11/11 全是 Direct，只看分层会误判「两种池化一样」）。读法约定：改检索必须「Direct 数不降**且**排名均值不升」。
-  - **明确不采纳通用多样性重排**（MMR/DPP）：论文的冻结候选控制实验本身给出反例（Top-K 56.87 / MMR 56.84 / DPP 52.69；净恢复 forest +43 vs MMR −6 / DPP −36），`AGENTS.md` §5 已有对应纪律。
-  - **记录在案、暂不实现**（各带触发条件）：查询条件化的关系信任 + 「锚点槽位」（我们的 `related` 边还没有可信度信号）、按打开成本自适应 k（语义设计需拍板）、两阶段适用性判定（等于新增每轮必做步骤，与实测失败模式冲突）。
+- **反馈 token 与链接基址的「新名优先」现在两侧一致，且插件同时注入两个名字**：此前 preset 读 `DSH_MATH_MEMORY_*` 优先，而面板的 token 校验**只读旧名** `DSH_OBSIDIAN_FEEDBACK_TOKEN`——无论插件注入哪个名字，总有一侧看不见它（这是"半途改名"的典型形态：偏好顺序变成了隐式契约）。现在预设与面板读同一对、同一顺序，Obsidian 插件同时注入新旧两个名字（插件与 npm 包可以分别升级，只发新名会打断旧消费者）。回归 +3 项（含「两个都设时新名优先」）。
+- **`npm test` 从 `&&` 长链改为 `node scripts/run-gates.mjs`**：一次运行全部门禁、逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾；`--only <子串>` 可只跑匹配的门禁；`npm run test:list` 列出门禁名。**一个门禁失败不再吞掉其余门禁。**
+- **测试套件的 `__CHECKS__` 分母改为自数**：`test-panel-proxy.mjs` 手写的 `EXPECTED_CHECKS = 31` 实际执行 **32** 个断言，`test-panel-auth.mjs` 的 `7 - failed`/`7` 实际可达 **8** 个。文档锚点盯着这些自报数，于是错数字被抄进了 5 处文档；现在 `check()` 内部计数，末尾打印真实值（文档已同步为 44 路由 / 32 反代 / 8 握手）。
+- **四条面板路由此前零测试**（`feedback` / `session-capture` / `session-capture-toggle` / `archive-episodes`）：路由套件只驱动了 8 条里的 4 条，而**唯一一条"按调用方给的 `rel` 往卡片里写数据"的 `feedback` 连正向用例都没有**——与 P0-0 同属"写入型端点信任调用方输入"的形状。补 9 项断言（35 → **44**），覆盖 `..` 逃逸被拒、正向写入、开关往返、捕获返回形状、按 mtime 归档旧 episode 与 `maxDays` 回退。
+- **`dsh/templates/AGENTS.md` 改名为 `dsh/templates/vault-AGENTS.md`**（安装后的文件名仍由 `templates-manifest.json` 映射为 `AGENTS.md`）：仓库内的源文件叫 `AGENTS.md` 会被 agent harness 当作"**本仓库**的指令"自动注入，而它其实是**给用户 vault 的教学协议**（实测被注入约 200 行，含与仓库维护冲突的硬约束）。
 
-- **吸纳外部设计的 5 个机制（评估见 `docs/design-intake-2026-09-10.md`）**：评估两个外部项目后的结论是「少吸收、多印证」，最终落地 5 件全部确定性、零新依赖、零模型调用的改动：  - **适用边界进检索（硬门控）**：卡片顶层/`hook` 里的 `not_applicable_when` 现在被 `note_recall` 与 `note_strategy` 当门控用——查询命中边界短语时该卡**不进候选**，但结果里**单独列出「因适用边界被排除（命中『…』）」**。刻意不做静默丢弃：不可见的假阴性会让用户以为"库里没有"。边界文本按顿号/逗号拆成 ≤12 字的短片段再匹配，关键词列表与散文式边界都能吃下。
-  - **负反馈计数 `harmed`**：「用过但结果更差」是 `uses`/`success_rate` 表达不了的一类信号（体检 weak 桶要求"成功率低**且**用过 ≥3 次"，真实 vault 从未达到）。用户点 ❌ 时插件累加 `hook.harmed`；两个面板在 >0 时显示 `⚠️ 倒忙 N 次`，体检新增「负反馈」行与清单项。
-  - **验证等级凭据 `verified_by`**：把「verified 升级必须用户参与」从一句话变成**可机检的不变量**——用户点 ✅ 时由插件写 `verified_by: user`；体检把「等级高于 single-source 却没有凭据」的卡列为**越权升级**（只报告、不自动改）。❌ 降级时作废凭据（写 `none`），避免旧确认继续背书。
-  - **声明值 vs 有效值**：`uses` 的真相是「frontmatter 声明值 + `retrieval-stats.json` 中尚未合并的增量」（那份文件是**增量**，体检合并后清零）。面板此前只显示声明值 ⇒ 两次体检之间少报。现在 `collectMemoryState` 返回 `uses`（有效值）+ `usesDeclared`/`usesPending`；体检在回写后**读回文件核对**，不一致即报告。
-  - **`degraded` 取代静默成功**：体检里每一处确定性写入都改成「写完读回验证」，失败即计入 `postconditions` 并给出 `status: "degraded"` + `warnings`（人话摘要与模型清单都会写出来）。**这条上线当轮就抓到下面两个真实缺陷。**
-- **修掉一个静默写坏卡片文件的缺陷（由上面第 5 条当场抓出）**：`math-memory.mjs` 的 `syncTopLevelStatsToCard` 把**含首尾 `---` 的整块**交给 `setTopFieldText`，于是当策略卡**没有** `uses:` 行时，追加的字段落在**闭合分隔符之后**（即正文里），且每次体检都会再追加一行——这正是此前在 `strategy/strat-ot-structure-proof.md` 里发现并清理的那两行 `uses: 0` 的**成因**。现在改为在分隔符**内部**拼接，并由「读回验证」保证落点正确。
-- **命中无处可写时不再静默丢弃**：既无 `hook` 块又不是策略卡的卡片若累积了命中，体检会明确报告「这批 hits 会在重置时丢失」（此前被直接清零）。
+- **`pathInside` 在两个引擎里统一了名字**：preset 侧原叫 `pathIsInside`，所以 `check-engine-sync.mjs` **根本看不到这一对**——一个安全相关助手（面板约束根、vault 过滤都靠它）的命名分叉。改名后两份逐 token 相同并被守卫覆盖；宿主侧同时补上 preset 独有的类型守卫（原来传 null/undefined 会抛异常而不是返回 false）。共享符号清单 21 → 22（守卫会强制这个决定被显式做出）。
+- **捕获索引失败的语义**：`appendEpisodeIndex` 由「返回 void / 抛异常」改为「返回布尔（读回校验）」。
 
-- **「设计迭代忘记适配」专项审计（用户要求）**：把每个"后来才长出来的东西"（记忆层、反馈动作、开关、皮肤、插件包、产物）拿去比对所有向它枚举消费点的地方，找到 6 处真实缺陷并全部修复：
-  - **归档只认 records 层**：`archiveMemoryFile` 与体检的 `moveCardsToArchive` 都把目的地写死 `.deepseek/archive/records/`，且只回写 `records/index.md` ⇒ 归档一张**策略卡**会把它塞进记录层的归档目录，并让 `strategy/index.md` 里那行变成**悬空链接**。现在按卡自己的层归档并回写该层索引（`records` 的映射不变，已有归档仍可找回）。
-  - **web 面板的「自动保存对话」勾选与引擎相反**：面板用 `enabled !== false`，而引擎对**缺失的键返回 false**（默认关）⇒ 真正关闭时界面显示"已开启"。改为 `=== true`。
-  - **文档说 `sessionCapture` 默认开、实际默认关**（0.7.3 默认 `true`，后按"写入先征得同意"改为 `false`，文档没跟）。已更正 handoff 与 0.7.3 条目。
-  - **注入给模型的「分层长期记忆」说明停在五层**，路由清单里没有 templates 与 strategy。现在写明"五层 + 三个后长出来的检索面"并补齐路由。
-  - **AGENTS.md 三写第 3 步清单漏了 `strategy/`**（后加的层不在收尾清单里）。已补。
-  - **本机 `deploy-local.mjs` 只部署 8/19 个模板**（手写清单，漏 `config.md` 与 `strategy/_README.md`，后者是后加的层，改它永远进不了 vault）。改为读 `dsh/templates-manifest.json`，用户自有文件（config/capture-policy/notation）改为只在缺失时创建。
-  - 另有三处判定为**有意为之**并补上说明：体检只扫 records/templates/strategy（导航卡不参与"低效用归档"）、`structural` 只对 records 生效、`notation.md` 在检索语料里按笔记分类。回归 200 → **207**（§32 归档按层 6 项 + 注入覆盖 1 项），路由回归 28 → **30**。
+### Added
 
-- **面板第二轮打磨（用户反馈）**：
-  - **只保留路径下拉框**：dsh web 记忆面板此前同时显示「工作区下拉」与「手动输入 vault 路径」两个控件，令人困惑。现在默认只有下拉（选项显示工作区名，完整路径放悬停提示，下方一行「当前 vault」）；仅当工作区列表为空时才退化为手动输入。
-  - **修掉浅色文字看不清**：次级文字用的 `--dsw-alias-label-dimmed` **在用户当前皮肤（orca-link）里没有定义**——该皮肤只定义 `primary/secondary/tertiary/caption` 一族，于是这条声明失效、颜色回退到继承值。改用 `var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary, …))`；Obsidian 侧同批把 `--text-faint` 换成 `--text-muted`。**教训：跨皮肤写样式只能用各皮肤都保证存在的 token**（`docs/memory/handoff.md` 坑 39）。
-  - **卡片补一行「这是什么」**：标题常常是一整句数学命题（30–40 个汉字、含 LaTeX），只看标题看不出内容。数据层新增 `summaryOf()`：优先 frontmatter `summary/description/abstract`，否则取正文第一段有效行，跳过标题/引用/表格与记账行（`- 标签：…`、`- 状态：…`、以及真实卡片里那两行游离在 frontmatter 之外的 `uses: 0`），策略卡退到 `abstraction.principle`，最后才用 `hook.pattern`；两个面板把它作为标题下的一行显示。真实 vault 上四条记录/主题/策略卡的摘要现在都是可读的一句话。
-- **捕获策略扩到四个档位：`idea/fact/preference/structure`**。原策略的三个"内容类别"配上一句"三写第 2/3 步先问"，导致**在协议之后才长出来的层**（topics / theorems / templates / strategy）归属只能靠读者推断，`strategy/` 甚至不在三写清单里。现在一个档位对应一组层：想法→inbox；事实→records 的 fact/event/instruction/artifact；偏好→profile 与 notation；**结构→topics / 定理索引 / 模板 / 策略**的索引与结构行（默认 `auto`：它管的是给已存在的内容补索引，每次都问会打断对话）。AGENTS.md、`capture-policy.md` 模板、系统提示注入、两个面板的策略行、host 侧读取与测试全部同步；**缺 `structure:` 行的旧策略文件行为不变**（等同 `auto`）。事件层（episodes，归 `sessionCapture` 开关）与记号「收集」的豁免也第一次写清楚。
-- **项目定位写进文档**：记忆系统已解决「agent 记不住用户问过什么」，但**「辅助用户打磨一套数学理解、并建立对理解/技巧的调用体系」远未解决——真正实现它才是 1.0**。README 中英、`docs/memory/README.md`、`handoff.md` 决策记录均已写明，并列出 1.0 之前缺的东西（理解状态与卡点、技巧的调用体系、主动教学闭环、复习调度）。
-- **`docs/session-scope.md`（会话隔离备忘）标注为已否决**：原始不适来自"面板信息量太低"的错觉；P1 要包住被会话搜索 / lineage / 按 URL 打开共用的 `sessionPersistence.list()`，代价与收益不成比例；侧栏分组折叠（状态持久化）已够用。文档顶部给出否决结论与理由，正文保留为存档。
+- **仓库根 `AGENTS.md`**（维护协议）：两个产物与数据流、文件地图（改哪里 → 接着必须做什么）、五条铁律（生成物 `main.js`、模板清单、双份实现、版本五处一致、提交前看 `git status`）、**验证纪律**（受限环境的"红"不是回归；`npm run qa:e2e` 要烧钱需先问）、记录纪律、已知陷阱。
+- **`scripts/run-node.mjs`**：不用管道的子进程捕获（附实测对照）。**`scripts/run-gates.mjs`**：门禁汇总器。
+- **`scripts/check-engine-sync.mjs`**：双份实现守卫。两份记忆引擎（`dsh/preset/math-memory.mjs` 115 个顶层声明 / `dsh/host/memory-admin.mjs` 56 个）共享 **22 个同名符号**（`pathInside` 统一命名后 21 → 22），此前唯一的同步机制是其中一处的注释。守卫把共享清单**钉住**、逐符号比对**词法流**（忽略注释/引号风格/`export`/空白），要求"一致或有记录的偏离"——现为 **16 个同步 + 6 个有据偏离**；未登记的偏离、清单变化、以及"已登记的偏离其实已经一致了"都会失败。带提取器自测；**变异验证**：改动宿主副本里一个符号的一个字符即失败。
+- **`scripts/check-frontmatter-source.mjs`**（第 29 个门禁）：frontmatter 的边界规则只准有一个家，且"不能 import 的那份拷贝"必须**行为等价**——详见 `Fixed` 一节。
+- **`check-embedded-loader.mjs` 补上 hook 解析器覆盖**：模板剥掉 `hook-frontmatter.mjs` 的导出语句再 `new Function` 求值，这条路径此前零门禁，而它是内存面板每读一张卡都要走的 hook 解析；现在校验导出语句可被剥掉、allowlist 全部解析得到、模板消费的名字都在其中，并**真的解析一个 hook 块**。
+- **`scripts/check-client-bundle.mjs`**：`client.js` 与一次全新构建逐字节比对。
+- **嵌入清单完备性门禁**（`scripts/build-obsidian.mjs`）：`EMBEDDED_SOURCES` 改为数据 + 三条门禁——`dsh/preset|profile|host` 下任何可嵌入文件必须**要么被嵌入、要么在 `NOT_EMBEDDED` 里写明理由**；嵌入源的两两 basename 不得相同（模板把它们平铺落地，同名会互相覆盖）；`dsh/templates/` 下的 `.md` 必须在模板清单里（原有）。**变异验证**：新增一个未声明的 `.mjs` 即构建失败。
+- **活文档版本横幅守卫**（`scripts/check-version-consistency.mjs`）：`handoff.md` / `design.md` 的 `> 当前版本：x.y.z` 必须等于 `package.json` 的版本。
+- **[docs/env-vars.md](docs/env-vars.md)：环境变量的唯一参考**（谁读、别名对的优先级、默认值、死开关）+ **`scripts/check-env-vars.mjs`**（第 30 个门禁）。此前这些变量只存在于代码里：**11 个 `DSH_*`** 分布在 9 个文件，夹着三对别名（每个都读两次、新名优先），外加一个**被文档描述过、却没有任何代码读取**的开关。守卫做**双向**核对：代码读了没写下来 → 失败；写下来了却没代码读 → 失败；**标成死开关却又被读 → 失败**。**变异验证三项**：删一行文档、加一行幽灵变量、真去实现死开关，各触发对应的一条。
+- **改名守卫增加第二条规则**（`scripts/check-rename.mjs`）：活文件里再出现**已退役的旧产品名**即失败（真实退役包名 `dsh-web-ui-all` 例外），历史档案须以「路径 + 理由」白名单豁免——**要改历史记录，得先写下理由**。
+- **`scripts/check-release-paths.mjs`（第 31 个门禁）**：把**发布面**钉住——① `package.json` 的 `files` 被 pin（改它必须改守卫并写理由），且 `scripts/` 不得进入（那里有 gitignore 的机器特定文件）；② 扫描实际发布面（`files` ∪ Obsidian 三件）里是否出现**本机标识**（`os.homedir()`、登录名作为路径段）或通用绝对路径。审计曾报"发布物里残留维护者本机路径"：逐面核对后**当前树上不可达**（npm 只发 `dsh/` + 三个根文件，Release 只附三件，唯一硬编码本机路径的 `scripts/deploy-local.mjs` 被 gitignore），但**可达性靠的是两个清单没人改**——这条守卫就是让"没人改"变成有人守。**变异验证三项**：把 `scripts/` 加进 `files`、给发布文件塞入通用绝对路径、塞入本机真实 home，各触发一条。
 
-- **两个面板的呈现层重做**（同一份 JSON、同一套词）：
-  - 顶部一行状态条：`画像 ✅ · 记录 2 · 模板 0 · 主题 2 · 定理 0 · 策略 1 · 备忘录 3 · 事件 30 · 上次体检 2026-09-09`——回答「记忆库现在什么样」。
-  - 新增置顶的 **⚠️ 待处理** 区块（仅在非空时出现）：把体检的「待重审 / 建议归档」直接摆在可点的归档按钮旁边。此前「建议归档某卡」只出现在原始 wikilink 文本里，而归档按钮在另一处、没有任何标记。
-  - 卡片行改为 `标题 · 类型 · 算子 · #主题 · 徽标 · 用过 N 次 · N 天前`：补上从不显示的 `topic`（搜索承诺了它、过滤也确实按它匹配，但两个面板都不渲染），去掉真实数据里恒为 `—`/`0→0` 的 `success=` 与趋势线，去掉 web 面板直接打印的 **vault 相对路径**（降为悬停提示），去掉分区标题里硬编码的 `.deepseek/…` 路径。
-  - 事件时间线改为 `日期 · 人类标题 · 主题`，默认折叠到 8 条 + 「展开全部」（真实 vault 恰好 30 条，此前是夹在卡片与体检报告之间的 30 行文件名墙）。
-  - 补一行徽标图例；空状态判据覆盖全部层（此前只看 4 层，只有主题/策略卡的 vault 会被误判为空，而真实 vault 里它又几乎永不触发）。
-  - 两个面板的术语与文案对齐（`记录` 而非 `记录层`、`捕获策略：想法=先询问` 而非 `ask/ask/ask`、备忘录状态用中文而非裸 `inbox`）。
-- `🔁 不适用` 退出所有 UI：它写入的 `last_not_applicable` **全仓库没有任何读取方**（grep 验证），排序影响为零——即「看起来像 ❌、实际什么都不会发生」的最坏组合，而这个失败模式已由 `AGENTS.md` §5 的推理期适用性纪律覆盖。宿主仍保留该动作，**旧对话里的历史链接照常可用**（这也是不删代码的原因）。
-- 零 token 回归 165 → **207** 项：新增 §30 面板数据层 22 项（五层收集、episode 索引解析的标题/主题/归档前缀、大小写不敏感搜索、hookless 卡的 ✅/❌、无评级卡不发明 `success_rate`、结构化 audit 与 `auditHuman` 分离、v1 旧体检文件的降级摘要、缺文件时 `audit=null`）与 §31 体检报告一致性 6 项（自动归档后不得再出现在归档候选/`counts.cards`/`decisions` 里；`schemaVersion` 与 human/checklist 双渲染）。路由回归 25 → **30**（新增「`/state` 交付面板真正渲染的字段」：五层、episode 的标题/主题/日期、无体检文件时优雅降级）。变异验证：把 `parseEpisodeIndex` 的分隔符正则从 `[ \t]` 改回 `\s`，第 30 节立刻失败（换行被吞、下一条 episode 的链接被塞进上一条的 `topic`）。
-- 新增 [docs/release.md](docs/release.md)：发版手册（五个版本位置、tag 必须等于版本号、三条工作流各自的门禁、为什么「插件商店拿不到新版本」以及三条可用的分发路径、推送需要用户口令）。
-- 零 token 回归 138 → **155** 项，并新增**路由信任边界回归 25 项**（`scripts/test-panel-routes.mjs`）、**侧栏握手端到端 7 项**（`scripts/test-panel-auth.mjs`，对**真实 dsh**：内部端口 + token → 反代兑换 → 界面/资源/API/WebSocket 全通；未装 dsh 时 SKIP）与**侧栏反代回归 15 项**（`scripts/test-panel-proxy.mjs`，stub 上游）：跨源拒绝（含 `Origin: null`）、root 锚定、token 三态、目录／非 `.md`／`..` 拒绝、被拒后不留归档目录、字段校验、未知路由 404、权威 cookie 命名、Host 保真、401 透传、升级转发与 5 条接线断言。变异验证：拆掉 Origin/root 守卫 → 6 条断言失败；抽掉嵌入白名单里的符号 → 守卫自测失败。
-- 新增 `scripts/check-embedded-writers.mjs`：**求值 main.js 里嵌入的那份 `memory-admin.mjs`**（与插件 loader 同样的 import/export 剥离 + `new Function`）并跑真实写入，同时断言"嵌入源码 == 仓库源码"。此前审计已证明旧的 `check-embedded-loader.mjs` 比对的**是它自己那份名单**（删掉模板里 5 个被消费符号仍 exit 0）。
-- `check-doc-consistency.mjs` 改为读取各套件**运行期**打印的 `__CHECKS__ <passed>/<total>`，不再用正则数源码里的 `check(` 调用点——后者会漏掉夹具循环里生成的断言（实测 152 调用点 vs 155 执行），且看不到提前退出。
+### Docs
 
-- **修复「打字几秒才显示」的整机卡顿：会话扫描不再全量解码**。`countUncapturedSessions`/`runSessionCapture` 此前会遍历 `$DSH_HOME/sessions/` 下的**每一份**会话日志，并逐个**完整 zstd 解压 + JSON 解析**，之后才去查那个本来就能跳过它的指纹标记；而 `countUncapturedSessions` 由记忆面板 `onOpen` 在 Obsidian 渲染进程主线程上调用。本机实测：389 份日志 / 367 MB，单次 `count` **48.6 s**、单次 `capture` **51.4 s**（`debug.log` 里对得上 45 s 的面板卡死空档），期间整个 Obsidian 界面（含编辑器打字）完全冻结。三重修复：
-  - **只看头部就判定归属**：新增 `readSessionHeader`，只读文件头 64 KiB 并只解压**第一个 zstd 帧**，取会话头行的 `{type,id,cwd}`；非本 vault 的会话在读头阶段就被排除，不再解压全文（同一存储：读全部头部 **0.59 s**，全量解码 **34 s**，约 58×）。
-  - **按文件修订号记忆判定**：marker 新增 `scanned`（`日志绝对路径 → {fp, inVault, pending}`，`fp = path|mtimeMs|size`）。未变化的日志只做一次 `stat`、永不重读；**别的 workspace 的日志特征化一次后永久跳过**（此前正是这 ~98% 的解码被白白丢掉）。实测 `count` 冷启 48 641 ms → **1 668 ms**、热态 → **166 ms**。
-  - **面板不再阻塞首帧**：未保存角标改到 `setTimeout(…, 0)` 执行，冷启动扫描不可能再挡住面板首绘。
-- **对话框索引只看本 vault 的会话（顺带修正确性）**：`buildDialogueIndex` 同样是「先解码、后过滤」，而且是在**全局最新 20 份**里筛本 vault——既白解码了别的工作区的会话，又可能因为更忙的项目占了最新文件而让索引几乎为空。现在先按会话头筛出本 vault 的最新 N 份再解码：实测 3 974 ms → **590 ms**（6.7×），且本 vault 的会话真正进了索引（15 个来源 / 39 条问答，此前为空或极少）。
-- **头部判定失败时不缓存「无关」结论**：若首帧超过 64 KiB（或文件被截断）导致读不到头部，改为回退全文解码判定，而不是缓存一个无法自证的 `inVault:false`——错误缓存会让该会话**永远**不再被捕获。
-- **适配 dsh 0.1.5 的会话数据格式 V3：同一会话不再被当成两份日志**。dsh 0.1.5 把会话日志升级到 V3，做法是**生成 `session.v3.jsonl.zstd` 并保留 V2 原件**（上游明确「保留原文件、不支持降级读取」），于是同一个 `<session-id>` 目录里会有两份都以 `.jsonl.zstd` 结尾的日志——既不是过渡态，也不会自动消失。原先的扫描判据只看后缀，后果有两条：捕获路径会把同一会话扫两次并让 marker 的指纹在 V2/V3 之间来回覆盖（`lastSeq` 增量与面板「N 个会话未保存」角标失真），对话索引路径则让同一会话占掉「最新 20 份」窗口里的两个名额、问答对重复进入注入预算。修复为**按会话去重后再切片**：`sessionLogKey` 取会话身份（会话目录名，兼容扁平布局），`selectAuthoritativeLogs` 每个会话只保留权威版本——**显式优先 `.v3.` 变体**（迁移件才是活的；两者 mtime 可能落在同一时间戳刻度上），其次按 mtime 取新。preset 与 host 两份自包含副本同步修改。
-  - 解码无需改动：V3 仍是多帧拼接的无字典 zstd，会话头行与 `user/message`／`assistant/message`／`session/title` 事件名、`source.kind === "user"` 判据全部不变；V3 反而去掉了逐块流事件（`assistant/chunk` 等），单份日志的事件量更小。
-  - 评估、取证与「不改什么」的完整理由见 [docs/dsh-0.1.5-adaptation.md](docs/dsh-0.1.5-adaptation.md)。
+- 新增 [docs/agent-repo-maintenance.md](docs/agent-repo-maintenance.md)：从本轮工作提炼的**通用**「agent 仓库维护」清单（不是本项目专属）。
+- `handoff.md` §4 陷阱清单 +5 条（59–63：管道 stdio / 模板文件命名 / 自报计数 / 安全边界要锚在服务端 / 版本横幅腐烂），§7 未做清单同步（本轮完成项 + 仍余项：路由补测、引擎去重目标态、大函数拆分）。
+
+## [0.7.5] - 2026-09-10
+
+> **本节于 2026-09-11 重编**：只保留「修了什么 / 改了什么 / 加了什么」的事实条目。排查过程、实测数字、外部设计的采纳与不采纳决策已归档到 [`docs/memory/changelog.md`](docs/memory/changelog.md)（面向维护者的细账，按日期分节）。**版本内容本身未变，只是换了记录层次。**
+
+### Fixed
+
+- **（安全）`/memory-panel/*` 不再把约束根交给调用方**：`root` 只接受启动时确定的 vault（`DSH_WORKSPACE_ROOT` / `DSH_OBSIDIAN_VAULT`），其它路径一律 403；带非 loopback `Origin` 的请求（含 `Origin: null`）一律 403；配置了 `DSH_OBSIDIAN_FEEDBACK_TOKEN` 的实例要求每个请求携带 token，定时安全比较。此前 `body.root` / `?root=` 直接就是约束根，`pathInside(root, target)` 的两端因此都由调用方决定，任何网页或本机进程都能移动任意路径下的文件。
+- **（安全）`archiveMemoryFile` 校验源路径**：只接受 `.deepseek/<层>/…` 下的 `.md` 常规文件，拒绝普通笔记、目录、`capture-policy.md` / `config.md`、含 `..` 或盘符的路径以及 vault 根；归档目录改为**校验通过后**才创建（此前被拒的请求会在 vault 里留下空目录）。
+- **写入记忆卡片不再损坏文件**（面板 ✅/❌ 与每日体检都会触发）。两个静默损坏模式：
+  - `text.replace(span, newText)` 把第二个参数当**替换模板**，于是 agent 写的 frontmatter 里的 `$$` / `$&` / `$'` 被展开——数学库里 `title: 关于 $$ 的表示` 会丢掉 `$`，`$&` 会把整段 frontmatter 注入标题；
+  - frontmatter **体为空**时搜索串是 `""`，`replace("", x)` 在偏移 0 **插入**而非替换，收尾的 `---` 被推到文件中间，而界面报「已成功」。
+  改为**按偏移量拼接**（新增 `frontmatterSpan` / `replaceFrontmatter`），空体与 CRLF 都保持良构；`setHookField` / `setTopField` 也不再给空体留空行。同一缺陷在 preset 的四处审计写入路径（`syncHookStatsToCard`、`syncTopLevelStatsToCard`、重复卡标记 `duplicate_of`、候选策略卡转正）一并修掉。
+- **策略卡的 `uses` 曾被写到 frontmatter 之外**：`syncTopLevelStatsToCard` 把含首尾 `---` 的**整块**交给 `setTopFieldText`，卡片没有 `uses:` 行时字段落在闭合分隔符之后的**正文**里，且每次体检再追加一行——`strategy/strat-ot-structure-proof.md` 里那两行游离的 `uses: 0` 就是这么来的。改为在分隔符**内部**拼接，并由读回验证保证落点。
+- **体检报告不再只是「模型输出记录」**：`memory-audit.json` 拆成**两个渲染、一份数据**——`checklist`（模型看的指令清单）与 `human`（人看的中文摘要），结构化事实进 `counts` / `decisions` / `thresholds` / `sections` / `structural` 并带 `schemaVersion: 2`。两个面板渲染 `human` 与结构化字段，模型清单退到「查看模型版清单」折叠里。
+- **体检报告不再把刚归档的卡列为「建议归档」**：`autoArchive` 打开时报告会指向一张已经不在库里的卡（点按钮就是死链）。所有 section 与 `decisions` 计数统一按「归档后仍在库中」过滤，`counts.cards` 同步扣减。
+- **体检的确定性写入改为「写完读回验证」**：任一处未确认即计入 `postconditions` 并给出 `status: "degraded"` + `warnings`（人话摘要与模型清单都会写出来）；命中无处可写时明确报告「这批 hits 会在重置时丢失」，不再静默清零。
+- **面板不再丢掉数据层已经算好的信息**：
+  - `collectMemoryState` 收集**全部五个卡片层**（记录 / 模板 / 主题 / 定理 / 策略）。此前只收集 records + templates，于是文档反复承诺的「五层」里有三层在两个面板都不可达，只有主题卡或策略卡的 vault 会被判成「记忆库还是空的」；
+  - episode 带上**人类标题、主题与日期**（解析 `memory/episodes/index.md`），此前只显示文件名与**捕获写盘时间**（同一次捕获写入的多条 episode 时间戳完全相同）；
+  - 卡片返回 `topic`（用户按主题浏览记忆的主维度，此前可搜索却从不显示）与 `layer`；新增 `readAuditReport`（`readAuditText` 只取字符串，把 `generatedAt` / `counts` / `structural` 全丢了）；
+  - 搜索统一大小写（此前 haystack 转小写却拿原样 needle 比较，`De Finetti` 这类查询一条也搜不到），episode 纳入搜索。
+- **归档按卡片自己的层**：`archiveMemoryFile` 与体检的 `moveCardsToArchive` 此前都把目的地写死 `.deepseek/archive/records/` 并只回写 `records/index.md`——归档一张**策略卡**会进错目录，并让 `strategy/index.md` 里的那行变成悬空链接。
+- **dsh web 面板的「自动保存对话」勾选与引擎相反**：面板用 `enabled !== false`，而引擎对**缺失的键返回 false**（默认关），于是真正关闭时界面显示「已开启」。改为 `=== true`。
+- **反馈三选项分层 + 补回执**：回复末尾改为**每张卡一行并写明是哪张卡**（旧模板给 N 张卡发 N 行一模一样的 `[✅ 这条对]`）；`归档` 从评价行里移出（它是文件移动，不是第三个评价）并加二次确认；**dsh web 面板的按钮第一次有回执**（此前 `run()` 丢弃响应体，点任何按钮界面都不显示）；`❌` 不再凭空发明 `success_rate`（只有卡上已有才改它）；**没有 `hook:` 块的卡也能反馈**（自动补最小 `hook:` 块，行内 flow 写法仍明确拒绝）。
+- **dsh web 面板刷新不再污染搜索框**：它唯一的刷新杠杆把搜索词变成一个空格（`?q=%20`），改用已有的 `tick` 计数（`&t=N`）。
+- **侧栏 401 文本页的真正修法是主进程反代**：dsh 的会话 cookie 带 `SameSite=Strict`，而侧栏是跨站 iframe（顶层 `app://obsidian.md`、框架 `http://127.0.0.1:3180`），这种 cookie 在跨站子框架里存不下也发不出。现在 dsh 以 `--port 0` 启动（内部端口），插件在主进程跑一个反代监听用户配置的端口（默认 3180）：
+  - 代理用 `http.request`（`fetch` 会忽略 Host）以公共权威兑换启动 token 并保存 cookie，随后给每个转发请求注入 `cookie`、把 `host` 改写成公共权威（dsh 按 `Host` 决定 cookie 名），并剥掉 `set-cookie` / `x-frame-options` / `content-security-policy`；
+  - `/api/` 前缀的 WebSocket 升级照常转发；就绪判定改为「代理在配置端口上能供出已认证界面」；`stop()` 关闭代理并清 cookie。
+- **侧栏卡顿的真因是皮肤客户端脚本**：`orca-link` 的 `hooks.mjs` 有约 14 个 subtree MutationObserver、一个约 5 次/秒改内联样式的循环、以及一个跟着侧栏动画**每帧**触发的 ResizeObserver。**侧栏性能模式**因此扩展为同时改写该脚本的两处热循环（锚点全中才改，皮肤更新后自动原样返回并记日志），并新增开关**「侧栏加载皮肤动态装饰」**（默认开；关掉则把该模块换成空实现，保持导出契约）。不改皮肤文件。
+- **「打字几秒才显示」的整机卡顿：会话扫描不再全量解码**：`countUncapturedSessions` / `runSessionCapture` 此前遍历 `$DSH_HOME/sessions/` 下**每一份**日志并逐个完整 zstd 解压，之后才去查那个本来就能跳过它的指纹标记；而 `countUncapturedSessions` 由记忆面板 `onOpen` 在 Obsidian 渲染进程主线程调用（本机实测 389 份日志 / 367 MB，单次 `count` 48.6 s，期间界面含编辑器打字完全冻结）。三重修复：
+  - 新增 `readSessionHeader`：只读文件头 64 KiB 并只解压**第一个 zstd 帧**，非本 vault 的会话在读头阶段就被排除；
+  - marker 新增 `scanned`（`日志路径 → {fp, inVault, pending}`，`fp = path|mtimeMs|size`）：未变化的日志只 `stat`、永不重读，别的 workspace 的日志特征化一次后永久跳过；
+  - 未保存角标改到 `setTimeout(…, 0)` 执行，冷启动扫描不再挡住面板首绘。
+  另外 `buildDialogueIndex` 改为**先按会话头筛出本 vault 的最新 N 份再解码**（此前是在全局最新 20 份里筛本 vault，既白解码又可能让索引几乎为空）；头部读不到时回退全文解码判定，不缓存无法自证的 `inVault: false`。
+- **同一会话不再被当成两份日志（dsh 0.1.5 的 V3 迁移）**：V3 生成 `session.v3.jsonl.zstd` 并**保留 V2 原件**，同一会话目录下有两份都以 `.jsonl.zstd` 结尾的日志。现在 `sessionLogKey` 取会话身份、`selectAuthoritativeLogs` 每个会话只保留权威版本（**显式优先 `.v3.` 变体**，因为两者 mtime 可能落在同一刻度上），preset 与 host 两份副本同步。
+- **链接跳转服务不再对已解码的参数二次解码**：`URLSearchParams.get()` 返回的已是解码值，再 `decodeURIComponent` 一次会让**任何含 `%` 的路径**抛 `URIError`，且该异常逃出请求监听器导致**点击永久挂起无响应**。删掉两处二次解码，整个 handler 包进 try/catch（异常回 500 并写日志）。
+- **`install-into-profile.mjs` 不再静默失败**：它把 insert 锚在 flow 风格结尾的 `]`，而仓库里三个 patch 文件都是 block 风格、没有 `]`，于是 `replace` 原样返回、脚本照样打印成功——客户端面板进 profile 的**唯一**途径从来没生效过。改为在末尾追加 block 风格 `insert:`，写入后断言文件确实含包名，否则 exit 1。
+- **`/memory-panel/workspaces` 不再要求 `?root=`**：root 守卫原本在路由分发之前，而面板前端正是裸 fetch 这条路由（400 → 工作区下拉框永远是空的）。该分支移到 root 门禁之前（它只读 registry，不碰 vault）。
+- **`capture-policy` 路由校验 `field` / `mode`**：`field` 会进入 `new RegExp("^" + field + ":")`，`a.c` 能改到无关行、`idea|fact` 会同时毁掉两个真实键。现在只接受 `^[A-Za-z_][A-Za-z0-9_-]{0,63}$` 与 `^[a-z]{2,16}$`。
+- **junction 镜像会自愈**：`syncGlobalPackageLinks` 只用 `existsSync` 判断是否已镜像，而 `existsSync` **跟随**链接——web profile 重装或包改名后悬空链接被判「不存在」，`symlinkSync` 随即 EEXIST 且被裸 catch 吞掉，这段「持久修复」于是永久失效且**不留任何日志**。改用 `lstatSync` 识别条目、只在「是 junction 且目标已消失」时删除重建，并记录失败项。
+- **检索回归网不再测「陈旧的手抄公式」**：两个零 token 探针各自复刻了一份打分公式，而产品用的是另一套权重，且探针从不调用 `isRecallEligible`（superseded/duplicate 排除）、operator 硬过滤与 `maxResults`——权重改过而探针停在旧版，于是**纠错机制上线后完全没有自动化看守**。现在把产品管线抽成 `buildRecallDoc` / `rankRecallDocuments` / `rankStrategyCards` 并导出，`note_recall`、`note_strategy` 与两个探针**调用同一份代码**。
+- **导航索引不再压过它指向的内容**：`episodes/index.md` 列出每条 episode 的标题+主题，对几乎任何中文查询都有很高的原始字符覆盖率，实测顶掉了「库中无答案应给弱信号」的控制项并挤占真实命中的名次。新增按 kind 的语料权重（`episode-index` 0.4、`theorem-index` 0.7）为其降权。
+- **`captureSubagents`：子代理会话默认不进记忆**。子代理会话会重放父会话前缀，保存它等于把同一场对话重复写进证据层、并稀释每轮注入预算。dsh ≥ 0.1.5 的 V3 头部新增 `origin` / `delegationDepth`，第一次让这件事**可判定**（V2 头部没有这两个字段，无法区分，一律保留）。
+- **`check-embedded-loader.mjs` 不再自证**：它此前比对的是**自己那份** `return {…}` 名单。现在从模板里**读取**真实的参数表、白名单与追加的 helper，断言「白名单覆盖模板消费的每一个 `MEMORY_ADMIN.*`」「白名单里的每个符号都能解析」「参数表与实参表一致」，并**自测**「抽掉任一被消费符号必须被发现」。
+- **`check-doc-consistency.mjs` 改为读取运行期计数**：不再用正则数源码里的 `check(` 调用点——后者会漏掉夹具循环里生成的断言，且看不到提前退出。
+- **`🔁 不适用` 退出所有 UI**：它写入的 `last_not_applicable` 在**全仓库没有任何读取方**（grep 验证），排序影响为零，即「看起来像 ❌、实际什么都不会发生」。宿主保留该动作，**旧对话里的历史链接照常可用**。
+- **「设计迭代忘记适配」专项审计修掉 6 处**（把每个「后来才长出来的东西」拿去比对所有向它枚举消费点的地方）：归档只认 records 层；dsh web 面板的「自动保存对话」勾选与引擎相反；文档说 `sessionCapture` 默认开、实际默认关；注入给模型的「分层长期记忆」说明停在五层、路由清单漏 templates 与 strategy；`AGENTS.md` 三写第 3 步清单漏 `strategy/`；本机 `deploy-local.mjs` 手写清单只部署 8/19 个模板（改为读 `dsh/templates-manifest.json`）。
+- **版本身份对齐到 0.7.5**（此前 `package.json` 0.7.3 / `manifest.json` 0.7.4 / npm `latest` 0.7.1，且 0.7.2–0.7.4 **从未推过 tag**）：新增 `scripts/check-version-consistency.mjs` 要求 `package.json` / `manifest.json` / `package-lock.json` / `versions.json` / `CHANGELOG.md` 五处同号；`release.yml` 补上 `npm ci`、版本/tag 一致性、重建 `main.js` + `git diff --exit-code`、`npm test`——**推 tag 的发布流程此前不跑任何测试**，Release notes 也改为抽取该版本段落而不是 `## [Unreleased]`。
 
 ### Changed
 
-- 零 token 回归 118 → 138 项（在既有扫描缓存不变量之外，新增 dsh 0.1.5 会话格式 V3 的 12 项：V2/V3 成对折叠为一份、优先迁移件、`maxFiles` 按会话计数、V3 事件可蒸馏、捕获落盘顺序、删掉 V3 后回落到 V2 原件）。本轮安全修复再增至 155 + 路由回归 25。
-- 客户端面板的 `dsh.client.inject` 声明改用 dsh 0.1.5 实际存在的包名（`dsh-client-modules`／`dsh-client-locale`／`dsh-client-ui-settings`），并注明该字段只是加载/预取元数据、真正的依赖是运行时注入的 cordis 服务名（`slots`/`locale`）；旧名 `dsh-client-runtime`／`dsh-client-ui-slots` 属于 0.1.5 已移除的 runtime face。
-- 皮肤中心可选挂载补充说明（行为不变，默认仍关）：`dsh-web-all@0.3.20` 聚合包已自带 `web-ui-skin-center` 行，因此在装有聚合包的机器上这个开关是冗余的（宿主半边只跑一次、浏览器半边按包名去重），它仍然覆盖「有皮肤包但没有聚合包」的 web profile。
+- **两个面板的呈现层重做**（同一份 JSON、同一套词）：顶部一行状态条（各层计数 + 上次体检日期）；新增置顶的 **⚠️ 待处理** 区块（仅在非空时出现，把「待重审 / 建议归档」摆在可点的归档按钮旁边）；卡片行改为 `标题 · 类型 · 算子 · #主题 · 徽标 · 用过 N 次 · N 天前`（去掉真实数据里恒为 `—` 的 `success=` 与趋势线，去掉直接打印的 vault 相对路径，去掉分区标题里硬编码的 `.deepseek/…`）；事件时间线改为 `日期 · 人类标题 · 主题`（默认折叠 8 条 + 展开全部）；补徽标图例；空状态判据覆盖全部层；术语与文案对齐。
+- **dsh web 记忆面板只保留工作区下拉框**（选项显示工作区名，完整路径放悬停提示），仅当工作区列表为空时才退化为手动输入。
+- **捕获策略扩到四个档位 `idea/fact/preference/structure`**：一个档位对应一组层——想法→inbox；事实→records 的 fact/event/instruction/artifact；偏好→profile 与 notation；**结构→topics / 定理索引 / 模板 / 策略**的索引与结构行（默认 `auto`）。**缺 `structure:` 行的旧策略文件行为不变**（等同 `auto`）。事件层（episodes，归 `sessionCapture` 开关）与记号「收集」的豁免也第一次写清楚。
+- **皮肤中心开关改名为「挂载皮肤中心 UI（高级 / 通常无需开启）」**，默认值仍 `false`：`dsh-web-all@0.3.20` 聚合包已自带皮肤中心，该开关只覆盖「有皮肤包、没有聚合包」的 web profile；**关掉它不会关掉皮肤**（皮肤本体走全局 `$DSH_HOME/cordis.patch.yml` + junction 镜像）。
+- **注入给模型的协议随新层同步**：分层长期记忆说明改为「五层 + 三个后长出来的检索面」并补齐路由；`AGENTS.md` 三写收尾清单补 `strategy/`。
+- **客户端面板的 `dsh.client.inject` 改用 dsh 0.1.5 实际存在的包名**（`dsh-client-modules` / `dsh-client-locale` / `dsh-client-ui-settings`）；旧名 `dsh-client-runtime` / `dsh-client-ui-slots` 属于 0.1.5 已移除的 runtime face。该字段只是加载/预取元数据，真正的依赖是运行时注入的 cordis 服务名。
+- **跨皮肤写样式只用各皮肤都保证存在的 token**：次级文字原用 `--dsw-alias-label-dimmed`，而用户当前皮肤只定义 `primary/secondary/tertiary/caption` 一族，于是声明失效、颜色回退到继承值。改用带回退链的 `--dsw-alias-label-secondary`；Obsidian 侧 `--text-faint` 换成 `--text-muted`。
+- **`docs/session-scope.md`（会话隔离备忘）标注为已否决**：P1 要包住被会话搜索 / lineage / 按 URL 打开共用的 `sessionPersistence.list()`，代价与收益不成比例，侧栏分组折叠已够用。文档顶部给出否决结论与理由，正文保留为存档。
+- **项目定位写进文档**：记忆系统已解决「agent 记不住用户问过什么」，但「辅助用户打磨一套数学理解、并建立对理解/技巧的调用体系」远未解决——**真正实现它才是 1.0**。README 中英、`docs/memory/README.md` 与 `handoff.md` 均写明，并列出 1.0 之前缺的四件事。
+
+### Added
+
+- **数据层**：`summaryOf()`（卡片的「这是什么」一行，优先 `summary` / `description` / `abstract`，否则取正文第一段有效行）、`uses` / `usesDeclared` / `usesPending` 三值（声明值与「尚未合并的增量」分开显示）、`harmed` 负反馈计数、`verified_by` 验证凭据（把「verified 升级必须用户参与」从一句话变成**可机检的不变量**）。
+- **检索侧的适用边界硬门控**：卡片顶层/`hook` 里的 `not_applicable_when` 被 `note_recall` 与 `note_strategy` 当门控用——查询命中边界短语时该卡不进候选，但结果里**单独列出「因适用边界被排除（命中『…』）」**，刻意不做静默丢弃。
+- **`npm run qa` 引擎探针新增可达性分层**：从 vault 原文抽 `related` / `source` / `[[wikilink]]` 边（断链不算可达），把每条 ground truth 目标分为 **Direct / Recoverable / No access** 三层，并**同时报告目标排名**（分层粗粒度，只看分层会误判「两种池化一样」）。读法约定：改检索必须「Direct 数不降**且**排名均值不升」。
+- **`scripts/check-version-consistency.mjs`**：五处版本必须同号（带 `--tag` 时还要求 tag 等于版本号、且版本是纯 `x.y.z`，因为 Obsidian 注册表拒绝预发布号）。
+- **`scripts/check-embedded-writers.mjs`**：求值 `main.js` 里嵌入的那份 `memory-admin.mjs`（与插件 loader 同样的 import/export 剥离 + `new Function`）并跑真实写入，同时断言「嵌入源码 == 仓库源码」。
+- **`scripts/test-panel-routes.mjs`**（`/memory-panel/*` 的信任边界回归）、**`scripts/test-panel-auth.mjs`**（对**真实 dsh** 的侧栏握手端到端，未装 dsh 时 SKIP）、**`scripts/test-panel-proxy.mjs`**（反代回归，stub 上游）。
+- **[docs/release.md](docs/release.md)**：发版手册（五个版本位置、tag 必须等于版本号、三条工作流各自的门禁、为什么插件商店拿不到新版本以及三条可用的分发路径、推送需要用户口令）。
+- **`config.md` / `agent.cordis.yml`** 新增 `captureSubagents` 开关（默认 `false`）。
 
 ## [0.7.4] - 2026-09-02
 
@@ -143,7 +159,7 @@
   - 幂等：`cache/captured-sessions.json` 按 session 记 `lastSeq` + 文件指纹，只追加增量——**续接旧会话也能正确补新尾巴**。
   - 过滤：只保存 cwd 在本 vault 内的会话；日期归属会话发生日。
   - 触发：dsh 启动 + 每次新会话组装时 fire-and-forget（节流 60s，绝不阻塞 prompt）。
-  - 开关：`.deepseek/config.md` `sessionCapture`（0.7.3 默认 `true`；**0.7.5 起默认 `false`**，见该版本条目——默认自动保存与「写入记忆先征得同意」的既定原则冲突）。
+  - 开关：`.deepseek/config.md` `sessionCapture`（0.7.3 默认 `true`；**0.7.4 起默认 `false`**，见该版本条目——默认自动保存与「写入记忆先征得同意」的既定原则冲突）。
 - **双面板 UI**：Obsidian 记忆面板 + dsh web 记忆面板都加了「自动保存对话」开关（写 `config.md`）、「立即保存对话」按钮与「N 个会话未保存」角标；`memory-admin.mjs` 增加 host-agnostic 的 `runSessionCapture`/`countUncapturedSessions`/`setSessionCapture`/`readSessionCaptureEnabled`（Obsidian 嵌入 loader 与 dsh web host 路由共用）。
 - 零 token 回归 104 → 118 项。
 
@@ -205,7 +221,7 @@
 ### Docs
 
 - 清理文档漂移：设置页版本号 0.4.x→0.6.x；`notes-assistant.patch.yml` / `cordis.patch.yml` 皮肤中心注释改为「可选」语义；`design.md` 版本号与面板现状对齐；README 中英 E2E 用例数 4/4→5 用例；断言数 82→83 全仓统一。
-- 记忆陷阱防御配套文档：`docs/memory/changelog.md` 记「AdaptiveMem 本土化 + lit-import 修复」条目；`docs/memory/handoff.md` §3 增量说明、§7 记录后续工作（陷阱压力样例 / 记忆诱发退化被动信号 / note_recall 结构化适用性 / 文献库剩余 13 篇蒸馏）；回归断言 83→85 全仓统一。
+- 记忆陷阱防御配套文档：`docs/memory/changelog.md` 记「AdaptiveMem 本土化 + lit-import 修复」条目；`docs/handoff.md` §3 增量说明、§7 记录后续工作（陷阱压力样例 / 记忆诱发退化被动信号 / note_recall 结构化适用性 / 文献库剩余 13 篇蒸馏）；回归断言 83→85 全仓统一。
 
 ## [0.6.4] - 2026-08-23
 
