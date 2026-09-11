@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -61,7 +61,7 @@ const driftPairs = [
   [join(profileRoot, 'notes-assistant.patch.yml'), join(repo, 'dsh', 'profile', 'notes-assistant.patch.yml')],
   [join(profileRoot, 'memory-admin.mjs'), join(repo, 'dsh', 'host', 'memory-admin.mjs')],
   [join(profileRoot, 'math-memory-panel.mjs'), join(repo, 'dsh', 'host', 'math-memory-panel.mjs')],
-  [join(vault, 'AGENTS.md'), join(repo, 'dsh', 'templates', 'AGENTS.md')]
+  [join(vault, 'AGENTS.md'), join(repo, 'dsh', 'templates', 'vault-AGENTS.md')]
 ];
 for (const [installed, source] of driftPairs) {
   check('no drift ' + installed, readFileSync(installed, 'utf8') === readFileSync(source, 'utf8'));
@@ -87,6 +87,13 @@ check('uninstall dry-run exit 0', r.status === 0);
 check('dry-run keeps preset', existsSync(join(presetRoot, 'agent.cordis.yml')));
 
 // 6. full uninstall
+// The cache directory only exists once the plugin or the capture path has run,
+// and the installer never creates it — so the "vault cache removed" check below
+// used to pass VACUOUSLY (review P3: an assertion that could not fail). Create
+// what a real vault would have, so `--purge` removing it is actually tested.
+mkdirSync(join(vault, '.deepseek', 'cache'), { recursive: true });
+writeFileSync(join(vault, '.deepseek', 'cache', 'captured-sessions.json'), '{}', 'utf8');
+check('fixture: the vault cache exists before uninstall', existsSync(join(vault, '.deepseek', 'cache')));
 r = run(['uninstall', '--purge', '--purge-data', '--yes', '--confirm', 'DELETE MY MATH MEMORY', '--dsh-home', home, '--vault', vault]);
 check('full uninstall exit 0', r.status === 0);
 check('preset removed', !existsSync(presetRoot));
