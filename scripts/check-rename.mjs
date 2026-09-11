@@ -116,7 +116,10 @@ if (stale > 0) {
 // which is exactly how a reader decides not to open it. A path that no longer
 // exists is the most common form of dead link, so it is checked like a rename.
 const movedPath = /docs\/memory\/handoff\.md/;
-const MOVED_ALLOW = new Set(["scripts/check-rename.mjs"]); // must be able to name it
+const MOVED_ALLOW = new Set([
+  "scripts/check-rename.mjs", // the guard must be able to name what it forbids
+  "docs/agent-repo-maintenance.md" // the general guide uses THIS move as its worked example
+]);
 let dead = 0;
 for (const file of files) {
   if (!/\.(mjs|js|ts|yml|yaml|json|md)$/.test(file)) continue;
