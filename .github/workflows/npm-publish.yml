@@ -28,10 +28,13 @@ on:
       - '[0-9]+.[0-9]+.[0-9]+'
 
 # Least privilege: publishing needs no repository write access, and the OIDC
-# exchange requires `id-token: write`.
+# exchange requires `id-token: write`. `issues: write` is used only on the
+# failure path, to publish the registry's own error text where it can be read
+# without repo admin rights (job logs need admin; issues do not).
 permissions:
   contents: read
   id-token: write
+  issues: write
 
 jobs:
   publish:
@@ -100,3 +103,21 @@ jobs:
             echo "(2) \`npm --version\` above is >= 11.5.1; (3) the tag equals \`package.json\` version."
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
+      # Also open an issue with the same text: reading a job log requires repo
+      # admin rights, so otherwise a rejected publish is invisible to everyone
+      # except the person who can already open the run page.
+      - name: Publish failure issue
+        if: steps.publish.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Tag \`${GITHUB_REF_NAME}\` (commit \`${GITHUB_SHA:0:7}\`) failed to publish to npm."
+            echo ""
+            echo '```'
+            tail -30 publish.log || true
+            echo '```'
+            echo ""
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > publish-issue.md
+          gh issue create --title "npm publish failed for ${GITHUB_REF_NAME}" --body-file publish-issue.md || true
