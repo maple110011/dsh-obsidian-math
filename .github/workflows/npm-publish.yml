@@ -5,13 +5,30 @@ name: Publish to npm
 # `files`) to the npm registry on a version tag; release.yml publishes the
 # Obsidian plugin (main.js/manifest.json/styles.css) as a GitHub Release. Both
 # share one version tag and one version number.
+#
+# AUTHENTICATION: trusted publishing (OIDC) — no long-lived token.
+# The 2FA-bypass granular token this used to send is being deprecated
+# (github.blog/changelog 2026-07-08 + 2026-07-31: such tokens can no longer do
+# account/package management, and direct publishing ends around 2027-01).
+# Publishing now exchanges the workflow's OIDC token for a short-lived
+# credential, so there is no secret to rotate, expire, or leak.
+#
+# Required npm-side setup (one-off, interactive 2FA — cannot be automated):
+#   npmjs.com → package `dsh-math-memory` → Settings → Trusted Publisher →
+#   GitHub Actions, with
+#     Organization or user : maple110011
+#     Repository           : dsh-obsidian-math
+#     Workflow filename    : npm-publish.yml     (must match this file's name)
+#     Environment          : (leave empty)
+# Without it the Publish step fails with 404/401; the diagnostics step right
+# above it says which.
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
 
-# Least privilege: publishing needs no repository write access, and provenance
-# requires an OIDC token. Without these the default token scope is wider.
+# Least privilege: publishing needs no repository write access, and the OIDC
+# exchange requires `id-token: write`.
 permissions:
   contents: read
   id-token: write
@@ -25,6 +42,14 @@ jobs:
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
+      # Trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10.x. Pinned to
+      # the 11 line deliberately: npm 12 turns on the install-time security
+      # defaults (dependency lifecycle scripts no longer run unless allowlisted),
+      # which would silently drop esbuild's postinstall binary download here.
+      - name: npm >= 11.5.1 (trusted publishing)
+        run: |
+          npm install -g npm@11
+          npm --version
       - name: Install deps
         run: npm ci
       # The tag must equal the published version, otherwise `npm publish` either
@@ -34,19 +59,16 @@ jobs:
         run: node scripts/check-version-consistency.mjs --tag "$GITHUB_REF_NAME"
       - name: Run tests
         run: npm test
-      # Auth diagnostics BEFORE the publish attempt: when the token is missing,
-      # expired, revoked or lacks publish rights, `npm publish` fails with a bare
-      # non-zero exit and the log says nothing about which of those it was. This
-      # step never fails the run (`|| true`) — it only leaves the answer in the log.
-      - name: Registry auth diagnostics
+      # Diagnostics BEFORE the publish attempt: a rejected publish reports only a
+      # non-zero exit code, which says nothing about whether the runner minted an
+      # OIDC token, whether the trusted publisher is configured, or whether npm is
+      # new enough to use it. Never fails the run — it only leaves the answer in
+      # the log.
+      - name: Registry / OIDC diagnostics
         run: |
-          echo "registry: $(npm config get registry)"
-          echo "npm: $(npm --version)"
+          echo "npm: $(npm --version)   registry: $(npm config get registry)"
+          echo "id-token endpoint: ${ACTIONS_ID_TOKEN_REQUEST_URL:+available}${ACTIONS_ID_TOKEN_REQUEST_URL:-MISSING (needs permissions: id-token: write)}"
           echo -n "whoami: "
-          npm whoami --registry=https://registry.npmjs.org || echo "(not authenticated — check the NPM_TOKEN secret)"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish
+          npm whoami --registry=https://registry.npmjs.org || echo "(no token — expected: publishing goes through trusted publishing)"
+      - name: Publish (trusted publishing, no long-lived token)
         run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

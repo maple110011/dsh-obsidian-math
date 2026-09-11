@@ -38,6 +38,9 @@ node dsh/client-panel/build-client.mjs   # src/index.jsx → lib/client.js（改
 # ④ 本地过一遍与 CI 完全相同的门禁
 npm test
 node scripts/check-version-consistency.mjs --tag 0.7.6
+#    ⚠️ 本机全绿 ≠ CI 全绿：认证握手套件在本机（装了 dsh）会真跑、在 CI 上按设计 SKIP；
+#    Windows runner 检出的是 CRLF。推 tag 前先确认 ci.yml 的 ubuntu 与 windows 两个 job 都绿
+#    （0.7.5 第一次推 tag 就栽在这两点上）。
 
 # ⑤ 提交与打 tag（推送需要用户口令，见 §4）
 git add -A && git commit -m "0.7.6: <一句话主题>"
@@ -46,8 +49,12 @@ git push origin main
 git push origin 0.7.6  # ← 这一步才会真正产出 Release
 ```
 
-`npm-publish.yml` 在推 tag 时并行发布 npm 包（`npm publish --provenance`，
-需要 `id-token: write` 权限与 npm 的 trusted publishing 配置）。
+`npm-publish.yml` 在推 tag 时并行发布 npm 包。**认证走 trusted publishing（OIDC），不再用长效 token**：
+
+- npm 正在废弃 2FA-bypass 的 granular token（[2026-07-08](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/) / [2026-07-31](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/)）：这类 token 已不能做账号/包管理，**约 2027-01 起也不能直接发布**。
+- **一次性配置（人工 + 2FA，自动化不了）**：npmjs.com → 包 `dsh-math-memory` → Settings → Trusted Publisher → GitHub Actions，填 `maple110011` / `dsh-obsidian-math` / **workflow 文件名 `npm-publish.yml`**（环境留空）。**workflow 名填错是最常见的失败原因。**
+- workflow 侧：`permissions: id-token: write`（已有）、**不设 `NODE_AUTH_TOKEN`**、npm 必须 **≥ 11.5.1**（所以显式 `npm install -g npm@11`；Node 22 自带 npm 10）。**故意钉 11 不钉 12**：npm 12 打开了安装期安全默认值（依赖 lifecycle 脚本默认不跑，需 allowlist），会静默跳过 esbuild 的 `postinstall` 二进制下载。
+- 失败时先看 `Registry / OIDC diagnostics` 那一步：它打印 npm 版本、是否拿到 `ACTIONS_ID_TOKEN_REQUEST_URL`、以及 `whoami` 的结果。
 
 ## 2. 三个工作流各自的门禁
 
@@ -64,7 +71,8 @@ git push origin 0.7.6  # ← 这一步才会真正产出 Release
 - 版本号曾三方漂移（package 0.7.3 / manifest 0.7.4 / npm latest 0.7.1），
   于是「插件商店拿不到新版本」——见 §3。
 - **本机全绿 ≠ CI 全绿（0.7.5 第一次推 tag 就栽在这上面）**：两个只在 CI 环境暴露的守卫缺陷——① `check-doc-consistency.mjs` 把「套件在本机 SKIP（没有 dsh）」当成失败；② 两个嵌入守卫用多行字面量解析文本，Windows runner 的 **CRLF** 检出让它们误报。修法见 `handoff.md` 坑 56/57。**推 tag 前先看一眼 `ci.yml` 的两个 job 是否都绿**（Ubuntu + Windows）。
-- **`npm publish` 的失败信息为零**：token 缺失/过期/无发布权/需要 2FA 都只有非零退出码。`npm-publish.yml` 现在在 publish 前加一步 `npm whoami`（`|| true`，日志里能看到到底是不是认证问题）；**刷新 `NPM_TOKEN`（Granular，勾 publish 权限 + bypass 2FA）是用户侧动作**，改完可在 Actions 页面直接 re-run 那条 workflow，不必重新推 tag。
+- **`npm publish` 的失败信息为零，且 token 路线正在被废弃**：token 缺失/过期/无发布权/需要 2FA 都只有非零退出码。已改为 **trusted publishing（OIDC）**：workflow 不设 `NODE_AUTH_TOKEN`、显式 `npm install -g npm@11`（要求 ≥11.5.1，Node 22 自带 npm 10）、publish 前加只读诊断（npm 版本 / id-token 端点 / `whoami`）。**npm 侧一次性配置是人工动作**：包 Settings → Trusted Publisher → GitHub Actions 填仓库 + workflow 文件名 `npm-publish.yml`；配完 re-run 失败的 job 即可。别再创建长效发布 token：2FA-bypass token 已失去账号/包管理能力，约 2027-01 起失去直接发布能力。
+- **npm 12 的安装期安全默认值**（`allowScripts` 默认关、`--allow-git`/`--allow-remote` 默认 `none`）：本项目唯一带 lifecycle 脚本的依赖是 devDependency `esbuild`（`postinstall: node install.js`）。`npm ci` 仍会成功，但 **esbuild 的二进制不会下载**，于是 `npm run build:client` 会失败。因此发布工作流钉在 npm 11；将来升 12 时先跑 `npm approve-scripts --allow-scripts-pending` 并把 allowlist 提交进 `package.json`。
 
 ## 3. 为什么 Obsidian「插件商店」看不到新版本
 
