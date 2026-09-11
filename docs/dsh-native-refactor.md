@@ -159,7 +159,7 @@ dsh-math-memory uninstall [--vault <dir>] [--purge] [--purge-data] [--yes]   # �
 
 - [ ] `ARCHITECTURE.md` §2 更新（bundle 化后的职责 + uninstall + marker）。
 - [ ] `README.md` / `README.zh.md`：`dsh plugin add` 为主、CLI 为辅、卸载说明；**中文文档必须保留**。
-- [ ] `docs/memory/handoff.md`、`docs/memory/changelog.md`、根 `CHANGELOG.md`。
+- [ ] `docs/handoff.md`、`docs/memory/changelog.md`、根 `CHANGELOG.md`。
 - [ ] `scripts/check-doc-consistency.mjs` 若断言数变化则同步。
 - [ ] Obsidian 插件设置页加「卸载」入口（调 `uninstall`）。
 

@@ -1,6 +1,6 @@
 # DSH 0.1.5-rc.1 适配：评估与实施计划
 
-> **状态：计划已定，实施中。** 本文记录 dsh 0.1.1-rc.2 → 0.1.5-rc.1（会话数据格式 V2 → V3）与 dsh-web-ui → dsh-web-all 0.3.20 对本项目的影响、取证与适配清单。
+> **状态：已实施（2026-09-11 更新；原先写「计划已定，实施中」）。** 本文记录 dsh 0.1.1-rc.2 → 0.1.5-rc.1（会话数据格式 V2 → V3）与 dsh-web-ui → dsh-web-all 0.3.20 对本项目的影响、取证与适配清单。**三条已全部落地**：V3 日志按会话去重（显式优先 `.v3.` 变体）、401 文本页改主进程反代、junction 镜像改 `lstatSync` 自愈；本文 §7 的两个待决问题也已决定（`enableSkinCenter` 保持默认 `false`；junction 残留改为自愈清理）。未做项以 `handoff.md` §7 为准。
 > 写于 2026-09-10，基于本机实测（dsh 0.1.5-rc.1 / dsh-web-all 0.3.20 / 394 份会话日志）。
 
 ## 1. 触发原因
@@ -168,7 +168,7 @@ dsh 0.1.5 的 web carrier 引入了浏览器会话鉴权（`@deepseek-ai/dsh-cli
 
 ## 5. 实施顺序（文档先行）
 
-1. **本文档**（已完成）→ 2. A1 代码 → 3. host 副本同步 → 4. 回归测试（V3 夹具 + 双文件场景 + 两份实现一致性）→ 5. `npm test` → 6. 端到端验收（3199 冒烟 + `/memory-panel/*` 路由 + `npm run qa`）→ 7. 文档同步（`CHANGELOG.md`、`docs/memory/changelog.md`、`docs/memory/design.md`、`README.md` + `README.zh.md`、`docs/memory/handoff.md`）→ 8. `node scripts/check-doc-consistency.mjs`（断言数等数字必须与实测一致）。
+1. **本文档**（已完成）→ 2. A1 代码 → 3. host 副本同步 → 4. 回归测试（V3 夹具 + 双文件场景 + 两份实现一致性）→ 5. `npm test` → 6. 端到端验收（3199 冒烟 + `/memory-panel/*` 路由 + `npm run qa`）→ 7. 文档同步（`CHANGELOG.md`、`docs/memory/changelog.md`、`docs/memory/design.md`、`README.md` + `README.zh.md`、`docs/handoff.md`）→ 8. `node scripts/check-doc-consistency.mjs`（断言数等数字必须与实测一致）。
 
 ## 6. 待用户决策（不在本次实施范围）
 

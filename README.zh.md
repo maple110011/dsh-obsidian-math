@@ -6,7 +6,7 @@
 
 一个**双组件**仓库：
 
-1. **Obsidian 社区插件**（id `dsh-math-assistant`，仓库根 `manifest.json` + `main.js`）：右侧栏嵌入 dsh Web UI、自动检测并启动 dsh 服务、首次运行自动初始化 dsh 侧配置与 vault 模板；另有记忆面板、捕获策略设置与确定性维护。
+1. **Obsidian 社区插件**（id `dsh-math-assistant`，仓库根 `manifest.json` + `main.js`）：右侧栏嵌入 **dsh web**、自动检测并启动 dsh 服务、首次运行自动初始化 dsh 侧配置与 vault 模板；另有记忆面板、捕获策略设置与确定性维护。
 2. **dsh 插件**（npm 包 `dsh-math-memory`，`dsh/`）：把同一套 `notes-assistant` agent preset / profile 与 vault 模板安装进 `$DSH_HOME`。
 
 三种安装方式（原生 bundle / `--direct` 离线拷贝 / Obsidian 内置直写）产出等价配置，靠 owner marker 避免互相覆盖。**只装 Obsidian 插件即可使用**；纯 CLI 用 `dsh-math-memory install`（含 `uninstall`）。
@@ -21,7 +21,7 @@
 
 - **已经解决的**：**「agent 记不住用户问过什么」**。原文证据（episodes）确定性落盘、类型化原子记录（records）带来源链、五层结构 + 导航索引、统一检索（`note_recall`）一次查清、每轮按需注入而不是全量塞进上下文、每日体检 + 用户反馈闭环做确定性维护。也就是说：**跨会话的"记得住、找得到、可纠正"这条线是通的**。
 - **还差得多的**：**「辅助用户打磨一套数学理解，并建立对理解、技巧等的调用体系」**。现在记的是"用户问过什么/结论是什么"，不是"用户理解到哪、卡在哪、下一步该练什么"；技巧层只有存储与检索，**没有调用体系**（什么时候该用哪条、适用边界怎么判、失败了换哪条、几条如何组合）；也没有主动的教学闭环（诊断 → 提示 → 检验 → 复盘的长期档案）与复习调度。
-- **因此：真正实现了后一条，才叫 1.0。** 当前是 0.7.x 试做型——记忆基础设施可用、控制面可见可纠正，但离"学习伙伴"这个目标还差一代设计（缺什么、按什么顺序补，见 [docs/memory/handoff.md](docs/memory/handoff.md) §7 与 [docs/memory/assessment.md](docs/memory/assessment.md)）。
+- **因此：真正实现了后一条，才叫 1.0。** 当前是 0.7.x 试做型——记忆基础设施可用、控制面可见可纠正，但离"学习伙伴"这个目标还差一代设计（缺什么、按什么顺序补，见 [docs/handoff.md](docs/handoff.md) §7 与 [docs/memory/assessment.md](docs/memory/assessment.md)）。
 
 ## 特性
 
@@ -43,10 +43,10 @@
 - **记忆面板**：首屏一行状态条（画像/记录/模板/主题/定理/策略/备忘录/事件 + 上次体检）；**⚠️ 待处理**（体检的「待重审 / 建议归档」直接摆在可点的归档按钮旁）；五层卡片合并浏览 + 搜索（标题/主题/类型/算子）；逐卡 `✅ 确认` / `❌ 有错` / `过期` / `归档`（归档二次确认）并给出中文回执；事件时间线显示人类标题 + 主题（默认折叠 8 条）；记忆体检显示中文摘要（模型版清单折叠在「查看模型版清单」里）；**面板内直接编辑保存**（mtime 冲突防护）。
 - **反馈闭环**：回复内 `依据的记忆：<卡标题> — [✅ 这条对] [❌ 这张卡有错]` 链接经 loopback `/feedback` 端点确定性改写卡片（CSRF token 保护）；笔记引用可点击跳转 Obsidian（`/open`）。
 - **回复质量协议**：直觉先行、认知锚定（新内容挂钩你的笔记）、难度自适应、苏格拉底式纠错、低频检查性收尾。
-- **默认不挂载 dsh-web-ui 插件（独立性）**：profile 只 bundle `dsh-web-app` 以嵌入聊天 UI，**默认不挂载** dsh-web-ui 插件家族（皮肤中心/任务看板/SSH/aionui 面板/git-graph/宠物/统计等）——因此没有 `@linxin666` UI 包需要解析，有/无 `web` profile 都能干净启动。**皮肤中心**（皮肤选择 + 背景透明度）可在插件设置里选择性开启，需本机存在 `web` profile 以镜像 `@linxin666` 皮肤包；若该 `web` profile 装的是 `@linxin666/dsh-web-all` 聚合包（0.3.20 起聚合包已自带皮肤中心行），这个开关在功能上是冗余的——它仍覆盖「有皮肤包但没有聚合包」的机器。
+- **默认不挂载 `@linxin666` UI 插件（独立性）**：profile 只 bundle `dsh-web-app` 以嵌入聊天 UI，**默认不挂载** `@linxin666/dsh-web-all` 聚合的那一族 UI 插件（皮肤中心/任务看板/SSH/aionui 面板/git-graph/宠物/统计等）——因此没有 `@linxin666` UI 包需要解析，有/无 `web` profile 都能干净启动。**皮肤中心**（皮肤选择 + 背景透明度）可在插件设置里选择性开启，需本机存在 `web` profile 以镜像 `@linxin666` 皮肤包；若该 `web` profile 装的是 `@linxin666/dsh-web-all` 聚合包（0.3.20 起聚合包已自带皮肤中心行），这个开关在功能上是冗余的——它仍覆盖「有皮肤包但没有聚合包」的机器。
 
 ### 安全（fail-closed）
-- 工具面：文件读写/搜索 + 四个笔记工具 + ask_user；无 shell/web/子代理/删除工具。**不挂载任何 dsh-web-ui 插件**——保持最小 agent 工具面。
+- 工具面：文件读写/搜索 + 五个笔记工具（`note_recall` / `note_strategy` / `note_search` / `note_create` / `note_links`）+ ask_user；无 shell/web/子代理/删除工具。**不挂载任何 `@linxin666` UI 插件**——保持最小 agent 工具面。
 - 写操作限定 vault（workspace-write）；交互式提权默认禁用（`approval: never`）；`DSH_PERMISSION_MODE=danger-full-access` 仅重开提权询问、沙箱不变。
 - 记忆全部是 vault 内 markdown；归档代替删除；模型不得修改策略/统计字段。
 
@@ -61,11 +61,11 @@
 **方式 B（CLI）**：
 ```bash
 npm install -g dsh-math-memory
-dsh-math-memory install --vault "D:\\Obsidian笔记数据库"
+dsh-math-memory install --vault "<你的 vault 路径>"
 dsh --profile notes-assistant --port 3180                  # 启动（原生：bundle 已提供 panel/workspace，无需 --patch）
 ```
 
-插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**皮肤中心开关**（可选 dsh-web-ui 皮肤设置）、**侧栏性能模式**（默认开启：代理把皮肤在侧栏里的高开销特效去掉，并把皮肤客户端脚本 `hooks.mjs` 的两处热循环减速——实测那才是侧栏卡顿的主因）、**侧栏加载皮肤动态装饰**（默认开启；关掉则侧栏不加载皮肤脚本，实测最流畅，代价是 hero 场景/状态角色消失）、**捕获策略四档下拉框**。详细原因与实测数据见 [docs/memory/sidebar-performance.md](docs/memory/sidebar-performance.md)。
+插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**皮肤中心开关**（可选 `@linxin666` 皮肤设置）、**侧栏性能模式**（默认开启：代理把皮肤在侧栏里的高开销特效去掉，并把皮肤客户端脚本 `hooks.mjs` 的两处热循环减速——实测那才是侧栏卡顿的主因）、**侧栏加载皮肤动态装饰**（默认开启；关掉则侧栏不加载皮肤脚本，实测最流畅，代价是 hero 场景/状态角色消失）、**捕获策略四档下拉框**。详细原因与实测数据见 [docs/memory/sidebar-performance.md](docs/memory/sidebar-performance.md)。
 
 > **完整指引**：安装原理、冲突解决（owner marker / `--force` 接管）与卸载（三级删除、`--purge-data` 确认短语）见 [`docs/installation.md`](docs/installation.md)。
 
@@ -90,7 +90,7 @@ vault/
 ## 开发与质量
 
 ```bash
-npm test          # 语法 + 232 项零 token 回归 + 路由回归（30 项路由断言） + 侧栏认证握手回归（7 项，对真实 dsh）+ 侧栏反代回归（31 项）+ 安装器 e2e（漂移检测）
+npm test          # 语法 + 240 项零 token 回归 + 路由回归（47 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
 npm run qa        # 引擎探针：真实 vault 12 组召回断言 + 可达性分层/A-B 测量（零 token）
 npm run qa:e2e    # 真实会话端到端验收（烧真实 tokens，报告 API 级 usage）
 node scripts/build-obsidian.mjs   # 重建 main.js（改共享文件后必跑）

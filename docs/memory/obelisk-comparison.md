@@ -81,7 +81,7 @@ Obelisk 解决「agent 把做过的所有事**都**记下来、随时查得到�
 
 ### 5.6 边界
 
-- **vault 过滤**：只保存 `cwd` 在本 vault 内的会话（复用 `pathIsInside`），不把其它工作区会话写进数学 vault。
+- **vault 过滤**：只保存 `cwd` 在本 vault 内的会话（复用 `pathInside`），不把其它工作区会话写进数学 vault。
 - **fail-closed 不变**：写走插件确定性写，不经模型、不引入外部服务。
 - 写入失败只记日志、绝不阻塞 boot/prompt（与 hook 统计回写同哲学）。
 
@@ -91,7 +91,7 @@ Obelisk 解决「agent 把做过的所有事**都**记下来、随时查得到�
 |---|---|
 | 影响 | 高——补上「该记的没记」这一最大缺口，证据层从「模型自觉」变「确定性兜底」 |
 | 风险 | 低中——只追加不删除、seq 增量防重写、不碰语义层；主要风险是 episode 文件膨胀（靠尾截断上限 + 90 天归档消化） |
-| 成本 | 中——复用 `distillSession`/`findSessionLogs`/`pathIsInside` 等已有纯函数，新增 `runSessionCapture` + marker + 回归断言 |
+| 成本 | 中——复用 `distillSession`/`findSessionLogs`/`pathInside` 等已有纯函数，新增 `runSessionCapture` + marker + 回归断言 |
 | 优先级 | P0（高于 embedding；直接堵「漏记」这个更常见的失忆来源） |
 
 ---

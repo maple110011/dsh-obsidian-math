@@ -6,7 +6,7 @@
 
 A **two-component** repository:
 
-1. **Obsidian community plugin** (id `dsh-math-assistant`, repo-root `manifest.json` + `main.js`): embeds the dsh web UI in the right sidebar, detects and starts the dsh service, bootstraps the dsh-side configuration and vault templates on first run, and hosts the memory panel, capture-policy settings, and deterministic maintenance.
+1. **Obsidian community plugin** (id `dsh-math-assistant`, repo-root `manifest.json` + `main.js`): embeds **dsh web** in the right sidebar, detects and starts the dsh service, bootstraps the dsh-side configuration and vault templates on first run, and hosts the memory panel, capture-policy settings, and deterministic maintenance.
 2. **dsh plugin** (npm package `dsh-math-memory`, `dsh/`): installs the same `notes-assistant` agent preset / profile and vault templates into `$DSH_HOME`.
 
 The three install paths (native bundle / `--direct` offline copy / Obsidian's embedded bootstrap) produce equivalent configuration, kept conflict-free by owner markers. **Installing the Obsidian plugin alone is enough**; the CLI `dsh-math-memory install` (and `uninstall`) covers headless use.
@@ -21,7 +21,7 @@ Being explicit about the boundary matters more than listing features:
 
 - **Solved**: **"the agent cannot remember what you asked."** Raw evidence (episodes) is captured deterministically, typed atomic records carry source links, five indexed layers, unified retrieval (`note_recall`) in one pass, on-demand layer injection instead of dumping everything into context, plus a daily audit and a user feedback loop for deterministic upkeep. The cross-session *remember / find / correct* line works end to end.
 - **Still far off**: **"helping you polish a body of mathematical understanding, and building a system for invoking that understanding and your techniques."** What is stored today is *what you asked and what was concluded*, not *where your understanding stands, where it stalls, and what to practice next*. The technique layer has storage and retrieval but **no invocation system** (when to use which card, how to judge its applicability boundary, what to switch to after a failure, how several techniques compose), and there is no active teaching loop (diagnose → hint → check → review as a long-term record) or review scheduling.
-- **Therefore: 1.0 is the release that actually delivers the second line.** Today's 0.7.x is a prototype: the memory substrate is usable and the control surface is visible and correctable, but the "learning partner" goal is still a design generation away — see [docs/memory/handoff.md](docs/memory/handoff.md) §7 and [docs/memory/assessment.md](docs/memory/assessment.md) for the gap list and ordering.
+- **Therefore: 1.0 is the release that actually delivers the second line.** Today's 0.7.x is a prototype: the memory substrate is usable and the control surface is visible and correctable, but the "learning partner" goal is still a design generation away — see [docs/handoff.md](docs/handoff.md) §7 and [docs/memory/assessment.md](docs/memory/assessment.md) for the gap list and ordering.
 
 ## Features
 
@@ -43,10 +43,10 @@ Being explicit about the boundary matters more than listing features:
 - **Memory panel**: a one-line status strip (profile/records/templates/topics/theorems/strategy/memos/episodes + last audit); a **⚠️ needs-you** block that puts the audit's re-review / archive suggestions next to the working archive button; all five card layers in one searchable list (title/topic/type/operator); per-card `✅ confirm` / `❌ wrong` / `stale` / `archive` (archive asks twice) with a plain-language receipt; an episode timeline with human titles + topics (8 rows, expandable); a Chinese audit summary with the model-facing checklist folded away; **edit-and-save in the panel** (mtime conflict guard).
 - **Feedback loop**: `依据的记忆：<card title> — [✅ 这条对] [❌ 这张卡有错]` links in replies deterministically rewrite cards through the loopback `/feedback` endpoint (CSRF-token protected); note references are clickable and jump into Obsidian (`/open`).
 - **Reply-quality protocol**: intuition before formalism, anchoring new material to your existing notes, difficulty adaptation, Socratic correction, low-frequency check questions.
-- **No dsh-web-ui plugins mounted by default (independence)**: the profile bundles `dsh-web-app` for the embedded chat UI, but mounts **none** of the dsh-web-ui plugin family (skin center / task board / SSH / aionui panel / git-graph / pet / live-stats, etc.) by default — so it has no `@linxin666` UI packages to resolve and boots cleanly with or without a `web` profile. The **skin center** (skin picker + background transparency) can be optionally re-enabled from the plugin settings; it requires a `web` profile to mirror the `@linxin666` skin packages from. If that `web` profile carries the `@linxin666/dsh-web-all` aggregate (which has shipped its own skin-center row since 0.3.20), this toggle is functionally redundant — it still covers machines that have the skin packages but not the aggregate.
+- **No `@linxin666` UI plugins mounted by default (independence)**: the profile bundles `dsh-web-app` for the embedded chat UI, but mounts **none** of the UI plugin family that the `dsh-web-all` aggregate brings in (skin center / task board / SSH / aionui panel / git-graph / pet / live-stats, etc.) by default — so it has no `@linxin666` UI packages to resolve and boots cleanly with or without a `web` profile. The **skin center** (skin picker + background transparency) can be optionally re-enabled from the plugin settings; it requires a `web` profile to mirror the `@linxin666` skin packages from. If that `web` profile carries the `@linxin666/dsh-web-all` aggregate (which has shipped its own skin-center row since 0.3.20), this toggle is functionally redundant — it still covers machines that have the skin packages but not the aggregate.
 
 ### Safety (fail-closed)
-- Tool surface: file read/write/search + four note tools + ask_user; no shell, no web, no subagents, no delete tools. **No dsh-web-ui plugins are mounted** — the profile keeps the minimal agent tool surface.
+- Tool surface: file read/write/search + five note tools (`note_recall` / `note_strategy` / `note_search` / `note_create` / `note_links`) + ask_user; no shell, no web, no subagents, no delete tools. **No `@linxin666` UI plugins are mounted** — the profile keeps the minimal agent tool surface.
 - Writes confined to the vault (workspace-write); interactive escalation prompts disabled (`approval: never`); `DSH_PERMISSION_MODE=danger-full-access` only re-enables escalation prompts, the sandbox itself stays workspace-write.
 - All memory lives as markdown inside the vault; archiving instead of deleting; the model may not edit policy or statistics fields.
 
@@ -63,7 +63,7 @@ Being explicit about the boundary matters more than listing features:
 **B (CLI)**:
 ```bash
 npm install -g dsh-math-memory
-dsh-math-memory install --vault "D:\\Obsidian笔记数据库"
+dsh-math-memory install --vault "<path-to-your-vault>"
 dsh --profile notes-assistant --port 3180                  # start (native: the bundle provides panel/workspace, no --patch needed)
 ```
 
@@ -92,7 +92,7 @@ vault/
 ## Development & quality
 
 ```bash
-npm test          # syntax + 232 zero-token regression checks + 30 route-level checks + 7 real-dsh handshake checks + 31 loopback-proxy checks + installer e2e (drift detection)
+npm test          # syntax + 240 zero-token regression checks + 47 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
 npm run qa        # engine probe: 12 ground-truth recall assertions + reachability layering / pooling A/B on the real vault (zero tokens)
 npm run qa:e2e    # real-session end-to-end acceptance (spends real tokens; reports API-level usage)
 node scripts/build-obsidian.mjs   # rebuild main.js (required after shared-file changes)

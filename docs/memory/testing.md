@@ -60,7 +60,7 @@ node scripts/qa/e2e.mjs --cases my-cases.json --port 3192   # 自定义用例集
 
 1. **成本计量**：E2E 临时服务挂 `dsh-token-meter`，报告每用例真实 token；
 2. **行为断言库**：把「改写重试」「顺链扩读」「徽标引用」做成可配置断言；
-3. **回归基线**：引擎探针结果存 JSON 基线（`qa/baseline.json`），CI 可比对；
+3. **回归基线**：引擎探针结果存 JSON 基线（`qa/baseline.json`），CI 可比对。**当前状态（2026-09-11 更正）**：`e2e.mjs` 确实会写 `scripts/qa/runs/*/baseline.json`，但**没有任何代码读取它**——所以「CI 可比对」是目标而非现状，那三份已提交的基线目前是死产物（去留登记在 `handoff.md` §7）；
 4. **多 vault 探针**：engine-probe 支持自定义 vault + 用例文件，供他人复用；
 5. **CI 边界**：引擎探针可进 GitHub Actions（无 vault 时用合成 fixture）；E2E 因需模型凭据与真实 vault，保持本机运行。
 
@@ -104,7 +104,7 @@ node dsh/install.mjs install --dsh-home "$DSH_HOME" --vault "<vault>"    # 原�
 dsh --profile notes-assistant --port 3180   # 原生；--direct 装时需 --patch notes-assistant.patch.yml
 ```
 
-### 6.4 在主 dsh web UI 里用 preset（不建专用 profile）
+### 6.4 在主 dsh web 里用 preset（不建专用 profile）
 
 ```bash
 dsh plugin --profile web add dsh-math-memory   # 把 bundle 加进主 web profile（原生）
@@ -139,6 +139,8 @@ audit: true          # 是否运行每日确定性记忆体检
 6. **归档**：点「归档 >90 天事件」，确认旧 episode 移入 `episodes/archive/` 且 index 同步。
 
 ### 6.7 环境变量对照（新名优先，旧名兼容）
+
+> **完整参考见 [`docs/env-vars.md`](../env-vars.md)**（谁读、默认值、死开关、已知缺口），并由 `check-env-vars.mjs` 双向核对。这里只留最小的对照表。
 
 | 新名 | 旧名（兼容） |
 |---|---|

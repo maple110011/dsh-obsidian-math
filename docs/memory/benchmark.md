@@ -1,6 +1,10 @@
 # 基准测试设计规格（Benchmark）
 
-> **状态：已实现并实测**。仿真 vault（`scripts/qa/benchmark-vault/`）+ 零 token 探针（`scripts/qa/seed-probe.mjs`，8/8）+ 8 维度用例（`scripts/qa/benchmark-cases.json`）+ baseline.json 记录 + session log 归档（`e2e.mjs`）已全部搭好；真实 token E2E **8/8 通过**（deepseek-v4-flash，见 `docs/memory/changelog.md` 本轮条目）。本文是「记忆系统运行效果 + tokens/时间成本」基准的完整设计规格。
+> **状态：已实现并实测**。仿真 vault（`scripts/qa/benchmark-vault/`）+ 零 token 探针（`scripts/qa/seed-probe.mjs`，8/8）+ 8 维度用例（`scripts/qa/benchmark-cases.json`）+ baseline.json 记录 + session log 归档（`e2e.mjs`）已全部搭好。
+>
+> ⚠️ **真实 token E2E 的证据边界（2026-09-11 更正）**：8 用例套件**从未一次性全绿**——唯一一份完整运行的 baseline 记的是 **`passRate: 7/8`**（`scripts/qa/runs/run-2026-08-24T19-50-43-407Z/baseline.json`），其中失败的 1 个用例随后被**单独重跑**成 1/1。所以"8/8 通过"这个说法**不成立**（它把一次子集重跑与一次完整运行拼成了一个总数），此前写在本文与 `handoff.md`，均已更正。**当前可声称的是**：8 维度套件跑过一次完整运行，通过 7 项；余下 1 项单独复跑通过。要重新得到"8/8"必须**整套重跑一次**——`npm run qa:e2e` 会打真实 API（**烧钱，先问用户**）。
+>
+> 另注：`baseline.json` 目前**只写不读**（只有 `e2e.mjs` 写它），所以 `testing.md` 里"CI 可比对基线"仍是**愿景**；三份已提交的 baseline 是**死产物**，去留登记在 `handoff.md` §7。本文是「记忆系统运行效果 + tokens/时间成本」基准的完整设计规格。
 >
 > **背景**：现有基准只有用户当初"随便问的"几道 E2E 用例 + 绑真实 vault 的引擎探针，既不系统、又因真实 vault 持续变动而 ground truth 腐烂。策略层（`strategy-layer.md`）落地后，尤其需要一套系统基准来衡量它「是赚是赔」。
 >

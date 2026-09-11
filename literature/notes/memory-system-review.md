@@ -7,7 +7,7 @@
 
 ## 1. 现状基线
 
-来源：docs/memory/design.md、docs/memory/handoff.md、dsh/preset/*.mjs。
+来源：docs/memory/design.md、docs/handoff.md、dsh/preset/*.mjs。
 
 - 结构：五层（profile/topics/records/episodes/inbox）+ theorems + templates + notation + capture-policy；全 markdown，无数据库。
 - 读：note_recall 统一 BM25 检索 + 导航式注入 + 精读协议 + coverage 弱信号（<0.35）。

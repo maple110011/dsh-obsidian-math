@@ -2,7 +2,7 @@
 
 本文件说明仓库里**每个目录/文件是干什么的**、两个组件如何协作、以及记忆系统与检索系统的边界。文档知识库入口见 [docs/memory/README.md](docs/memory/README.md)。
 
-> **项目定位（2026-09-10）**：本仓库已经解决「agent 记不住用户问过什么」（跨会话原文证据 + 类型化原子记录 + 分层索引 + 统一检索 + 反馈纠错）；但**「辅助用户打磨一套数学理解，并建立对理解/技巧的调用体系」远未解决——真正实现它才是 1.0**。因此本文描述的是 0.7.x 的**记忆基础设施 + 控制面**，不是最终形态；缺什么见 [docs/memory/handoff.md](docs/memory/handoff.md) §7。
+> **项目定位（2026-09-10）**：本仓库已经解决「agent 记不住用户问过什么」（跨会话原文证据 + 类型化原子记录 + 分层索引 + 统一检索 + 反馈纠错）；但**「辅助用户打磨一套数学理解，并建立对理解/技巧的调用体系」远未解决——真正实现它才是 1.0**。因此本文描述的是 0.7.x 的**记忆基础设施 + 控制面**，不是最终形态；缺什么见 [docs/handoff.md](docs/handoff.md) §7。
 
 ## 1. 双组件总览
 
@@ -20,7 +20,7 @@
 │  fail-closed 沙箱（workspace-write，approval never）                     │
 └──────────────┬──────────────────────────────────────────────────────────┘
                │ 读/写
-┌──────────────▼──────────────────────── vault（D:/Obsidian笔记数据库）───┐
+┌──────────────▼──────────────────────────── vault（工作区根）─────────────┐
 │  笔记/ + AGENTS.md + .deepseek/                                          │
 │    memory/（profile, notation, topics, records, theorems, templates,     │
 │             episodes）  inbox/  capture-policy.md  cache/（机器生成）     │
@@ -36,7 +36,7 @@
 | `manifest.json` / `main.js` / `styles.css` | Obsidian 社区插件发布物（`main.js` 由构建生成，勿手改） |
 | `obsidian/main.template.js` | 插件源码：服务管理、LinkServer（/open + /feedback）、主进程反代（`DshWebProxy`：cookie 兑换 + 侧栏性能注入）、记忆面板、预览编辑、全局皮肤 patch 兜底（junction 镜像/降级）、设置页（含捕获策略下拉框与侧栏性能模式）、bootstrap |
 | `dsh/preset/` | **agent preset `notes-assistant`**：`preset.yml`（元信息）、`agent.cordis.yml`（装配：最小工具 + 记忆插件配置）、`math-memory.mjs`（记忆注入引擎 + 体检 + 对话索引 + 记号/捕获策略注入）、`note-tools.mjs`（笔记工具：note_recall/note_search/note_create/note_links + BM25 检索引擎） |
-| `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 dsh-web-ui 插件**，保持独立）、`notes-assistant.patch.yml`（`--direct`/Obsidian 直写通道的 `--patch` overlay；native 模式由 bundle 提供，不用它）、`math-memory-workspace.mjs` |
+| `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 `@linxin666` UI 插件**，保持独立）、`notes-assistant.patch.yml`（`--direct`/Obsidian 直写通道的 `--patch` overlay；native 模式由 bundle 提供，不用它）、`math-memory-workspace.mjs` |
 | `dsh/templates/` | **vault 模板**：`AGENTS.md`（工作协议，自动加载）、`profile.md`、`notation.md`（记号体系）、`topics-index.md`、`records-{readme,index}.md`、`theorems-*.md`、`templates-*.md`、`episodes-*.md`、`inbox-*.md`、`capture-policy.md` |
 | `dsh/install.mjs` | npm CLI **编排器**：`install`（原生 `dsh plugin add`）/ `install --direct`（离线扁平拷贝）/ `status` / `uninstall`（分级删除），写 owner marker（`.owner.json` / `.install-manifest.json`） |
 | `dsh/cordis.patch.yml` | **bundle 补丁**（`dsh.bundle.patch` 指向）：往 profile roster `insert` 宿主插件 `dsh-math-memory`，使 `dsh plugin add` 能原生送达全部能力 |
@@ -45,10 +45,11 @@
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignore，机器特定路径；备份 + 三路安装 + 验证） |
 | `scripts/qa/` | **QA 工具链**：`engine-probe.mjs`（零 token 召回断言 + 可达性分层/池化 A/B）、`e2e.mjs`（真实会话验收，含 API 级 token 计量）、`sidebar-perf-probe.mjs`（**按需**：CDP 驱动真实 dsh 测侧栏交互卡顿，不进 CI）、`cases.json`、`run.mjs`；方法论见 `docs/memory/testing.md` |
-| `scripts/test-memory.mjs` | 零 token 回归（232 断言，进 `npm test`） |
-| `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（30 断言：跨源拒绝、root 锚定、token、字段校验；进 `npm test`） |
-| `scripts/test-panel-auth.mjs` | 侧栏握手端到端（7 断言，对**真实 dsh**：内部端口 + token → 反代兑换 → 界面/资源/API/WebSocket 全通；未装 dsh 时 SKIP） |
-| `scripts/test-panel-proxy.mjs` | 侧栏反代回归（31 断言：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写：注入位置与规则内容、非导航不重写、无 `</head>` 与 gzip 透传、补丁锚点变化时原样返回、开关关闭后字节相同） |
+| `scripts/test-memory.mjs` | 零 token 回归（240 断言，进 `npm test`） |
+| `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（47 断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、写入型端点；进 `npm test`） |
+| `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 断言，对**真实 dsh**：内部端口 + token → 反代兑换 → 界面/资源/API/WebSocket 全通；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
+| `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 断言：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写：注入位置与规则内容、非导航不重写、无 `</head>` 与 gzip 透传、补丁锚点变化时原样返回、开关关闭后字节相同） |
+| `scripts/test-panel-present.mjs` | **呈现层**纯净决策回归（从 `main.template.js` 的**源码文本**里提取 `MemoryView` 的四个纯方法 `layerEntries`/`pendingItems`/`cardMeta`/`trendText` 并求值——测的是真源码，不是副本；接缝被改名/挪走会**报错**而不是静默不测） |
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测 |
 | `scripts/check-doc-consistency.mjs` | 文档一致性守卫：断言数等易漂移数字与代码实测值一致（进 `npm test`） |
 | `scripts/lit-import.mjs` | 文献库导入器：BibTeX + PDF + MinerU markdown → agent/人类双面文献库（见 `docs/literature.md`） |
@@ -82,7 +83,7 @@
 ## 4. 常用命令
 
 ```bash
-npm test                        # 语法 + 232 项回归 + 30 项路由回归 + 7 项认证 + 31 项反代回归 + 安装器 e2e（含漂移检测）+ preset-sync 回归
+npm test                        # 语法 + 240 项回归 + 47 项路由回归 + 8 项认证 + 32 项反代回归 + 安装器 e2e（含漂移检测）+ preset-sync 回归
 npm run qa                      # 引擎探针（零 token，12 组召回断言 + 可达性分层/池化 A/B）
 npm run qa:e2e                  # 引擎探针 + 真实会话端到端（烧真实 tokens，含 API 级计量）
 node scripts/build-obsidian.mjs # 重建 main.js（改 dsh/ 或模板后必跑）

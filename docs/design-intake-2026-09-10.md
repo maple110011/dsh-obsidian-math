@@ -69,4 +69,4 @@
 | 4 | 声明值 vs 有效值 | `collectMemoryState` 读 `retrieval-stats.json`，`uses` = 声明 + 未合并增量，并给出 `usesDeclared`/`usesPending`；体检回写后**读回核对**，不一致进 `structural.usesMismatch` | **修正了评估里的一处误解**：那份 stats 文件是**增量**（体检合并后清零），不是「与 frontmatter 打架的总量」。真正的风险是「两次体检之间少报」，所以面板改为显示有效值。 |
 | 5 | `degraded` 状态 | `syncHookStatsToCard`/`syncTopLevelStatsToCard`/`writeHookHistory` 全部返回布尔；体检累计 `postconditions`，输出 `status` + `warnings`，并写入人话摘要与模型清单 | **附加值**：上线当轮就抓出两个真实缺陷——① `syncTopLevelStatsToCard` 把 `uses` 追加到**闭合 `---` 之后**（正文里），这正是此前清理掉的两行游离 `uses: 0` 的成因；② 无 `hook` 块且非策略卡的卡片命中会被静默清零。两者都已修/已报告。 |
 
-零代码的两条也已落到文档：评审独立性写进协作约定（`docs/memory/handoff.md`），「不要做通用去多样性重排」写进 `AGENTS.md` §5（论据是 GraphMemix 的控制实验：MMR/DPP 净回收为负）。
+零代码的两条也已落到文档：评审独立性写进协作约定（`docs/handoff.md`），「不要做通用去多样性重排」写进 `AGENTS.md` §5（论据是 GraphMemix 的控制实验：MMR/DPP 净回收为负）。

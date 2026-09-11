@@ -121,7 +121,7 @@ dsh-math-memory uninstall --purge --purge-data --yes   # 加删记忆内容（�
 $ dsh-math-memory uninstall
 [dry-run] will remove bundle: dsh-math-memory, @deepseek-ai/dsh-web-app (profile notes-assistant)
 [dry-run] will remove preset copy: ~/.dsh/.agent-presets/notes-assistant (owner=npm)
-[dry-run] will remove cache: D:/Obsidian笔记数据库/.deepseek/cache
+[dry-run] will remove cache: <vault>/.deepseek/cache
 [keep]    skeletons (use --purge): .deepseek/**/index.md, _README.md
 [keep]    memory content (use --purge-data): AGENTS.md, .deepseek/memory/records/**, ...
 Run with --yes to execute the "自动删" tier.

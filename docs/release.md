@@ -133,4 +133,4 @@ Obsidian 的插件更新只认两件事：**社区注册表里的条目** + **�
 - `git push` / `git tag` 推送 / `npm publish` **必须等用户明确口令**，不要自行执行。
 - 本地 `npm test` 全绿 + `check-version-consistency --tag <版本>` 通过，是请求口令前的最低门槛。
 - 发版后回头核对三处：GitHub Releases 页面有该 tag、npm `npm view dsh-math-memory version`
-  等于该版本、`docs/memory/handoff.md` 记录本次发版。
+  等于该版本、`docs/handoff.md` 记录本次发版。

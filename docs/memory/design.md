@@ -1,9 +1,12 @@
-# 记忆系统当前设计（v0.6.x 实现规格）
+# 记忆系统当前设计（实现规格）
 
+> 当前版本：0.7.5
+> （本文件描述**当前**实现；它与 `package.json` 的一致性由 `check-version-consistency.mjs` 守卫）
+>
 > 本文档描述**代码里真实存在**的记忆系统，不是愿景。对应文件：
 > - 注入引擎：`dsh/preset/math-memory.mjs`
 > - 笔记工具：`dsh/preset/note-tools.mjs`
-> - 工作协议：`dsh/templates/AGENTS.md`（安装进 vault 根目录）
+> - 工作协议：`dsh/templates/vault-AGENTS.md`（安装进 vault 根目录后名为 `AGENTS.md`）
 > - 记忆模板：`dsh/templates/*.md`（安装进 `<vault>/.deepseek/**`）
 > - 生命周期维护：`dsh/host/memory-admin.mjs` 的 `archiveOldEpisodes`（由 Obsidian 插件启动时触发）
 
@@ -43,7 +46,7 @@
 - `memory/theorems/index.md`：个人 Matlas 定理索引（一行一条，领域/关键词/状态）；
 - `memory/templates/<slug>.md`：问题模板卡（题型/解法 ↔ 定理关联图），索引注入 ≤600 字符；
 - `memory/notation.md`：记号体系（已采纳/候选/已否决三表 + 修订历史；收集→统一→维护，≤800 字符随提示注入）；
-- `capture-policy.md`：捕获策略（idea/fact/preference × auto/ask/off，frontmatter，用户维护；随系统提示注入，默认 ask/ask/ask——写入记忆前一律先征得同意）；
+- `capture-policy.md`：捕获策略（四个档位 `idea`/`fact`/`preference`/`structure` × `auto`/`ask`/`off`，frontmatter，用户维护；随系统提示注入）。默认 `idea`/`fact`/`preference` = `ask`（写入记忆前先征得同意），**`structure` = `auto`**（它管的是给已存在的内容补索引与结构行，每次都问会打断对话；也保证缺 `structure:` 行的旧策略文件行为不变）——见 `DEFAULT_CAPTURE_POLICY`；
 - `strategy/<slug>.md`：策略层方法卡（困难→策略→检索目标 + 抽象阶梯 + 反模式），`note_strategy` 按需检索，不逐轮注入；
 - `working.md`：工作记忆草稿（覆写、有未闭合线程才写、≤500 字符注入、空则跳过）；
 - `cache/`：机器生成的对话索引、记忆体检报告与 hook 历史快照（用户勿动）。
@@ -116,6 +119,6 @@
 
 ## 10. 已知局限（详见 assessment.md）
 
-检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板有两套入口：Obsidian 侧 ItemView（浏览/搜索/编辑/反馈/归档）与 dsh web ui 的 `settings.section` 面板（`dsh/client-panel/`，主 dsh web 3080 上使用）。
+检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板有两套入口：Obsidian 侧 ItemView（浏览/搜索/编辑/反馈/归档）与 dsh web 的 `settings.section` 面板（`dsh/client-panel/`，主 dsh web 3080 上使用）。
 
 纠错链路（0.7.2 起，详见 `self-correction.md`）：① `superseded` / `duplicate_of` 卡在 `note_recall` 中**已排除**；② `❌` 反馈**已**把 `success_rate` 封顶 0.35 并降一级 `verified`（写 `needs_review`/`last_wrong`）；③ `hookPrior` 检索权重**已**从 5% 提到 15%（`verified`/`success_rate` 对排序影响 ≈10%）；④ 语义对错**仍无全自动确定性校验**——体检新增「待重审」清单（确定性检测 + 模型读 `source` 证据链执行），但内容正确性的最终判断仍依赖模型与用户反馈（插件不调模型是设计红线）。

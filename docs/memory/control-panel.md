@@ -120,7 +120,7 @@
 |---|---|---|---|
 | **A. dsh 客户端自挂列**（aionui 模式） | 新包：宿主路由 `/memory-panel/*`（gate 到 vault 工作区）+ 客户端 tsdown 列 | 与聊天同屏、体验最好；模式被 aionui 验证 | 本仓库引入 tsdown 客户端构建链；自挂 DOM 与 shell 内部结构耦合，shell 升级可能碎；需随 Obsidian 插件引导进 obsidian profile 的 node_modules（新装配链路） |
 | **B. Obsidian 侧视图 + loopback 反馈** | Obsidian 插件加 ItemView（原生面板）+ LinkServer 加 `/feedback` | **零客户端构建**、复用现有构建链（main.template.js → main.js）；反馈链接天然活在聊天回复里；记忆浏览落在 Obsidian（用户看笔记的地方） | 面板与聊天不在同一窗口内（可并排：右侧栏聊天 + 主区记忆视图） |
-| **C. 混合（推荐）** | 阶段 1 先做 B 的全部 + 徽标；阶段 2 待 dsh-web-ui 出现官方右侧槽位或 aionui 列模式沉淀后，再做 A 的客户端列 | 先拿到最大收益（纠错闭环），保留最优体验的升级路径 | 阶段 2 依赖上游生态 |
+| **C. 混合（推荐）** | 阶段 1 先做 B 的全部 + 徽标；阶段 2 待 dsh web 出现官方右侧槽位或 aionui 列模式沉淀后，再做 A 的客户端列 | 先拿到最大收益（纠错闭环），保留最优体验的升级路径 | 阶段 2 依赖上游生态 |
 
 **推荐 C**。理由：反馈链接 + 验证徽标是 v2 闭环的**必选件**，且几乎零成本（LinkServer 已存在、已注入到每条回复）；记忆视图放 Obsidian 侧与本插件的“笔记助手”定位一致；dsh 客户端列当前无官方槽位，自挂 DOM 的维护成本不应由本仓库在 v2 早期承担。
 

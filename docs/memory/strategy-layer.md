@@ -1,6 +1,6 @@
 # 策略层设计规格（Strategy Layer）
 
-> **状态：提案（未实现，待拍板）**。本文是「方法层 + 工作记忆 + iterative retrieval」的完整设计规格，拍板后照此实现。
+> **状态：已实现（0.7.2 起）**。本文是「方法层 + 工作记忆 + iterative retrieval」的设计规格，已落地为 strategy 模板（`dsh/templates/strategy-*.md`）+ `note_strategy` 工具（`dsh/preset/note-tools.mjs`）+ `working.md` 注入 + AGENTS.md 策略层路由（落地记录见 `handoff.md` §7）。**§11「未决 / 延后」仍有 2 项待定**，其余按本文实现。
 >
 > **背景**：四篇检索对齐文献（Dual RAG / QueryLink / HyPE / MemSearcher，见 `literature/notes/retrieval-alignment-2026-08.md`）与用户对「agent 自己的工作记忆」的讨论收敛出同一个缺口：现有 note_recall 是 **document-level retrieval**，无法充分利用数学个人知识库里「方法、思路、技巧」这一类策略性知识。
 >
@@ -185,8 +185,8 @@ updated: 2026-08-24
 
 **演进**：
 
-- 枚举作为常量进内核（如 `note-tools.mjs` 的 `RETRIEVE_TARGETS`），加值 = 改常量 + bump `STRATEGY_SCHEMA_VERSION` + 更新模板。
-- 旧卡遇到未知枚举值 → **优雅降级**为通用关键词搜索，不报错。
+- 枚举**不设内核常量**：`retrieve` 目标是自由字符串，`strategyRetrieve` 只做扁平化 + 去重，**不校验取值**。（原先导出的 `RETRIEVE_TARGETS` 常量无人读取，已于 2026-09-11 删除——留着它会让「改常量就能加取值」成为假承诺。加新取值只需写进卡与模板。）
+- 旧卡遇到未知取值 → 照原样返回，不报错（现状即如此）。
 - 审计统计各值使用频率 → 决定加/减。
 
 > **会长期演进的不是这个枚举，而是开放词汇**：`difficulty`（困难）与 `move`（策略）是开放字段，随使用沉淀新卡即可，不动 schema。

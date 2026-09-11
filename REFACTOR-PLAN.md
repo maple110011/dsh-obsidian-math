@@ -1,6 +1,6 @@
 # dsh-obsidian-math 拆分重构方案（t4 · refactor 顾问产出）
 
-> **状态：已退役（历史档案，不再维护）**。本文为拆分重构的规划稿。执行结果：Phase 0（清文档漂移）、Phase 1（解耦命名/路径）、Phase 3（开关与共存）已落地；Phase 2（拆仓库）已由用户决定**保持单仓**、取消；Phase 4（web ui 适配）未做。所有剩余/未做事项以 [docs/memory/handoff.md](docs/memory/handoff.md) §7 为准。本文仅存档决策依据。
+> **状态：已退役（历史档案，不再维护）**。本文为拆分重构的规划稿。执行结果：Phase 0（清文档漂移）、Phase 1（解耦命名/路径）、Phase 3（开关与共存）已落地；Phase 2（拆仓库）已由用户决定**保持单仓**、取消。Phase 4（面板适配 dsh web）：**当时按「自挂右侧 DOM 列」的形态未做，后来换形态交付了**——记忆面板现为独立客户端包，走官方 `settings.section` 槽位挂在 dsh web 里（`dsh/client-panel/` + 宿主路由 `/memory-panel/*`，见 [`docs/memory/control-panel.md`](docs/memory/control-panel.md)）；**自挂 DOM 列那部分至今未做**，等上游出现官方右侧槽位。所有剩余/未做事项以 [docs/handoff.md](docs/handoff.md) §7 为准。本文仅存档决策依据。
 
 > 基于 t1（架构）、t2（文档漂移）、t3（代码质量）三份审查发现；每条结论标注了依赖的具体发现。本文是**可执行方案**，不是愿景。
 
@@ -27,7 +27,7 @@
 │   · 笔记工具：note_recall / note_search / note_create / note_links + BM25 + hook 解析 + tokenizer       │
 │   · 确定性文件操作（从 Obsidian 宿主下沉，t1 H1）：applyFeedback / archiveMemoryFile / setCapturePolicyMode │
 │   · 工作区根解析 resolveWorkspace（统一，修 t3 High）                                                  │
-│   · 模板与协议：AGENTS.md / 五层结构 / capture-policy / notation / 15 个模板（单一 templates-manifest） │
+│   · 模板与协议：AGENTS.md / 五层结构 / capture-policy / notation / 模板（单一 templates-manifest，数量以清单为准） │
 │   · 安装器 install.mjs（--workspace 任意文件夹）· 宿主路由 /memory-panel/*（host-agnostic，Phase 4）     │
 └──────────────────────────────┬───────────────────────────────────────────────────────────────────────┘
                                │ 读/写（markdown，无数据库）
@@ -162,6 +162,8 @@ audit: on
 ---
 ```
 preset config 只放默认值；`DSH_MATH_MEMORY_ENABLED=0` 是进程级最后兜底；`/memory off` 或 `dsh-math-memory on|off` 是运行时切换（需 host 支持）。
+
+> **状态更正（2026-09-11 核对）**：`DSH_MATH_MEMORY_ENABLED` **从未实现**——全仓库没有任何代码读取它（只有本行提到它），所以那个"进程级最后兜底开关"不存在。真正存在的开关是 preset config 的 `enabled` 与 `sessionCapture` 等配置键。此处保留原文以存档当时的规划，但**不要**把它当成本仓库的现有能力。
 
 **开/关语义（明确，不骑墙）**：
 - **关 = 完全停用（暂停）**（推荐默认）：不写、不注入、不扫描、不体检、不提醒；文件与缓存**原样保留**；零 token、零 IO、零副作用。这最贴合"只在学数学时打开"——关掉即不存在。

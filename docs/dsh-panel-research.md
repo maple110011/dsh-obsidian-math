@@ -2,6 +2,8 @@
 
 > 目标：为 dsh-math-memory 的「记忆管理面板」选择 dsh web 里的挂载方式。
 > 结论：**优先用官方 `settings.section` 槽位（noema 路线），不采用 aionui 的自挂 DOM 列。**
+>
+> **2026-09-11 更正（本文正文是 2026-08 的调研快照，不要照抄其中的包名）**：web profile 的聚合包已改名——`@linxin666/dsh-web-ui-all` → **`@linxin666/dsh-web-all`**（0.3.20 起，其 `dsh.engines.dsh` 要求 `>=0.1.5-rc.1`），子包仍是 `dsh-client-ui-*`（皮肤中心 `dsh-client-ui-skin-center`、设置卡 `dsh-client-ui-web-ui-settings` 等）。**权威依据**：本机 `~/.dsh/profiles/web/package.json` 与本仓库 [`dsh-0.1.5-adaptation.md`](dsh-0.1.5-adaptation.md) §1。结论本身仍然有效且已落地（面板走 `settings.section`）。
 
 ## noema 的做法（已核实，子代理调研 + 源码 URL）
 
@@ -36,5 +38,5 @@
 
 ## 遗留
 
-- aionui 与 dsh web ui 两个调研子代理本轮因余额/并发失败；但 noema 的结论 + 本仓库 control-panel.md §3 的实测已足够确定路线，后续可补。
+- aionui 与 dsh web 两个调研子代理本轮因余额/并发失败；但 noema 的结论 + 本仓库 control-panel.md §3 的实测已足够确定路线，后续可补。
 - 关键源码：https://github.com/ZSeven-W/dsh-noema （src/index.ts、src/status-route.ts、src/settings.ts、src/client/index.tsx、scripts/build-client.mjs）

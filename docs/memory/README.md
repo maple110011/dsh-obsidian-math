@@ -21,7 +21,7 @@
 | [`sidebar-performance.md`](sidebar-performance.md) | **侧栏卡顿排查**：12 条候选原因的逐条证据与处置（跨帧 backdrop-filter 主因、iframe 隔离/挂起、渲染线程同步 IO、搜索防抖），含已排除项、未量到的项与 A/B 复核办法 | 面板性能相关改动或新证据时更新 |
 | [`testing.md`](testing.md) | **QA 方法论 + 本地验收手册**：引擎探针/E2E 用法、boot 冒烟、手动 Obsidian 验证、环境变量对照 | 测试流程/验收步骤变化时更新 |
 | [`benchmark.md`](benchmark.md) | **基准测试设计规格**：两套分层（引擎探针 + 端到端）、8 维度、仿真 vault（seed vault）、baseline.json 记录格式 | 拍板后实现；基准结构变化时更新 |
-| [`handoff.md`](handoff.md) | **交接文档**：现状、坑、决策记录、下一步候选 | 每轮大改收尾时更新 |
+| [`handoff.md`](../handoff.md) | **交接文档**：现状、坑、决策记录、下一步候选 | 每轮大改收尾时更新 |
 | [`../dsh-0.1.5-adaptation.md`](../dsh-0.1.5-adaptation.md) | **宿主版本适配**：dsh 0.1.5-rc.1 / 会话格式 V3 / `dsh-web-all@0.3.20` 的影响取证、修复清单与「刻意不改」的理由 | 宿主或 web 插件大版本升级时更新 |
 
 ## 核心结论（TL;DR）
@@ -34,7 +34,7 @@
 3. **长期方向**（详见 [`v2-proposal.md`](v2-proposal.md)）：
    - 检索式注入：已实现为 note_recall 统一入口（BM25 粗筛 + 精读挑选）+ 导航式注入（S5）；
    - 确定性维护：ISM 七机制的本土化维护 pass（审计报告已实现，模型执行的合并/强化走协议）；
-   - 记忆控制面：浏览/反馈已实现（Obsidian 记忆面板 + 反馈链接，阶段 1a/1b/1c/1d）；dsh web ui 面板已实现（`settings.section` 槽位，装在主 dsh web 3080）；**溯源（source 链）未实现**。
+   - 记忆控制面：浏览/反馈已实现（Obsidian 记忆面板 + 反馈链接，阶段 1a/1b/1c/1d）；dsh web 面板已实现（`settings.section` 槽位，装在主 dsh web 3080）；**溯源（source 链）未实现**。
 4. **不可动摇的原则**（来自两轮评估）：原文证据优先；写时保留（superseded 而非删除）；检索先粗后细；证明可核查；所有记忆写入带来源与验证等级；fail-closed 安全边界。
 
 ## 工作约定（对协作者/agent）
@@ -59,7 +59,7 @@
 | 检索 v3 之独立 LLM 重排（A6） | ⬜ 可选（默认关闭；探针不满意时启用） |
 | 策略层（方法层 + 工作记忆 + iterative retrieval） | ✅ 已实现（`strategy-layer.md`：note_strategy + working.md + strategy 模板 + AGENTS.md 路由） |
 | 基准测试（引擎探针 + 端到端 + 仿真 vault） | ⬜ 提案（`benchmark.md`，待拍板） |
-| 质量保障 | ✅ 232 项零 token 回归 + 30 项路由回归 + 31 项反代回归（含侧栏性能注入）+ `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |
+| 质量保障 | ✅ 240 项零 token 回归 + 44 项路由回归 + 32 项反代回归（含侧栏性能注入）+ `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |
 | 记忆纠错与确定性自维护（self-correction） | ✅ 已实现（0.7.2，`self-correction.md`）：P1 纠错进检索三件套 + P2 待重审 + P3 自动归档 + P4 合并去重 + P5 strategy 统一生命周期 |
 | 自动保存对话（obelisk-comparison） | ✅ 引擎已实现（0.7.3，`obelisk-comparison.md`）：整场对话确定性写进 episodes（尾截断 + seq 增量 + vault 过滤 + `sessionCapture` 开关）；双面板 UI 开关/按钮留下一小步 |
 | 宿主适配：dsh 0.1.5 会话格式 V3 | ✅ 已适配（[`../dsh-0.1.5-adaptation.md`](../dsh-0.1.5-adaptation.md)）：解码/蒸馏无需改动；**按会话去重日志**（V3 迁移保留 V2 原件，同一会话会有两份日志）；profile patch / preset / `settings.section` 槽位在 0.1.5 下实测有效 |
