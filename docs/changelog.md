@@ -3,6 +3,33 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09 · 新守卫的第一次 CI 运行就红：换行，以及"本地全绿"是假的
+
+用户报「npm test 好像有一个出问题了」。是 GitHub Actions 的 `CI`（run 65，我推的 `3ce0835`）：**上一次 run 64 是绿的**——因为出问题的这道门禁（`check-client-bundle.mjs`，客户端产物新鲜度）正是这 22 个提交里新加的，**它从未在 CI 上通过过**，我这一推才把它暴露出来。GitHub API 确认：`test (windows-latest)` failure、`test (ubuntu-latest)` success（含 ubuntu 的 `npm test` 步骤）。
+
+**现象**：`committed 14456 bytes vs fresh 14445 bytes`——两个数字只差 11。
+
+**根因：11 恰好是这个文件的换行数。** 守卫用 `readFileSync(..., 'utf8')` 读提交进仓库的产物，与一次全新构建**逐字节**比较。Windows runner 的检出带 `core.autocrlf=true`，产物到手是 **CRLF（14456 字节）**，而构建输出是 **LF（14445 字节）**，差值正好等于文件里 **11 个 LF**。注意 `git ls-files --eol` 显示 `i/lf`（blob 是 LF）——**blob 的换行不等于检出后的换行**，后者由 `core.autocrlf` 决定。ubuntu 上两侧都是 LF，所以同一次 push 两个 job 一红一绿。
+
+**这是坑 57 的复发**：`check-bundle-freshness.mjs`（main.js）早就用 `s.replace(/\r\n/g, '\n')` 修过同一件事，注释里也写了原因；后写的守卫没照做。
+
+**更值得记的是它为什么在我的机器上连显都不显**：本机沙箱禁止 esbuild 的**子进程**（`spawn EPERM`），守卫**如实打印了 SKIP**、只跑形状检查，然后 **exit 0**；而 `run-gates.mjs` 只按退出码判成败，于是汇总照打 **34/34**。我连续几轮把"34/34"读成"全部验证过"——**其实第 26 条什么都没比**。这与坑 68（"守卫看起来在工作"）同族，但主体不同：**守卫没撒谎，是汇总把 SKIP 抹平了**。
+
+**修法**：比较前两侧都做 `\r\n → \n` 归一化（与 main.js 那道守卫一致）。
+
+**变异验证（三步全部实做）**：
+
+1. 把产物强制检出成 CRLF（注意：`git checkout -- <file>` 在内容未变时是 **no-op**，必须 `Remove-Item` 之后再检出；实测 `bytes=14456 CRLF=11`）→ **修前**的输出与 CI **逐字一致**，修后 5 项全 ok；
+2. 故意追加 7 字节让产物过期 → 仍然 FAIL（`14452 vs 14445`），证明没有把守卫改成恒真；
+3. 重建（`node dsh/client-panel/build-client.mjs`）→ OK。
+
+**副产品两条**：
+
+- `core.autocrlf=true` 会让"LF 工作区 vs LF blob"在 `git status` 里显示成 `M`，但 `git diff --quiet` 退出 0、`git hash-object -- <file>` 与 `git rev-parse HEAD:<file>` 相同（实测 `f2e2bfbc…`）⇒ 那是 stat 假象。判断"到底改了没有"要用哈希，不要用 status。
+- 已记录为**坑 69**；`AGENTS.md` §4 里"若它绿，你是真的绿"那句**已就地更正**（补上"绿只等于退出码 0、门禁内部的 SKIP 不被汇总区分"）。**未做、登记为后续**：让 `run-gates.mjs` 把门禁内部的 SKIP 显示出来（需要一个 `__SKIP__` 约定），以及加 `.gitattributes` 把换行钉死——两者都属另一次改动。
+
+**验证范围**（按 §4 的要求写清）：`node scripts/check-client-bundle.mjs` 单独跑了 4 次（CRLF 修前 / CRLF 修后 / 变异 / 恢复），另跑全量 `npm test` = **34/34**——其中该条在本机仍然 SKIP，**这正是本文的主题**。
+
 ## 2026-09 · 独立端口：哪一半是必要的，哪一半只是习惯
 
 用户问：「就实现 dsh 其他使用与笔记使用互不干扰这一点来说，独立 3180 端口有必要吗？独立端口相比其他方案优劣如何？」本文记录**结论与依据**，全文见 [`port-and-isolation.md`](port-and-isolation.md)。**只做了研究，没有改代码。**

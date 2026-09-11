@@ -17,7 +17,7 @@
 | 你想知道 | 读 |
 |---|---|
 | 目录结构、模块职责、数据流 | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| 上手/交接：改哪里、跑什么、**68 条历史陷阱** | [`docs/handoff.md`](docs/handoff.md)（§2 入口地图、§4 陷阱、§7 未做清单） |
+| 上手/交接：改哪里、跑什么、**69 条历史陷阱** | [`docs/handoff.md`](docs/handoff.md)（§2 入口地图、§4 陷阱、§7 未做清单） |
 | **给 agent 的仓库维护方法（通用）** | [`docs/agent-repo-maintenance.md`](docs/agent-repo-maintenance.md) |
 | 可维护性审查与整改台账 | [`docs/maintainability-review-2026-09-11.md`](docs/maintainability-review-2026-09-11.md)（审计，只读）、[`docs/maintainability-fixes-2026-09-11.md`](docs/maintainability-fixes-2026-09-11.md)（状态 + 证据） |
 | 记忆系统的当前实现规格 | [`docs/memory/design.md`](docs/memory/design.md) |
@@ -53,7 +53,7 @@
 
 ## 4. 验证：什么才算"通过"
 
-**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 34/34）。
+**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 34/34）。⚠️ 但"绿"只等于**退出码 0**：门禁可以因环境不允许而**自行 SKIP** 后 exit 0，而汇总只按退出码统计、不区分 SKIP（坑 69：本机 34/34 里曾有一条其实什么都没比，CI 才报出来）。见到 `SKIP`/环境字样就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
 
 ```bash
 node scripts/run-gates.mjs               # 全部门禁（= npm test）
@@ -97,7 +97,7 @@ node scripts/run-gates.mjs --only panel  # 只跑名字含 panel 的
 - **加守卫必须做变异验证**：故意制造它要抓的缺陷 → 确认它报错 → 恢复 → 确认 `git diff` 为空。验收标准是"**它在该报错时确实报错**"，不是"跑了没报错"。
 - **解析 frontmatter 不要自己写正则**：`/^---\r?\n([\s\S]*?)\r?\n---/` 曾被复制 15 次，是坑 21/22/43 三次数据损坏的共同根因。用 `dsh/preset/hook-frontmatter.mjs` 的 `frontmatterSpan`/`readFrontmatter`/`replaceFrontmatter`，守卫 `check-frontmatter-source.mjs` 会拒绝新的拷贝（坑 65）。
 - **只有一个自动发现的指令文件**：仓库根 `AGENTS.md`（就是本文件）。任何其它 `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `.github/copilot-instructions.md` 都会被 harness 当成"**本仓库**的指令"注入给 agent——不管它本来写给谁。本仓库已经中过两次（坑 60：`dsh/templates/AGENTS.md` 是给用户 vault 的协议；`scripts/qa/benchmark-vault/AGENTS.md` 是合成基准 vault 的协议，一动那个目录就被注入全文）。**守卫：`node scripts/check-agent-instructions.mjs`**——除根 `AGENTS.md` 外一律拒绝，"一个都没找到"也算失败。修法是**改源文件名**（安装名由清单映射），不是删文件，也不能只是"记得别打开它"。
-- 完整清单见 `docs/handoff.md` §4（68 条）——改动前扫一遍与你要动的东西相关的条目。
+- 完整清单见 `docs/handoff.md` §4（69 条）——改动前扫一遍与你要动的东西相关的条目。
 
 ## 7. 提交信息与工作方式
 
