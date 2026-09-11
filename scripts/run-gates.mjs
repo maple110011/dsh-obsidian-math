@@ -47,6 +47,7 @@ const GATES = [
   { name: 'check: frontmatter single source', args: ['scripts/check-frontmatter-source.mjs'] },
   { name: 'check: env vars vs docs/env-vars.md', args: ['scripts/check-env-vars.mjs'] },
   { name: 'check: doc constants (tools/papers)', args: ['scripts/check-doc-constants.mjs'] },
+  { name: 'check: agent instruction files', args: ['scripts/check-agent-instructions.mjs'] },
   { name: 'check: release artifact paths', args: ['scripts/check-release-paths.mjs'] },
   { name: 'check: client bundle freshness', args: ['scripts/check-client-bundle.mjs'] },
   { name: 'check: main.js bundle freshness', args: ['scripts/check-bundle-freshness.mjs'] },
