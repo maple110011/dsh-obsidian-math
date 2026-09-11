@@ -228,7 +228,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **可溯源（source 链 + 引用次数）** | `control-panel.md` §2.3 要求的「每条记忆显示 source 证据链与引用次数」**仍未交付**：`collectMemoryState` 至今不解析 `source`，两个面板都没有 | 中 |
 | **发布 0.7.5（推 tag）** | 版本号已对齐、守卫已就位、`docs/release.md` 已写；**推 tag 需要用户口令**，推完才会产出 Release 与 npm 包 | 高（发布前） |
 | **persona / AGENTS.md 语义解耦** | persona 仍自称「Obsidian …」，改「工作区」措辞（语义改动，需拍板） | 中 |
-| **侧栏性能：Obsidian 侧栏面板从未测量（本次调查的空白）** | 用户报告的动作是「**在 Obsidian 里展开侧栏**」，而所有 CDP 数字都来自**独立浏览器里的 dsh 侧栏**（探针跑 headless Chromium，看不到也点不到 Obsidian 的 Electron 界面）。**Obsidian 侧栏面板的展开/收起 + iframe 重排/合成 + 宿主渲染成本 = 未测量**（原因 3/4 属推理后处置）。量法已写进 `docs/memory/sidebar-performance.md` §6：给 Obsidian 开 `--remote-debugging-port`（它也是 Electron），**同一套 CDP 代码换 target**，可同时量到面板开合与 iframe 内部 DOM 规模。**在量到之前不要声称"侧栏卡顿已定位"覆盖了 Obsidian 侧。** 另有两条旧缺口：① 同机 3080 的 `dsh web` 空闲 ~15% 单核；② iframe 内 DOM 规模（长会话） | 中（下一步） |
+| **侧栏性能：宿主侧已量（原"空白"已补）** | ✅ 2026-09-11 用 `scripts/qa/sidebar-attach-probe.mjs`（附着到真实 Obsidian：`--remote-debugging-port`，**只读**观察用户手动点击）测出结论：**同一 90 秒内宿主 0 帧 >33ms、最差 18 ms、LoAF 0、`RecalcStyle` 0.067 s；iframe 63 帧 >33ms、最差 2183 ms、`RecalcStyle` 22.76 s（410 次）**。⇒ 卡顿全在 dsh 侧，主成本是**布局/重算**（13 102 元素文档上 55 ms/次），不是脚本空转；原因 3/4 属廉价保险。**剩余唯一 A/B**：关掉「侧栏加载皮肤动态装饰」复测，以分离皮肤脚本与上游布局的贡献（见 `sidebar-performance.md` §0.2/§9） | 中（A/B 待做） |
 | **命名空间隔离** | `.deepseek` → 可配置 `memoryRoot`（多套记忆共存时再做，需迁移） | 低（延后） |
 | **（可选）3180 内嵌面板** | 方案 A 已决策**不做**（保持 3180 fail-closed）；如需再议 | 低 |
 | **侧栏性能：两项未量到的原因** | ① 同机 3080 的 `dsh web` 持续吃 ~15% 单核（与本插件无关，但会放大动画抖动）；② iframe 内 dsh UI 的 DOM 规模（长会话）。量法与 A/B 复核步骤见 `docs/memory/sidebar-performance.md` §4/§6 | 中 |
