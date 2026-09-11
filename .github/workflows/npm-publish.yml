@@ -109,7 +109,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       # Also open an issue with the same text: reading a job log requires repo
       # admin rights, so otherwise a rejected publish is invisible to everyone
-      # except the person who can already open the run page.
+      # except the person who can already open the run page. Re-running the same
+      # tag comments on the existing issue instead of filing a new one.
       - name: Publish failure issue
         if: steps.publish.outcome == 'failure'
         env:
@@ -124,7 +125,12 @@ jobs:
             echo ""
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } > publish-issue.md
-          gh issue create --title "npm publish failed for ${GITHUB_REF_NAME}" --body-file publish-issue.md || true
+          existing=$(gh issue list --state open --search "npm publish failed for ${GITHUB_REF_NAME} in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file publish-issue.md || true
+          else
+            gh issue create --title "npm publish failed for ${GITHUB_REF_NAME}" --body-file publish-issue.md || true
+          fi
       # Last step on purpose: fail the job only after the report is filed, so
       # "Re-run failed jobs" stays available.
       - name: Fail the job when the publish was rejected
