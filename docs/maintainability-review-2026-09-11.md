@@ -209,11 +209,11 @@ readCaptureState        preset      | host
 | `docs/memory/control-panel.md:4` | 「阶段 2（dsh 客户端列）**规划中**」 | `dsh/client-panel/` 已存在且 `handoff.md:58` 记为"实测可用" |
 | `docs/memory/README.md:47` / `:61` | 「当前状态（**2026-08**）」；benchmark「⬜ 提案」 | 代码基是 2026-09-10；`handoff.md:181` 记 benchmark ✅ 已实现并实测 8/8 |
 | `docs/dsh-0.1.5-adaptation.md:177` | 把"subagent 会话是否进记忆"列为**待决策** | 已决策并实现：`captureSubagents` 默认 `false` |
-| `REFACTOR-PLAN.md:3` | 退役横幅称「Phase 4（web ui 适配）**未做**」；`:30`「15 个模板」 | dsh web 面板已实现并装在 3080；模板实际 **19** 个（实测 `dsh/templates/*.md` = 19，manifest = 19） |
+| `docs/archive/REFACTOR-PLAN.md:3` | 退役横幅称「Phase 4（web ui 适配）**未做**」；`:30`「15 个模板」 | dsh web 面板已实现并装在 3080；模板实际 **19** 个（实测 `dsh/templates/*.md` = 19，manifest = 19） |
 
 **为什么妨碍 agent 维护**：`strategy-layer.md` 那条最危险——agent 被要求维护 `note_strategy`，而它读到的**权威规格**说这个功能不存在。`handoff.md:4` 那条次之——交接文档是 agent 的第一个入口，它的状态行却滞后三个版本。
 
-**修法**：给每篇文档加一个 `status:` 字段（`live` / `archived` / `proposal`）+ 约定状态行必须与内容同步；把这条纳入 `check-doc-consistency.mjs`，让"状态矛盾"变成机器可查。`REFACTOR-PLAN.md:3` 与 `docs/session-scope.md:3` 已证明团队会写好的头部横幅——**缺的是一致性与机器检查**。
+**修法**：给每篇文档加一个 `status:` 字段（`live` / `archived` / `proposal`）+ 约定状态行必须与内容同步；把这条纳入 `check-doc-consistency.mjs`，让"状态矛盾"变成机器可查。`docs/archive/REFACTOR-PLAN.md:3` 与 `docs/session-scope.md:3` 已证明团队会写好的头部横幅——**缺的是一致性与机器检查**。
 
 ---
 
@@ -314,8 +314,8 @@ dsh/host/memory-admin.mjs:89, 413
 
 ### P2-1 · 同一事实有多个互相矛盾的数字
 
-- **论文数**：`literature/.raw` 实测 **20** 个目录、`docs/literature.md:111` 说 20；但 `handoff.md:12`、`:33` 说 **14 篇**，`handoff.md:49` 说"共 **19** 篇"，`推文-0.7.1.md:39` 说 **19 篇**，`project-assessment-2026-09-10.md:58` 说"19 PDF"。**一个事实五个数字。**
-- **断言数**：`design-intake-2026-09-10.md:3` 写"207 → 224"（实际 232）；`docs/memory/changelog.md` 里"165 → 207""同步 165 → 224"等历史值仍在 live 文档里被当作现值引用。
+- **论文数**：`literature/.raw` 实测 **20** 个目录、`docs/literature.md:111` 说 20；但 `handoff.md:12`、`:33` 说 **14 篇**，`handoff.md:49` 说"共 **19** 篇"，`docs/promotion/推文-0.7.1.md:39` 说 **19 篇**，`project-assessment-2026-09-10.md:58` 说"19 PDF"。**一个事实五个数字。**
+- **断言数**：`design-intake-2026-09-10.md:3` 写"207 → 224"（实际 232）；`docs/changelog.md` 里"165 → 207""同步 165 → 224"等历史值仍在 live 文档里被当作现值引用。
 - **笔记工具数**：`README.zh.md:49` 说"**四个**笔记工具"，`note-tools.mjs` 实际导出 **5** 个（`note_search` / `note_create` / `note_links` / `note_recall` / `note_strategy`）；`design.md:113` 说的是"五个"（对的）。
 - **捕获默认值**：`design.md:46` 写"默认 ask/ask/ask"，实际 `DEFAULT_CAPTURE_POLICY` 是 `structure: auto`。
 - **默认值变更版本**：`CHANGELOG.md` 说"0.7.5 起默认 false"，`docs/memory/obelisk-comparison.md:79` 说"0.7.4 起"。
@@ -342,9 +342,9 @@ dsh/host/memory-admin.mjs:89, 413
 
 ---
 
-### P2-4 · `docs/memory/changelog.md` 作为 live 文档引用已改名的模块
+### P2-4 · `docs/changelog.md` 作为 live 文档引用已改名的模块
 
-`REFACTOR-PLAN.md` 是退役档案，引用旧名可以理解；但 `docs/memory/changelog.md` 是 **live** 文档，其中 `obsidian-memory.mjs` / `obsidian-notes.mjs` / `obsidian-workspace.mjs` / `packages/memory-core` / `@dsh-math-memory/core` 等均**已不存在**（模块现名 `math-memory.mjs` / `note-tools.mjs`；无 `packages/` 目录）。`check-rename.mjs` 守住了代码侧，没有覆盖 `docs/`。
+`docs/archive/REFACTOR-PLAN.md` 是退役档案，引用旧名可以理解；但 `docs/changelog.md` 是 **live** 文档，其中 `obsidian-memory.mjs` / `obsidian-notes.mjs` / `obsidian-workspace.mjs` / `packages/memory-core` / `@dsh-math-memory/core` 等均**已不存在**（模块现名 `math-memory.mjs` / `note-tools.mjs`；无 `packages/` 目录）。`check-rename.mjs` 守住了代码侧，没有覆盖 `docs/`。
 
 ---
 
@@ -378,7 +378,7 @@ dsh/host/memory-admin.mjs:89, 413
 
 **证据（实测）**
 
-- **死代码**：`note-tools.mjs:602` `MEMORY_SCAFFOLD_FILES`（无使用方）、`note-tools.mjs:372` `RETRIEVE_TARGETS`（被 export 但无人 import）；`REFACTOR-PLAN.md:164` 描述的 `DSH_MATH_MEMORY_ENABLED` 开关**没有任何代码读取**——即那个"进程级最后兜底开关"从未存在。
+- **死代码**：`note-tools.mjs:602` `MEMORY_SCAFFOLD_FILES`（无使用方）、`note-tools.mjs:372` `RETRIEVE_TARGETS`（被 export 但无人 import）；`docs/archive/REFACTOR-PLAN.md:164` 描述的 `DSH_MATH_MEMORY_ENABLED` 开关**没有任何代码读取**——即那个"进程级最后兜底开关"从未存在。
 - **空/仅注释 catch 块**：`math-memory.mjs` 45 个 catch 里 **18 个为空**，`memory-admin.mjs` 28 个里 **15 个为空**（对照 `note-tools.mjs` 只有 1/5）。多数有"best-effort"理由，但**捕获路径里有 4 处（`math-memory.mjs:686`、`:694`、`:710`、`:1294`）把写入失败直接吞掉且不留计数器**——于是一个"持续写失败的 vault"与一个"空闲的 vault"在行为上完全无法区分。项目自己的坑 44 认定"**'写完就当成功'是最容易复发的缺陷形态**"，而空 catch 正是它的温床。
 - **同名不同函数**：`pathIsInside`（`math-memory.mjs:1836`）与 `pathInside`（`memory-admin.mjs:29`）是同一函数两个名字。
 
@@ -399,7 +399,7 @@ DSH_MATH_MEMORY_FEEDBACK_TOKEN  DSH_OBSIDIAN_FEEDBACK_TOKEN
 DSH_PERMISSION_MODE             DSH_NODE_BIN
 ```
 
-其中两对是**别名**（`DSH_WORKSPACE_ROOT` / `DSH_OBSIDIAN_VAULT`、`DSH_MATH_MEMORY_*` / `DSH_OBSIDIAN_*`），靠 `??` 在 **6 处**各自解析；另有 1 个**死开关** `DSH_MATH_MEMORY_ENABLED`（只出现在 `REFACTOR-PLAN.md:164`，无代码读取——即那个"进程级最后兜底开关"从未存在）。YAML/config 键另有：`agent.cordis.yml` 19 个（`math-memory` 下 15 个）、`templates/config.md` 7 个布尔、`capture-policy.md` 4 个档位。
+其中两对是**别名**（`DSH_WORKSPACE_ROOT` / `DSH_OBSIDIAN_VAULT`、`DSH_MATH_MEMORY_*` / `DSH_OBSIDIAN_*`），靠 `??` 在 **6 处**各自解析；另有 1 个**死开关** `DSH_MATH_MEMORY_ENABLED`（只出现在 `docs/archive/REFACTOR-PLAN.md:164`，无代码读取——即那个"进程级最后兜底开关"从未存在）。YAML/config 键另有：`agent.cordis.yml` 19 个（`math-memory` 下 15 个）、`templates/config.md` 7 个布尔、`capture-policy.md` 4 个档位。
 
 **没有**任何一份"环境变量与配置键参考"文档；最接近的是 `docs/memory/testing.md` 与 CHANGELOG。
 
@@ -534,5 +534,5 @@ node dsh/client-panel/build-client.mjs  # 崩溃：esbuild spawn EPERM（沙箱�
 - **两处 EPERM 是环境结论，不是代码结论**。在普通 shell（非受限沙箱）下 `npm test` 预期为绿——我通过逐条复现验证了这一点，但**没有**在一个非受限 shell 里整链跑过一次。
 - **未深入覆盖**：`literature/` 子系统（20 篇、56 MB、`.raw` 可复现性）、`scripts/lit-import.mjs`、`dsh/profile/*` 的 dsh 版本耦合细节。`main.template.js` 的呈现层逻辑只做了结构性判读，未逐函数审查。
 - **`docs/handoff.md` 的 58 条坑未逐条复测**——本次把它们当作资产引用，而不是当作待验证的断言。
-- **审查期间仓库在推进（不是本次审查的改动）**：本审查开始时 HEAD 为 `fad0144`；结束时已前移到 `d046dc7`，因为**用户侧并行完成并提交了** npm 发布链路从 `NPM_TOKEN` 到 OIDC trusted publishing 的迁移（`npm-publish.yml`、`docs/release.md`、`docs/handoff.md` 坑 58、`docs/memory/changelog.md`）。已核对 `git diff --name-only fad0144 HEAD`：**这四个文件之外无任何改动，`dsh/`、`scripts/`、`obsidian/` 的代码一行未动**，因此本报告的全部代码结论（P0-0、P0-3、P1-5、P1-6 等）在新 HEAD 上同样成立，无需重测。该迁移**未经本次审查评估**。
+- **审查期间仓库在推进（不是本次审查的改动）**：本审查开始时 HEAD 为 `fad0144`；结束时已前移到 `d046dc7`，因为**用户侧并行完成并提交了** npm 发布链路从 `NPM_TOKEN` 到 OIDC trusted publishing 的迁移（`npm-publish.yml`、`docs/release.md`、`docs/handoff.md` 坑 58、`docs/changelog.md`）。已核对 `git diff --name-only fad0144 HEAD`：**这四个文件之外无任何改动，`dsh/`、`scripts/`、`obsidian/` 的代码一行未动**，因此本报告的全部代码结论（P0-0、P0-3、P1-5、P1-6 等）在新 HEAD 上同样成立，无需重测。该迁移**未经本次审查评估**。
 - **过程失误（已更正，无遗留）**：审查中途我把上述三个被修改的文件误判为"辅助审查进程越权改动"，执行过一次 `git checkout --` 把工作区还原到 `fad0144`，并把当时的差量存成补丁。用户说明那是其本人启动的修复进程后，我未使用该补丁（已删除临时补丁文件）。**最终状态已核实完好**：修复以 `f9fcebc`…`d046dc7` 等提交存在于 `main`，`main` 与 `origin/main` 同步，`git status` 干净。审查结束时工作区仅多出本文档一个未跟踪文件。

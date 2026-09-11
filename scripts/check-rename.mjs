@@ -69,9 +69,9 @@ const HISTORICAL = new Map([
   ["CHANGELOG.md", "released sections are historical records"],
   ["main.js", "generated artifact — its sources are what this guard scans"],
   ["scripts/check-rename.mjs", "this guard must be able to NAME what it forbids"],
-  ["REFACTOR-PLAN.md", "retired archive (status banner is corrected separately)"],
-  ["推文-0.7.1.md", "release announcement archive"],
-  ["docs/memory/changelog.md", "dated maintenance ledger"],
+  ["docs/archive/REFACTOR-PLAN.md", "retired archive (status banner is corrected separately)"],
+  ["docs/promotion/推文-0.7.1.md", "release announcement archive"],
+  ["docs/changelog.md", "dated maintenance ledger"],
   ["docs/handoff.md", "names the old spelling when explaining the rename (trap 60)"],
   ["docs/maintainability-review-2026-09-11.md", "read-only audit snapshot"],
   ["docs/maintainability-fixes-2026-09-11.md", "ledger: describes the drift it fixed"],
@@ -109,16 +109,27 @@ if (stale > 0) {
   process.exit(1);
 }
 
-// ── rule 3: a MOVED file's old path ─────────────────────────────────────────
-// `docs/memory/handoff.md` became `docs/handoff.md` on 2026-09-11: it is the
-// REPO-WIDE handoff (entry map, traps, the authoritative not-done list), and
-// filing it under `docs/memory/` claimed it was memory-subsystem documentation —
-// which is exactly how a reader decides not to open it. A path that no longer
-// exists is the most common form of dead link, so it is checked like a rename.
-const movedPath = /docs\/memory\/handoff\.md/;
+// ── rule 3: MOVED files' old paths ──────────────────────────────────────────
+// 2026-09-11 promoted three documents out of the folders they were filed under:
+//   docs/memory/handoff.md   -> docs/handoff.md      (repo-wide handoff, not memory docs)
+//   docs/memory/changelog.md -> docs/changelog.md    (it had become the repo-wide ledger)
+//   REFACTOR-PLAN.md         -> docs/archive/        (retired archive does not belong at root)
+//   and 推文-0.7.1.md        -> docs/promotion/      (promo copy archive)
+//
+// Why this is checked like a rename: a path that no longer exists is the most
+// common form of dead link, and it fails SILENTLY — the reader just lands
+// nowhere. Note the two bare-name moves only have their LINK form checked: the
+// filename itself is still the correct way to refer to a file, and `推文-*.md`
+// is gitignored (`.gitignore:23`) so it is maintainer-local by design.
+const MOVED_PATHS = [
+  { pattern: /docs\/memory\/handoff\.md/, fix: "docs/handoff.md", why: "the repo-wide handoff moved out of docs/memory/" },
+  { pattern: /docs\/memory\/changelog\.md/, fix: "docs/changelog.md", why: "the maintenance ledger had become repo-wide" },
+  { pattern: /\]\(REFACTOR-PLAN\.md\)/, fix: "](docs/archive/REFACTOR-PLAN.md)", why: "the retired plan moved to docs/archive/" }
+];
 const MOVED_ALLOW = new Set([
   "scripts/check-rename.mjs", // the guard must be able to name what it forbids
-  "docs/agent-repo-maintenance.md" // the general guide uses THIS move as its worked example
+  "docs/agent-repo-maintenance.md", // the general guide uses these moves as its worked example
+  "docs/changelog.md" // the ledger RECORDS the moves, so it names the old paths
 ]);
 let dead = 0;
 for (const file of files) {
@@ -127,9 +138,12 @@ for (const file of files) {
   if (rel === "main.js" || MOVED_ALLOW.has(rel)) continue; // main.js is generated from dsh/**
   const lines = readFileSync(file, "utf8").split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
-    if (!movedPath.test(lines[i])) continue;
-    console.log(`[MOVED] ${rel}:${i + 1}: ${lines[i].trim()}`);
-    dead += 1;
+    for (const { pattern, fix, why } of MOVED_PATHS) {
+      if (!pattern.test(lines[i])) continue;
+      console.log(`[MOVED] ${rel}:${i + 1}: ${lines[i].trim()}`);
+      console.log(`        -> use ${fix} (${why})`);
+      dead += 1;
+    }
   }
 }
 if (dead > 0) {

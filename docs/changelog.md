@@ -1,4 +1,28 @@
-# 记忆系统变更日志
+# 变更账本：为什么改、怎么改、踩了什么坑
+
+> **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
+> **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
+
+## 2026-09 · 三份文档移位：第二次应用「目录即接口」
+
+用户判断三份文档的位置与其角色不符，逐一移位。**移位不是"移动文件"，而是"改一批引用 + 加一条守卫"**——路径和文件名一样是接口，而失效的路径**不会报错**，只会让人点空。
+
+| 从 | 到 | 为什么 |
+|---|---|---|
+| `REFACTOR-PLAN.md`（仓库根） | **`docs/archive/REFACTOR-PLAN.md`** | 已退役的规划稿占着根目录——根目录是**入口文档**（README / ARCHITECTURE / CHANGELOG / AGENTS）的地盘，归档件不该混在里面 |
+| `推文-0.7.1.md`（仓库根） | **`docs/promotion/推文-0.7.1.md`** | 发布宣传稿，同属归档而非入口；给它一个专门的存档目录 |
+| `docs/memory/changelog.md` | **`docs/changelog.md`** | 它**事实上已经是整个仓库的变更账本**（打包/发布/皮肤/面板都记在里面），却放在记忆子系统下 |
+
+**第三份为什么不是仓库根**：用户本来倾向于放根目录，但根目录已有 `CHANGELOG.md`——在 Windows/macOS 的**大小写不敏感**文件系统上，`changelog.md` 与 `CHANGELOG.md` 是同一个文件名，git 与检出都会坏。所以落到 `docs/` 顶层，与上一轮刚提升的 `docs/handoff.md` 并列：两个「仓库级维护文档」现在在同一层。
+
+**执行要点（都是可复用的）**：
+- **逐类替换，不用一条正则通吃**：引用分「仓库根相对路径」「从 `docs/` 写的相对路径」「从 `docs/memory/` 写的相对链接」三种形态；还要区分**链接目标**（必须改）与**散文里提到文件名**（不必改）。
+- **文档自己的出链最容易漏**：`docs/memory/changelog.md` 上移一层后，它原来的 `../handoff.md`、`../literature.md` 会指到仓库根去——单独检查它内部的全部相对链接。
+- **踩到一个真错误**：第一遍改引用时用了 `String.replace(字符串, …)`，它**只替换每处文件的第一处匹配**（要 `replaceAll` 或用带 `g` 的正则）。症状很隐蔽：`AGENTS.md` 的表格里**文字标签更新了、链接目标没更新**——看起来像改好了。是残留检查把 15 处旧路径揪出来的。
+- **`docs/memory/README.md` 的索引行**同步更新为「仓库级变更账本（2026-09-11 提升）」；`ARCHITECTURE.md` 里"记忆系统细账"的说法也改成"仓库级细账"。
+- **守卫**：`check-rename.mjs` 第三条规则从"一个旧路径"扩成**一张表**（`docs/memory/handoff.md`、`docs/memory/changelog.md`、以及 `](REFACTOR-PLAN.md)` 这种裸链接形态），每条都给出新位置与理由。**根目录两份的裸文件名不设规则**：文件名本身仍是引用一个文件的正确方式，而 `推文-*.md` 被 `.gitignore:23` 忽略（是维护者本地的宣传稿，**刻意不入库**）——给一个"在新克隆里本来就不存在"的文件加路径守卫只会制造误报。
+
+**顺带核实的一件事**：`推文-0.7.1.md` **不在版本控制里**，所以 `git mv` 报 `not under version control`——这不是缺陷。`.gitignore` 的 `推文-*.md` 规则在任何目录层级都命中，移动后依然命中；三份文档里对它只有**散文引用、没有 markdown 链接**（已实测：0 处链接），所以新克隆里不会出现死链。移动它只是整理了工作副本，**跟踪状态不变**。
 
 ## 2026-09 · 「守卫看起来在工作」：读了一个从未赋值的变量 / 前置条件永远不成立
 
@@ -72,7 +96,7 @@
 
 - **为什么需要这份文档**：这些变量此前只活在代码里。维护者要回答三件事只能靠 grep，而 grep 只回答你已经想到要问的问题：① 这个变量干嘛的？② 新旧名哪个优先？③ 能不能删？
 - **三对别名的规则写成了纪律**：`DSH_WORKSPACE_ROOT` ↔ `DSH_OBSIDIAN_VAULT`、`DSH_MATH_MEMORY_LINK_URL` ↔ `DSH_OBSIDIAN_LINK_URL`、`DSH_MATH_MEMORY_FEEDBACK_TOKEN` ↔ `DSH_OBSIDIAN_FEEDBACK_TOKEN`，一律"**新名优先、旧名回退**"。这条不是描述而是**警告**：这个顺序**被写反过**——两个 QA 探针曾写成旧名优先，于是在"给产品设了新名"的机器上，探针在给**另一个 vault** 打分（P1-8）。**新增读取点时照抄现有写法，不要自己重排。**
-- **死开关的正确处置不是删，是记账**：`DSH_MATH_MEMORY_ENABLED` 被 `REFACTOR-PLAN.md` 描述成"进程级最后兜底开关"，全仓**零读取方**。删掉那句描述的代价大于收益（那是历史档案，已就地加更正）；真正的风险是**下一个人实现它并以为早就生效**。所以它单列一节，写明"设了没用""真要生效的总开关在哪"，并让守卫在它第一次被读取时**失败**。
+- **死开关的正确处置不是删，是记账**：`DSH_MATH_MEMORY_ENABLED` 被 `docs/archive/REFACTOR-PLAN.md` 描述成"进程级最后兜底开关"，全仓**零读取方**。删掉那句描述的代价大于收益（那是历史档案，已就地加更正）；真正的风险是**下一个人实现它并以为早就生效**。所以它单列一节，写明"设了没用""真要生效的总开关在哪"，并让守卫在它第一次被读取时**失败**。
 - **守卫是双向的**（这是本轮最值得复用的部分）：
   1. 代码里读了、文档没写 → 失败；
   2. 文档写了、代码没读 → 失败（**反向腐烂**：清单会变成"曾经存在过的东西"的墓地）；
@@ -88,10 +112,10 @@
 - **产品名与家族名分开处理**：产品一律写 `dsh web`；插件家族**不写口头的家族名**，改称「`@linxin666/dsh-web-all` 聚合的那一族 UI 插件」。理由是**可核对性**：包名能在 `package.json` / npm 上验证，家族名只能靠记忆，而它已经错过一次。
 - **区分「当下的声明」与「历史的记录」**（这是 §5 文档腐烂类型学的又一次实战）：
   - **改**：README 中英、ARCHITECTURE、`handoff.md` 入口表、`testing.md` 小节标题、`design.md`、`control-panel.md` 方案表、vault 模板 `config.md`、插件与 profile 的代码注释——它们都在描述**现在**。
-  - **不改**：已发布的 CHANGELOG 段落、日期化审计（`maintainability-review-*`、`project-assessment-*`）、已退役的 `REFACTOR-PLAN.md`、`docs/dsh-0.1.5-adaptation.md`（它记录的**就是**这次改名）、`docs/dsh-panel-research.md`（2026-08 快照）、`docs/memory/changelog.md` 自身的历史条目。
+  - **不改**：已发布的 CHANGELOG 段落、日期化审计（`maintainability-review-*`、`project-assessment-*`）、已退役的 `docs/archive/REFACTOR-PLAN.md`、`docs/dsh-0.1.5-adaptation.md`（它记录的**就是**这次改名）、`docs/dsh-panel-research.md`（2026-08 快照）、`docs/changelog.md` 自身的历史条目。
   - **折中**：快照类文档（`dsh-panel-research.md`）**不动正文**，在开头加**日期化更正块**并指向权威依据——正文是"当时的证据"，改写它会毁掉证据价值。
 - **顺带查出三类真实漂移**（都是"当下的声明"，所以都改）：
-  1. `REFACTOR-PLAN.md` 横幅称「Phase 4（web ui 适配）未做」——**半对半错**：面板后来换形态交付了（独立客户端包 + 官方 `settings.section` + 宿主路由），未做的只是**自挂右侧 DOM 列**那种形态。按事实改写，而不是简单反转结论；同处「15 个模板」改为**不写数字**（实际 19，且真值属于 `templates-manifest.json`）。
+  1. `docs/archive/REFACTOR-PLAN.md` 横幅称「Phase 4（web ui 适配）未做」——**半对半错**：面板后来换形态交付了（独立客户端包 + 官方 `settings.section` + 宿主路由），未做的只是**自挂右侧 DOM 列**那种形态。按事实改写，而不是简单反转结论；同处「15 个模板」改为**不写数字**（实际 19，且真值属于 `templates-manifest.json`）。
   2. `docs/dsh-0.1.5-adaptation.md` 状态停在「计划已定，实施中」，而三条适配与 §7 的两个待决问题都已落地/已决定 → 改为**已实施**并列结论。
   3. `docs/memory/obelisk-comparison.md` 仍引用 `pathIsInside`——P2-6 已把它改名成 `pathInside`。**这是"改名之后靠 grep 补文档"漏掉的一处**，也说明改名必须配守卫。
 - **加了守卫而不是只改文本**：`check-rename.mjs` 增加第二条规则，活文件里再出现 `dsh web ui` / `dsh-web-ui` 即失败（**排除**真实退役包名 `dsh-web-ui-all`）；历史档案必须在守卫里以「**路径 + 理由**」白名单豁免。**要改历史记录，得先写下理由**——这条设计让"不改历史"从习惯变成需要显式决定的事。变异验证：把 README 那行改回去 → 立刻报出 `README.md:9`。
@@ -106,7 +130,7 @@
 
 - **两份记录的职责被重新划清**（其实 §5 记录纪律早就写好了，是执行时没守住）：
   - `CHANGELOG.md` = **面向用户的版本变更**：修了什么 / 改了什么 / 加了什么，一条一件，可扫读；
-  - `docs/memory/changelog.md`（本文件）= **面向维护者的细账**：为什么这么改、排查过程、实测数字、被否决的方案。
+  - `docs/changelog.md`（本文件）= **面向维护者的细账**：为什么这么改、排查过程、实测数字、被否决的方案。
 - **重编前先确认"移出去的东西确实在别处"**：本文件里 0.7.5 时期的对应小节都在（侧栏卡顿排查 + GraphMemix 决策、外部设计吸纳 5 机制、设计迭代专项审计、面板第二轮打磨、体检报告与呈现重做、探针改调真管线、侧栏 401 真根因、安全修复、V3 适配、会话扫描不再全量解码、首次推 tag 暴露的三个流水线缺陷）。所以 `CHANGELOG` 里那些叙述是**重复**，不是唯一副本——**这一步没做就删，等于真的删信息**。
 - **`[0.7.5]` 已发布，所以不能悄悄改**：节首加了一行「本节于 2026-09-11 重编 … 版本内容本身未变，只是换了记录层次」，并指向本文件。改的是**记录层次**，不是版本内容。
 - **删掉的具体是**：用户原话引用、"第 N 轮修的不是真因"式叙事、A/B 实验数字表、论文分析与"实现了/测过了/不采纳"决策（后者属于 `retrieval-v3.md` §7 与本文件的决策记录）、以及全部跨轮回归计数。**留下的是**：每条修复的现象 + 机制 + 现状一行，安全项标 `（安全）`，新增的脚本/文档进 `Added`。
@@ -211,7 +235,7 @@
 
 另：为了拿到 CI 的真实报错，临时加过一个 `ci-debug.yml`（把失败命令的输出发到 job summary + 一个 issue）——已随分支删除，issue 也已自动关闭。教训写进 `handoff.md` 坑 56-58 与 `docs/release.md`。**推 tag 前确认 `ci.yml` 的 ubuntu 与 windows 两个 job 都绿。**
 
-> 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](../handoff.md)。
+> 记忆系统专属的“为什么改、改了什么”。比仓库根 CHANGELOG 更细，面向后续维护者与改造 agent。最新在上。交接文档见 [handoff.md](handoff.md)。
 
 ## 2026-09 · 侧栏卡顿排查 + GraphMemix 吸纳决策（0.7.5）
 
@@ -315,7 +339,7 @@
 
 ## 2026-09 · 修好"验收网自己"：探针改调产品真管线 + 导航索引降权 + 四项决策落地
 
-- **背景**：三路审计的元结论是——138 条断言守卫的是"grep 看得见的东西"和良构夹具上的纯函数，而这次缺陷属于它一条断言都没有的四类（信任边界／输入类性质／资源上限／CI 内的真实端到端）；其中"验收网自己在骗人"有两例：探针手抄打分公式、接受记录无凭据（[../project-assessment-2026-09-10.md](../project-assessment-2026-09-10.md) §2 P1-4/P1-10）。
+- **背景**：三路审计的元结论是——138 条断言守卫的是"grep 看得见的东西"和良构夹具上的纯函数，而这次缺陷属于它一条断言都没有的四类（信任边界／输入类性质／资源上限／CI 内的真实端到端）；其中"验收网自己在骗人"有两例：探针手抄打分公式、接受记录无凭据（[../project-assessment-2026-09-10.md](project-assessment-2026-09-10.md) §2 P1-4/P1-10）。
 - **修 1：探针改调产品管线**。`note-tools.mjs` 新增三个导出——`buildRecallDoc(rel, raw)`、`rankRecallDocuments(docs, query, opts)`、`rankStrategyCards(cards, query, opts)`，把原先内联在 `note_recall` / `note_strategy` 里的"过滤 → passage → BM25 → 权重融合 → 排序"抽成唯一实现；两个工具改调它，`scripts/qa/engine-probe.mjs` 与 `seed-probe.mjs` 也改调它。**结果：探针测的就是产品跑的**（含 `isRecallEligible` 排除、operator 硬过滤、hook prior、maxResults）。旧探针的 `0.85*BM25 + 0.10*cjk` 与产品的 `0.75*BM25 + 0.10*cjk + 0.15*hookPrior` 分叉自此不可能再发生。
 - **修 2：导航索引降权**。`episodes/index.md` 列出全部 episode 标题+主题，对任意中文查询都有很高的字符覆盖率——实测 `矩阵谱半径 Gelfand 估计`（库里确实没有）它给 score 0.95 / coverage 0.86，把"无答案应弱信号"控制项顶掉，并挤占 Fubini-Tonelli、子序列记法的名次。新增 `KIND_CORPUS_WEIGHT = { "episode-index": 0.4, "theorem-index": 0.7 }`：**导航层仍可被检索命中**（它是"这里有什么"的地图，设计上就该在语料里），但排在内容之后。同时把弱信号判据落在**内容文档**上（导航索引天然高覆盖，让它代表"库里有答案"是假警报）。
 - **结果**：真实 vault 探针 **9/12 → 12/12**，且**一条 ground truth 都没改**：Fubini-Tonelli rank 2 → 1、子序列记法 rank 7 → 5、谱半径控制项通过。仿真探针保持 8/8。
@@ -357,7 +381,7 @@
 
 ## 2026-09 · 安全修复：面板路由的信任边界与记忆卡片的静默损坏（评估 P0）
 
-- **来源**：三路独立代码审计（[../project-assessment-2026-09-10.md](../project-assessment-2026-09-10.md)）。审计的元结论是：**138 条断言测的是"grep 看得见的东西"和良构夹具上的纯函数**，而这次的四类缺陷（信任边界／输入类性质／资源上限／CI 内的真实端到端）恰好一条断言都没有；凡是它试图检查边界的地方，期望值往往是从实现自身推导出来的（自指式 oracle）。
+- **来源**：三路独立代码审计（[../project-assessment-2026-09-10.md](project-assessment-2026-09-10.md)）。审计的元结论是：**138 条断言测的是"grep 看得见的东西"和良构夹具上的纯函数**，而这次的四类缺陷（信任边界／输入类性质／资源上限／CI 内的真实端到端）恰好一条断言都没有；凡是它试图检查边界的地方，期望值往往是从实现自身推导出来的（自指式 oracle）。
 - **P0-1 面板路由无鉴权 + 约束根由调用方指定**：`body.root` 直接就是约束根 ⇒ `pathInside(root, target)` 恒真；loopback 不是授权边界（任意网页可发 CORS 简单请求）。修复三件套：root 只在重启述 profile 的 vault（不同路径 403 `root not allowed`）；非 loopback `Origin` 一律 403（含 `Origin: null`）；配置了 `DSH_OBSIDIAN_FEEDBACK_TOKEN` 的实例要求 token（`X-DSH-Token`／`?t=`／body，定时安全比较）。**token 是可选的**：Obsidian 插件给 3180 实例设了它，用户自己的 3080 实例通常没有——那里由 Origin + root 锚定承担。
 - **P0-2 `archiveMemoryFile` 零校验**：现在只接受 `.deepseek/<层>/…` 下 `.md` 常规文件，拒绝非 `.md`／目录／配置文件／`..`／vault 根；归档目录改为校验通过后才建（此前被拒请求会留下空 `.deepseek/archive/records/`，是实测验收时发现的）。
 - **P0-3 frontmatter 写入的两个静默损坏模式**：`replace(span, text)` 的**替换字符串语义**会展开 `$$`／`$&`／`$'`／`` $` ``（`title: 关于 $$ 的表示` → `关于 $ 的表示`；`$&` 把整段 frontmatter 注入标题），而**空 frontmatter 体**让 `replace("", x)` 在偏移 0 插入、收尾 `---` 被推到文件中央。两者都由面板 ✅/❌ 按钮触发、都报"成功"。改为 `frontmatterSpan` + `replaceFrontmatter` 按**偏移量拼接**（两份自包含副本同步），空体／CRLF 均保持良构；`setHookField`／`setTopField` 不再给空体留空行。
@@ -370,7 +394,7 @@
 
 ## 2026-09 · 适配 dsh 0.1.5 会话格式 V3（同一会话两份日志）
 
-- **触发**：宿主升级 dsh 0.1.1-rc.2 → **0.1.5-rc.1**，web 插件升级到 `@linxin666/dsh-web-all@0.3.20`（旧 `dsh-web-ui-all` 已废弃改名）。上游 release notes 明确：*「会话数据格式升级至 V3……自定义日志读取器需适配 V3」*。完整评估与取证见 [../dsh-0.1.5-adaptation.md](../dsh-0.1.5-adaptation.md)。
+- **触发**：宿主升级 dsh 0.1.1-rc.2 → **0.1.5-rc.1**，web 插件升级到 `@linxin666/dsh-web-all@0.3.20`（旧 `dsh-web-ui-all` 已废弃改名）。上游 release notes 明确：*「会话数据格式升级至 V3……自定义日志读取器需适配 V3」*。完整评估与取证见 [../dsh-0.1.5-adaptation.md](dsh-0.1.5-adaptation.md)。
 - **格式事实（本机实测）**：迁移**按需触发**（会话被打开/恢复时），产出 `session.v3.jsonl.zstd` 并**保留** `session.jsonl.zstd`；新会话只写 V3。所以"同目录两份日志"是长期状态。V3 仍是多帧拼接、无字典的 zstd；会话头行仍是第一帧的 `{type,id,cwd,createdAt}`（多一个 `version: 3`）；`user/message`／`assistant/message`／`session/title` 事件名与 `data.source.kind === "user"` 判据不变；逐块流事件（`assistant/chunk`、`*-chunks`）被 `assistant/message.data.stream[]` 取代，事件量更小。⇒ `scanZstdFrames`／`decodeZstdSessionLog`／`distillSession`／`pairMessages` **均无需改动**。
 - **真实缺陷**：`findSessionLogs` 的判据只有 `endsWith('.jsonl.zstd')`，两份日志都命中。捕获路径会把同一会话扫两次，并让 `sessions[id].fingerprint` 在 V2/V3 之间来回覆盖（`lastSeq` 增量与面板角标失真）；索引路径让同一会话占掉「最新 20 份」的两个名额、问答对重复进注入预算。
 - **修法**：`findSessionLogs` 内新增两步——`sessionLogKey(path)` 取会话身份（**上溯到第一个非 `sessions` 根祖先目录**，即 `<projectKey>/<session-id>/` 里的会话目录；扁平 `<id>.jsonl.zstd` 布局回落到文件名），`selectAuthoritativeLogs(logs)` 每个会话只留权威版本：**先显式优先 `.v3.` 变体**（迁移件才是活的；两者 mtime 可能落在**同一时间戳刻度**上，只看 mtime 会在同刻写入时选错——这正是回归测试第一次跑出来的失败），再按 mtime 取新。去重在 `slice(0, maxFiles)` **之前**完成，`maxFiles` 语义仍是"至多 N 个会话"。结果列表保持 mtime 降序。两份自包含副本（`math-memory.mjs` 与 `memory-admin.mjs`）同步修改，`countUncapturedSessions` 与 `runSessionCapture` 自动共用同一判据。
@@ -517,9 +541,9 @@
 
 ## 2026-08 · 仓库文档大改（结构收敛 + 漂移清零 + 一致性守卫）
 
-- 背景：审查发现根目录与 `docs/memory/` 两份文档集存在事实漂移（测试断言数在 README/ARCHITECTURE/TESTING 各写 63/70/75）、导航缺口（`docs/memory/README.md` 漏列 control-panel/testing/handoff）、两个孤儿文档（根 `REFACTOR-PLAN.md`、根 `TESTING.md`），以及双 changelog 的双写负担。
+- 背景：审查发现根目录与 `docs/memory/` 两份文档集存在事实漂移（测试断言数在 README/ARCHITECTURE/TESTING 各写 63/70/75）、导航缺口（`docs/memory/README.md` 漏列 control-panel/testing/handoff）、两个孤儿文档（根 `docs/archive/REFACTOR-PLAN.md`、根 `TESTING.md`），以及双 changelog 的双写负担。
 - 改动：断言数统一为真实值 75（以 `scripts/test-memory.mjs` 的 `check()` 数为准）；README 双语旧身份 `obsidian`→`notes-assistant`；design.md 注入段名改 `dsh-math:memory`、删除「hook schema 无版本常量」这一已失效局限；env 旧名改新名并注明兼容。
-- 结构：`REFACTOR-PLAN.md` 加历史档案横幅退役；根 `TESTING.md` 并入 `docs/memory/testing.md`（新增「本地验收手册」节）；`docs/memory/README.md` 导航补齐 3 份；根 CHANGELOG 定位为发布摘要，记忆细账只进本文件。
+- 结构：`docs/archive/REFACTOR-PLAN.md` 加历史档案横幅退役；根 `TESTING.md` 并入 `docs/memory/testing.md`（新增「本地验收手册」节）；`docs/memory/README.md` 导航补齐 3 份；根 CHANGELOG 定位为发布摘要，记忆细账只进本文件。
 - 守卫：新增 `scripts/check-doc-consistency.mjs`（断言数与代码实测自动比对），接入 `npm test`，从机制上防止数字漂移复发。
 
 ## 2026-08 · 皮肤中心在 obsidian 界面不可见（挂载宿主补齐）
@@ -657,7 +681,7 @@ control-panel.md 阶段 1c（捕获策略分级）是控制面三阶段里的最
 - **E（相关性提醒）**：提醒候选 = 陈旧 **或** relevance ≥ 0.15，排序 0.7×相关性 + 0.3×新鲜度。
 - **D（增量缓存）**：note_search/note_links/note_retrieve 用 mtime+size 校验的原文缓存（`readNoteTextCached`），避免每次全库重读。
 - **F（加固）**：皮肤 web profile 缺失时自动往 --patch overlay 追加禁用块；`cacheEntryFresh` 等纯函数进回归（**26/26 全绿**）。
-- **交接**：新增 [handoff.md](../handoff.md)。
+- **交接**：新增 [handoff.md](handoff.md)。
 
 ## 2026-08 · 0.4.0 部署与调试收尾（本机 Obsidian 实测）
 

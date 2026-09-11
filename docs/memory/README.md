@@ -16,7 +16,7 @@
 | [`self-correction.md`](self-correction.md) | **记忆纠错与确定性自维护提案**：纠错信号进检索（superseded 排除 / wrong 降 verified / prior 权重）+ 待重审 + 自动归档 + 合并去重 + strategy 统一生命周期 | 已实现（0.7.2）；实现状态随进度更新 |
 | [`obelisk-comparison.md`](obelisk-comparison.md) | **Obelisk 对照与自动保存对话方案**：对照成熟 agent 记忆系统的差距分析 + 「保存对话」具体方案（整场对话/尾截断/seq 增量） | 引擎已实现（0.7.3）；UI 留下一小步 |
 | [`references.md`](references.md) | **参考文献笔记**：每篇论文/系统的核心结论、可借鉴机制、与我们的映射关系 | 读完新论文/系统后追加 |
-| [`changelog.md`](changelog.md) | **记忆系统专属变更日志**：比仓库根 CHANGELOG 更细的"为什么改、改了什么" | 每次记忆系统改动后追加 |
+| [`changelog.md`](../changelog.md) | **仓库级变更账本**（2026-09-11 从本目录提升为 `docs/changelog.md`）：每次改动"为什么改、改了什么"的细账，比仓库根 `CHANGELOG.md`（发布摘要）更细 | 每次有行为/契约改动后追加 |
 | [`control-panel.md`](control-panel.md) | **控制面交互规格**：验证徽标、反馈闭环、记忆面板、捕获策略分级、侧栏性能模式和注入方案评估 | 控制面变更时同步 |
 | [`sidebar-performance.md`](sidebar-performance.md) | **侧栏卡顿排查**：12 条候选原因的逐条证据与处置（跨帧 backdrop-filter 主因、iframe 隔离/挂起、渲染线程同步 IO、搜索防抖），含已排除项、未量到的项与 A/B 复核办法 | 面板性能相关改动或新证据时更新 |
 | [`testing.md`](testing.md) | **QA 方法论 + 本地验收手册**：引擎探针/E2E 用法、boot 冒烟、手动 Obsidian 验证、环境变量对照 | 测试流程/验收步骤变化时更新 |

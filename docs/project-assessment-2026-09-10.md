@@ -65,7 +65,7 @@
 | 7 | HIGH | `sessionLogKey` 在边缘形状下会**合并两个不同会话**（"取第一个遇到的祖先目录名"，且 file-stem 兜底不可达；`stem()` 循环剥掉所有点分段）；已在默认布局的 399 份真实产物上验证**零碰撞**，但形状 C（产物父目录名本身是 `sessions`/`session`，即 `DSH_SESSIONS_ROOT` 指向的库根）可达且会静默丢会话 | `math-memory.mjs:352-371`；`memory-admin.mjs:560-579` |
 | 8 | HIGH | `.v3.` 优先级**无条件**：若某会话恢复后只往 v2 追加（或备份还原了旧 `.v3.`），新消息对索引与捕获**永久不可见**，且捕获 marker 的 `lastSeq` 可能已是 v3 时代的序号，导致新回合被当"已见过"丢弃（SUSPECTED：本机仅一对且行为正常） | `math-memory.mjs:403-408` |
 | 9 | HIGH | `check-embedded-loader.mjs` 的招牌不变量**是同义反复**：它比对的是自己那份 `return {...}` 名单，不是模板的。已用变异实验证明——从模板删掉 5 个被消费的符号，守卫仍 exit 0 | `scripts/check-embedded-loader.mjs:72,83-86` vs `obsidian/main.template.js:58` |
-| 10 | HIGH | **接受记录无凭据**：文档称"引擎探针 12/12（合成 vault）"，实测对合成 vault 跑出 **0/12**（8 个期望路径里 7 个在夹具中不存在，探针也没有夹具回退）；文档称"E2E 8/8"，唯一提交的 8 用例 baseline 是 **7/8**，随后那 1 个用例被单独重跑成 1/1 | `README.md:86,95`、`docs/memory/benchmark.md:3`、`docs/memory/changelog.md:69`；`scripts/qa/runs/run-2026-08-24T19-50-43-407Z/baseline.json` |
+| 10 | HIGH | **接受记录无凭据**：文档称"引擎探针 12/12（合成 vault）"，实测对合成 vault 跑出 **0/12**（8 个期望路径里 7 个在夹具中不存在，探针也没有夹具回退）；文档称"E2E 8/8"，唯一提交的 8 用例 baseline 是 **7/8**，随后那 1 个用例被单独重跑成 1/1 | `README.md:86,95`、`docs/memory/benchmark.md:3`、`docs/changelog.md:69`；`scripts/qa/runs/run-2026-08-24T19-50-43-407Z/baseline.json` |
 | 11 | HIGH | 基准**证据本身不可信**：硬编码 `dirty:false` 且 `startedAt === endedAt`（同一毫秒）；会话归档只保住 1/N 份日志（basename 碰撞，7 个 sessionId 成死链）；**token 计量恒为 0**（只读 V3 已移除的 `assistant/chunk` usage 事件）；**0 用例套件 exit 0** | `scripts/qa/e2e.mjs:216-241,249-260,76-91,264` |
 | 12 | HIGH | 原生安装路径（`dsh-math-memory install` 默认路径）**从未被任何测试执行**；文档却声明"三种安装方式产出等价配置"；卸载的核心安全承诺（`uninstall --yes` 保留 `.deepseek/**` 内容）**无任何断言**；vault 模板 19 个目标只验证 3 个 | `scripts/test-installer.mjs:22,42-45,85-90` |
 | 13 | HIGH | `npm run qa:e2e` 在 0.1.5 上**大概率跑不起来**：`e2e.mjs` 用"任何 200"判定就绪、且 `/api/*` **完全不带 token/cookie**；我实测 0.1.5 的 `/api` 无 cookie 一律 401（`requestRejection`：先 Host/Origin 403，再浏览器会话 401） | `scripts/qa/e2e.mjs:27-35,43-69,189,249` |
@@ -97,7 +97,7 @@
 | P15 | **LOW** | `scripts/build-obsidian.mjs` 只 gate"每个 `dsh/templates/*.md` 都在 manifest 里"，**不** gate"模板读取的每个 `EMBEDDED_*` key 都存在"——key 打错会在用户 vault 里以 `ERR_INVALID_ARG_TYPE` 爆炸，CI 全绿 | `scripts/build-obsidian.mjs:43-54` | 我手工交叉核对当前 key：都能解析（现状安全） |
 
 **这组里最该先修的三条**：P0 表的第 0 行（`$` 替换字符串，一行修法）、P1（二次解码，删两个调用 + handler 包 try/catch）、P2（patch 写入，改成解析 YAML 后断言包含包名）。三条都是小改动、零架构风险、直接消除静默损坏。
-- **LOW** 仓库卫生：`推文-0.7.1.md`（三个版本前的推广稿）；`docs/dsh-0.1.5-adaptation.md`、`docs/session-scope.md`、`scripts/check-embedded-loader.mjs` 被多处引用但**未 `git add`**（新克隆会引用到不存在的文件）；文献库机器路径写进 `.manifest.json`；`docs/memory/changelog.md` 与 baseline 里嵌了本机路径
+- **LOW** 仓库卫生：`docs/promotion/推文-0.7.1.md`（三个版本前的推广稿）；`docs/dsh-0.1.5-adaptation.md`、`docs/session-scope.md`、`scripts/check-embedded-loader.mjs` 被多处引用但**未 `git add`**（新克隆会引用到不存在的文件）；文献库机器路径写进 `.manifest.json`；`docs/changelog.md` 与 baseline 里嵌了本机路径
 
 ### P2 · 中优先级（技术债，按需）
 

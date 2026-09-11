@@ -1,6 +1,6 @@
 # Changelog
 
-> 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/memory/changelog.md](docs/memory/changelog.md)；现状/坑/决策见 [docs/handoff.md](docs/handoff.md)。
+> 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/changelog.md](docs/changelog.md)；现状/坑/决策见 [docs/handoff.md](docs/handoff.md)。
 
 ## [Unreleased]
 
@@ -18,8 +18,8 @@
 - **体检报告的 `schemaVersion` 只写不读**：`AUDIT_SCHEMA_VERSION`（写入侧）此前**没有任何读取方**——`readAuditReport` 不看它，于是被**更新版本**的引擎写出的报告会被当作本版本能理解的形状解析（坑 38 记录的 v1/v2 事故正是这一类）。现在读侧声明兼容范围（v1 = 无字段 / v2 = 双渲染）并新增 `auditSchemaVersionOf`；范围外的报告返回 null（fail-closed，"没有可用报告"好过"半懂地渲染"），下一次体检重写该文件。
 - **捕获路径的静默失败**：episode 落盘 / `episodes/index.md` 索引行 / 捕获 marker 三处写入失败此前**全部被吞掉**——于是"持续写失败的 vault"与"空闲的 vault"在行为上完全无法区分（都是 `captured: []`）。现在 `runSessionCapture` 返回 `warnings`（两份实现都改），marker 与索引判定改为**读回校验**而不只是"没抛异常"。顺带修掉一个潜在缺陷：索引行写失败过去会让整个会话重试，从而把同一段对话**重复追加**进 episode 文件；现在正文已写入即算捕获成功，只报索引缺失。
 - **死代码**：`RETRIEVE_TARGETS`（导出但无人读取，且让 `strategy-layer.md` 的"改常量就能加取值"成为**假承诺**）与 `MEMORY_SCAFFOLD_FILES`（零使用方）已删除，`strategy-layer.md` 同步改为"目标是自由字符串、不校验"的实情。
-- **文档漂移清理：产品名 `dsh web ui` → `dsh web`**。产品与插件家族都已改名（聚合包 `@linxin666/dsh-web-ui-all` → **`@linxin666/dsh-web-all`**，子包仍是 `dsh-client-ui-*`），但 README 中英、ARCHITECTURE、`handoff.md`、`testing.md`、`design.md`、`control-panel.md`、`config.md` 模板、插件注释与 profile 注释里仍写旧名。现在**活文档一律写 `dsh web`**，插件家族改称「`@linxin666/dsh-web-all` 聚合的那一族 UI 插件」——**引用可核对的包名，而不是口头的家族名**。历史档案（已发布的 CHANGELOG 段落、日期化审计、已退役的 `REFACTOR-PLAN.md`、调研快照）**不追改**，只就地加更正。
-- **`REFACTOR-PLAN.md` 的状态横幅与事实不符**：它称「Phase 4（web ui 适配）未做」，而记忆面板其实**已经**以另一种形态交付（独立客户端包 + 官方 `settings.section` 槽位 + 宿主路由 `/memory-panel/*`）；未做的只是**自挂右侧 DOM 列**那一种形态。横幅改为按事实区分这两件事。同处「15 个模板」改为不写数字（实际 19，且数字应由 `templates-manifest.json` 决定）。
+- **文档漂移清理：产品名 `dsh web ui` → `dsh web`**。产品与插件家族都已改名（聚合包 `@linxin666/dsh-web-ui-all` → **`@linxin666/dsh-web-all`**，子包仍是 `dsh-client-ui-*`），但 README 中英、ARCHITECTURE、`handoff.md`、`testing.md`、`design.md`、`control-panel.md`、`config.md` 模板、插件注释与 profile 注释里仍写旧名。现在**活文档一律写 `dsh web`**，插件家族改称「`@linxin666/dsh-web-all` 聚合的那一族 UI 插件」——**引用可核对的包名，而不是口头的家族名**。历史档案（已发布的 CHANGELOG 段落、日期化审计、已退役的 `docs/archive/REFACTOR-PLAN.md`、调研快照）**不追改**，只就地加更正。
+- **`docs/archive/REFACTOR-PLAN.md` 的状态横幅与事实不符**：它称「Phase 4（web ui 适配）未做」，而记忆面板其实**已经**以另一种形态交付（独立客户端包 + 官方 `settings.section` 槽位 + 宿主路由 `/memory-panel/*`）；未做的只是**自挂右侧 DOM 列**那一种形态。横幅改为按事实区分这两件事。同处「15 个模板」改为不写数字（实际 19，且数字应由 `templates-manifest.json` 决定）。
 - **`docs/dsh-0.1.5-adaptation.md` 的状态停在「计划已定，实施中」**：三条适配（V3 日志按会话去重、401 改主进程反代、junction 镜像自愈）都已落地，§7 的两个待决问题也都已决定。状态改为**已实施**并列出结论。
 - **`docs/dsh-panel-research.md`** 是 2026-08 的调研快照，正文里的包名已过期。加了日期化更正块（说明改名事实 + 权威依据），**不动正文**——正文是当时的证据。
 - **面板元信息在字段缺失时会渲染字面文本 `undefined`**：`cardMeta` 对 `type` / `operator` / `topic` / `status` / `lastUsed` / `updated` 用的是 `!== ''` 守卫，`undefined` 会漏过去，于是残缺卡片显示成 `❓ · 从未用过 · 上次 undefined`。改为 `typeof … === 'string' && … !== ''`。这是新加的呈现层测试当场抓到的（见 `Added`）——数据层目前总会给字符串，所以它一直是**潜伏**的。
@@ -66,7 +66,7 @@
 
 ## [0.7.5] - 2026-09-10
 
-> **本节于 2026-09-11 重编**：只保留「修了什么 / 改了什么 / 加了什么」的事实条目。排查过程、实测数字、外部设计的采纳与不采纳决策已归档到 [`docs/memory/changelog.md`](docs/memory/changelog.md)（面向维护者的细账，按日期分节）。**版本内容本身未变，只是换了记录层次。**
+> **本节于 2026-09-11 重编**：只保留「修了什么 / 改了什么 / 加了什么」的事实条目。排查过程、实测数字、外部设计的采纳与不采纳决策已归档到 [`docs/changelog.md`](docs/changelog.md)（面向维护者的细账，按日期分节）。**版本内容本身未变，只是换了记录层次。**
 
 ### Fixed
 
@@ -221,7 +221,7 @@
 ### Docs
 
 - 清理文档漂移：设置页版本号 0.4.x→0.6.x；`notes-assistant.patch.yml` / `cordis.patch.yml` 皮肤中心注释改为「可选」语义；`design.md` 版本号与面板现状对齐；README 中英 E2E 用例数 4/4→5 用例；断言数 82→83 全仓统一。
-- 记忆陷阱防御配套文档：`docs/memory/changelog.md` 记「AdaptiveMem 本土化 + lit-import 修复」条目；`docs/handoff.md` §3 增量说明、§7 记录后续工作（陷阱压力样例 / 记忆诱发退化被动信号 / note_recall 结构化适用性 / 文献库剩余 13 篇蒸馏）；回归断言 83→85 全仓统一。
+- 记忆陷阱防御配套文档：`docs/changelog.md` 记「AdaptiveMem 本土化 + lit-import 修复」条目；`docs/handoff.md` §3 增量说明、§7 记录后续工作（陷阱压力样例 / 记忆诱发退化被动信号 / note_recall 结构化适用性 / 文献库剩余 13 篇蒸馏）；回归断言 83→85 全仓统一。
 
 ## [0.6.4] - 2026-08-23
 
@@ -289,7 +289,7 @@
 ### Docs
 
 - 仓库文档大改：测试断言数统一为 75（README 中英 / ARCHITECTURE / docs/memory/README）；README 双语旧身份 `obsidian`→`notes-assistant`；design.md 注入段名与 hook schema 版本状态对齐代码；env 旧名改新名（`DSH_WORKSPACE_ROOT` / `DSH_MATH_MEMORY_*`）。
-- 结构收敛：`REFACTOR-PLAN.md` 退役（历史档案横幅）、根 `TESTING.md` 并入 `docs/memory/testing.md`（新增本地验收手册）、`docs/memory/README.md` 导航补齐 control-panel/testing/handoff；根 CHANGELOG 只做发布摘要，记忆系统细账统一进 `docs/memory/changelog.md`。
+- 结构收敛：`docs/archive/REFACTOR-PLAN.md` 退役（历史档案横幅）、根 `TESTING.md` 并入 `docs/memory/testing.md`（新增本地验收手册）、`docs/memory/README.md` 导航补齐 control-panel/testing/handoff；根 CHANGELOG 只做发布摘要，记忆系统细账统一进 `docs/changelog.md`。
 - 新增 `scripts/check-doc-consistency.mjs`：断言数等易漂移数字与代码实测值自动比对，接入 `npm test`。
 - 新增文献库子系统（仓库 `literature/`）：`docs/literature.md`（架构规格）+ `scripts/lit-import.mjs`（BibTeX + PDF + MinerU markdown → 双面文献库：人类侧 `cards/`/`reading/`/`notes/`/`index.md`，机器侧 `.raw/`/`.index.json`）；14 条文献全部导入（14 篇均有 MinerU 全文）。
 - 新增 `docs/dsh-panel-research.md`：dsh web 面板机制调研（noema/aionui 客户端契约、`settings.section` 槽位字段、web profile 客户端装配显式名单、宿主路由契约）。

@@ -99,5 +99,5 @@ dsh --profile notes-assistant                 # 纯 CLI 启动（bundle 已提�
 1. 逻辑放对层：host（Obsidian 插件）/ agent（preset）/ 数据（vault 模板）；
 2. 纯函数进 `scripts/test-memory.mjs` 回归；行为断言进 `scripts/qa/`；
 3. 新模板三路安装（main.template.js bootstrap / install.mjs / deploy-local.mjs）+ 进 build-obsidian.mjs 嵌入清单；
-4. 文档同步：design.md（规格）、CHANGELOG.md（发布摘要）＋ docs/memory/changelog.md（记忆系统细账）、**README.md 与 README.zh.md 中英同步（中文文档必须始终保留）**、必要时 handoff.md；断言数等数字改动后跑 `scripts/check-doc-consistency.mjs`（进 `npm test`）。
+4. 文档同步：design.md（规格）、CHANGELOG.md（发布摘要）＋ docs/changelog.md（**仓库级**细账：为什么改、怎么改、踩了什么坑）、**README.md 与 README.zh.md 中英同步（中文文档必须始终保留）**、必要时 docs/handoff.md；断言数等数字改动后跑 `scripts/check-doc-consistency.mjs`（进 `npm test`）。
 5. 构建 → npm test → npm run qa → deploy-local →（用户口令后）提交推送。

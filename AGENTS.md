@@ -21,7 +21,7 @@
 | **给 agent 的仓库维护方法（通用）** | [`docs/agent-repo-maintenance.md`](docs/agent-repo-maintenance.md) |
 | 可维护性审查与整改台账 | [`docs/maintainability-review-2026-09-11.md`](docs/maintainability-review-2026-09-11.md)（审计，只读）、[`docs/maintainability-fixes-2026-09-11.md`](docs/maintainability-fixes-2026-09-11.md)（状态 + 证据） |
 | 记忆系统的当前实现规格 | [`docs/memory/design.md`](docs/memory/design.md) |
-| 每条行为/契约**为什么**变成现在这样 | [`docs/memory/changelog.md`](docs/memory/changelog.md) |
+| 每条行为/契约**为什么**变成现在这样 | [`docs/changelog.md`](docs/changelog.md) |
 | 面向用户的版本变更 | [`CHANGELOG.md`](CHANGELOG.md) |
 | 面板/路由/信任边界 | [`docs/memory/control-panel.md`](docs/memory/control-panel.md) |
 | **环境变量**（唯一参考：谁读、别名优先级、死开关） | [`docs/env-vars.md`](docs/env-vars.md)（代码与本表双向一致由 `check-env-vars.mjs` 保证） |
@@ -77,7 +77,7 @@ node scripts/run-gates.mjs --only panel  # 只跑名字含 panel 的
 
 | 改动性质 | 写在哪 |
 |---|---|
-| 行为/契约变化及其**理由** | `docs/memory/changelog.md`（追加一节，风格同前文） |
+| 行为/契约变化及其**理由** | `docs/changelog.md`（追加一节，风格同前文） |
 | 面向用户的版本变更 | `CHANGELOG.md`（未发布放 `[Unreleased]`） |
 | 未完成、延期、已知缺口 | `docs/handoff.md` §7——**这是唯一权威的"未做"清单**，完成一项就划掉一项 |
 | 架构/结构变化 | `ARCHITECTURE.md` 与 `docs/memory/design.md` |
@@ -100,6 +100,6 @@ node scripts/run-gates.mjs --only panel  # 只跑名字含 panel 的
 ## 7. 提交信息与工作方式
 
 - 提交信息用 `<type>(<scope>): <中文说明>`（`feat` / `fix` / `ci` / `docs` / `refactor` / `test`），一条提交做一件事。
-- 改动的**理由**写进提交信息或 `docs/memory/changelog.md`，不要只留代码。
+- 改动的**理由**写进提交信息或 `docs/changelog.md`，不要只留代码。
 - 不要 `git push`、不要打 tag、不要发布——这些是用户的动作。
 - 不要触碰真实 vault，不要跑 live 验收（除用户明确要求）。

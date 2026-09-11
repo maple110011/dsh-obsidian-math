@@ -168,7 +168,7 @@ dsh 0.1.5 的 web carrier 引入了浏览器会话鉴权（`@deepseek-ai/dsh-cli
 
 ## 5. 实施顺序（文档先行）
 
-1. **本文档**（已完成）→ 2. A1 代码 → 3. host 副本同步 → 4. 回归测试（V3 夹具 + 双文件场景 + 两份实现一致性）→ 5. `npm test` → 6. 端到端验收（3199 冒烟 + `/memory-panel/*` 路由 + `npm run qa`）→ 7. 文档同步（`CHANGELOG.md`、`docs/memory/changelog.md`、`docs/memory/design.md`、`README.md` + `README.zh.md`、`docs/handoff.md`）→ 8. `node scripts/check-doc-consistency.mjs`（断言数等数字必须与实测一致）。
+1. **本文档**（已完成）→ 2. A1 代码 → 3. host 副本同步 → 4. 回归测试（V3 夹具 + 双文件场景 + 两份实现一致性）→ 5. `npm test` → 6. 端到端验收（3199 冒烟 + `/memory-panel/*` 路由 + `npm run qa`）→ 7. 文档同步（`CHANGELOG.md`、`docs/changelog.md`、`docs/memory/design.md`、`README.md` + `README.zh.md`、`docs/handoff.md`）→ 8. `node scripts/check-doc-consistency.mjs`（断言数等数字必须与实测一致）。
 
 ## 6. 待用户决策（不在本次实施范围）
 

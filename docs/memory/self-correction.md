@@ -1,6 +1,6 @@
 # 记忆纠错与确定性自维护提案
 
-> 状态：**已实现（0.7.2）**。本文把上一轮代码审查发现的四个具体缺口，加上 OpenViking（Volcengine 开源「Self-evolving Context Database」）的强度/遗忘/巩固模型，写成可落地的改动规格——逐条给出代码位置、具体改法、评估与取舍。P1–P5 均已落地，实现细节见 `docs/memory/changelog.md` 最新条目与文末实现状态表。
+> 状态：**已实现（0.7.2）**。本文把上一轮代码审查发现的四个具体缺口，加上 OpenViking（Volcengine 开源「Self-evolving Context Database」）的强度/遗忘/巩固模型，写成可落地的改动规格——逐条给出代码位置、具体改法、评估与取舍。P1–P5 均已落地，实现细节见 `docs/changelog.md` 最新条目与文末实现状态表。
 > 定位：继 `v2-proposal.md`（读改写）、`retrieval-v3.md`（检索重构）、`strategy-layer.md`（方法层）之后的第四份改造提案，主题是「**让纠错真正生效、让遗忘/巩固从 prompt 自律升级为确定性机制**」。
 
 ---

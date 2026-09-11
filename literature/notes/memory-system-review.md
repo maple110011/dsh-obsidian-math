@@ -3,7 +3,7 @@
 > 目的：重读 14 篇 agent 记忆相关文献，评估 dsh-math-memory 现有记忆系统是否可改进 / 需调整，落成可执行清单。
 > 方法：按统一模板（literature/reading/_TEMPLATE.md）精读 14 篇 MinerU 全文，产出 reading/<citekey>.md 与卡片蒸馏；本文件做跨论文综合。
 > 状态：14/14 已完成研读（reading/*.md）并蒸馏进 cards（status=distilled）。
-> 落实状态：高优先 5 条 + 中优先的 recency、模板/记录 schema、Refine 步、条件演化门已落实（见 docs/memory/changelog.md）；hybrid embedding、容量去重阈值、检索工具预算仍待后续。
+> 落实状态：高优先 5 条 + 中优先的 recency、模板/记录 schema、Refine 步、条件演化门已落实（见 docs/changelog.md）；hybrid embedding、容量去重阈值、检索工具预算仍待后续。
 
 ## 1. 现状基线
 
