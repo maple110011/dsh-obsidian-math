@@ -54,7 +54,28 @@ git push origin 0.7.6  # ← 这一步才会真正产出 Release
 - npm 正在废弃 2FA-bypass 的 granular token（[2026-07-08](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/) / [2026-07-31](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/)）：这类 token 已不能做账号/包管理，**约 2027-01 起也不能直接发布**。
 - **一次性配置（人工 + 2FA，自动化不了）**：npmjs.com → 包 `dsh-math-memory` → Settings → Trusted Publisher → GitHub Actions，填 `maple110011` / `dsh-obsidian-math` / **workflow 文件名 `npm-publish.yml`**（环境留空）。**workflow 名填错是最常见的失败原因。**
 - workflow 侧：`permissions: id-token: write`（已有）、**不设 `NODE_AUTH_TOKEN`**、npm 必须 **≥ 11.5.1**（所以显式 `npm install -g npm@11`；Node 22 自带 npm 10）。**故意钉 11 不钉 12**：npm 12 打开了安装期安全默认值（依赖 lifecycle 脚本默认不跑，需 allowlist），会静默跳过 esbuild 的 `postinstall` 二进制下载。
-- 失败时先看 `Registry / OIDC diagnostics` 那一步：它打印 npm 版本、是否拿到 `ACTIONS_ID_TOKEN_REQUEST_URL`、以及 `whoami` 的结果。
+- 失败时先看 `Registry / OIDC diagnostics` 那一步：它打印 npm 版本、是否拿到 `ACTIONS_ID_TOKEN_REQUEST_URL`、以及 `whoami` 的结果。**发布失败时同一份信息还会进 job summary 与一个 issue**（job 日志需要 admin 权限才能读，issue 不需要），其中包含 registry 的原话 + **本次实际出示的 OIDC claims**。
+- **两种情况用错误码就能分辨**：`E404` = npm 上没有匹配的 trusted publisher（没配 / 仓库名或 workflow 文件名对不上）；`E403 OIDC permission denied for this action` = 配置**匹配到了**但某个 claim 不一致（最常见是 **environment**，或 workflow 文件名写成了全路径）。
+- 本仓库的 workflow 实际出示的 claims（2026-09-11 实测，可作为比对基准）：
+
+  ```
+  repository        = maple110011/dsh-obsidian-math
+  job_workflow_ref  = maple110011/dsh-obsidian-math/.github/workflows/npm-publish.yml@refs/tags/<tag>
+  event_name        = push          ref_type = tag
+  aud               = npm:registry.npmjs.org
+  ```
+
+  注意**没有 `environment` claim**（job 未声明 `environment:`），所以 npm 侧的 Environment 必须留空。
+- **用 CLI 配置/核对（npm ≥ 11.10，需账号 2FA；每个包只允许一条配置）**：
+
+  ```bash
+  npm trust list dsh-math-memory --json          # 看现有的 file / repo / environment
+  npm trust revoke --id <trust-id> dsh-math-memory   # 要改就得先撤销（一个包只允许一条）
+  npm trust github dsh-math-memory --file npm-publish.yml \
+      --repo maple110011/dsh-obsidian-math --yes   # 不带 --env 即要求无 environment
+  ```
+
+- 若 npm 侧只能选**分阶段发布**（staged publishing，需人工 2FA 批准后才公开），workflow 要改成 `npm stage publish`（需要 npm ≥ 11.16/12：可以放在 `npm ci` **之后**再升级 npm，避开 npm 12 的安装期默认值），并保留最后的人工批准步骤。这一步尚未实现——需要时再改。
 
 ## 2. 三个工作流各自的门禁
 
