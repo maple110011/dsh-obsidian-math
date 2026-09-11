@@ -826,7 +826,13 @@ export function rankRecallDocuments(docs, query, options = {}) {
  * is reached via grep/read — only their index lines join the corpus).
  */
 export function classifyVaultDoc(rel) {
-  if (rel === "AGENTS.md") return "skip";
+  // The vault's working protocol is instructions, not note content — excluded
+  // under BOTH names it can have: `AGENTS.md` is what the installer writes, and
+  // `vault-AGENTS.md` is the repo's own template-source name (a vault can carry
+  // it, and the synthetic benchmark vault was renamed to it on 2026-09-11 so the
+  // file stops being auto-injected as repo instructions — see
+  // `scripts/check-agent-instructions.mjs`).
+  if (rel === "AGENTS.md" || rel === "vault-AGENTS.md") return "skip";
   if (rel === ".deepseek/capture-policy.md" || rel === ".deepseek/memory/profile.md") return "skip";
   if (rel === ".deepseek/working.md") return "skip"; // scratch draft, not part of the retrieval corpus
   if (rel.startsWith(".deepseek/cache")) return "skip";
