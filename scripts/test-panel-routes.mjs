@@ -8,9 +8,9 @@
 //
 // The handler is injection-based (apply(ctx) registers one prefix handler), so
 // no socket is needed and nothing on this machine is touched.
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { apply as applyPanel } from '../dsh/host/math-memory-panel.mjs';
 
 const results = [];
@@ -21,8 +21,11 @@ function check(name, condition, detail = '') {
 
 // ── harness: capture the registered handler, then drive it ──────────────────
 let handler = null;
+// Mutable on purpose: section 2b needs an empty registry and then one that
+// points at the test vault (the registry is the server-side root anchor).
+const registry = { items: [{ id: 'w1', path: 'D:/notes', title: 'notes' }] };
 const ctx = {
-  workspaceRegistry: { list: () => [{ id: 'w1', path: 'D:/notes', title: 'notes' }] },
+  workspaceRegistry: { list: () => registry.items },
   logger: { warn: () => {} },
   effect: (fn) => { fn(); },
   webServer: { register: (route) => { handler = route.handler; } }
@@ -67,11 +70,15 @@ writeFileSync(join(other, 'NOT-MINE.md'), '# other\n', 'utf8');
 
 const savedEnv = {
   token: process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN,
+  newToken: process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN,
   vaultEnv: process.env.DSH_OBSIDIAN_VAULT,
   wsEnv: process.env.DSH_WORKSPACE_ROOT
 };
 const setEnv = (token, root) => {
   if (token === undefined) delete process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN; else process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = token;
+  // Clearing the NEW name too keeps the sections isolated: it wins over the old
+  // one, so a leftover value would silently satisfy §4b's "no token -> 403".
+  delete process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN;
   if (root === undefined) delete process.env.DSH_OBSIDIAN_VAULT; else process.env.DSH_OBSIDIAN_VAULT = root;
   delete process.env.DSH_WORKSPACE_ROOT;
 };
@@ -148,6 +155,39 @@ try {
   check('routes: a `..` escape in rel cannot reach outside the vault',
     escaping.status >= 400 && existsSync(join(other, 'NOT-MINE.md')));
 
+  // ── 2b. with NOTHING configured the server must refuse, not trust the caller
+  // Every check above sets one of the two env vars, which is exactly how the
+  // unconfigured branch stayed untested while the code fell back to the
+  // request's own `root` (2026-09-11 review). The root anchor is now this
+  // instance's own state: the env value and the registered workspaces, never
+  // the request.
+  writeFileSync(join(vault, '.deepseek', 'memory', 'records', 'unanchored.md'), '---\ntitle: u\n---\nbody\n', 'utf8');
+  const unanchoredPath = join(vault, '.deepseek', 'memory', 'records', 'unanchored.md');
+  setEnv(undefined, undefined);
+  registry.items = [];
+  const noAnchor = await call({
+    method: 'POST', path: '/memory-panel/archive',
+    body: { root: vault, rel: '.deepseek/memory/records/unanchored.md' }
+  });
+  check('routes: no configured root + empty registry -> the caller-supplied root is refused',
+    noAnchor.status === 403 && existsSync(unanchoredPath), JSON.stringify({ status: noAnchor.status }));
+  const noAnchorRead = await call({ method: 'GET', path: '/memory-panel/state?root=' + encodeURIComponent(vault) });
+  check('routes: an unanchored READ is refused too (no caller-chosen root at all)',
+    noAnchorRead.status === 403, JSON.stringify({ status: noAnchorRead.status }));
+
+  registry.items = [{ id: 'w1', path: vault, title: 'vault' }];
+  const viaRegistry = await call({ method: 'GET', path: '/memory-panel/state?root=' + encodeURIComponent(vault) });
+  check('routes: an unconfigured instance accepts a workspace it registered (the registry is the anchor)',
+    viaRegistry.status === 200 && viaRegistry.json?.ok === true, JSON.stringify({ status: viaRegistry.status }));
+  const unregistered = await call({
+    method: 'POST', path: '/memory-panel/archive',
+    body: { root: other, rel: 'NOT-MINE.md' }
+  });
+  check('routes: a registered instance still refuses an unregistered root',
+    unregistered.status === 403 && existsSync(join(other, 'NOT-MINE.md')));
+  registry.items = [{ id: 'w1', path: 'D:/notes', title: 'notes' }];
+  setEnv(undefined, vault);
+
   // ── 3. non-memory targets are refused by archiveMemoryFile through the route
   const note = await call({ method: 'POST', path: '/memory-panel/archive', body: { root: vault, rel: 'IMPORTANT-NOTE.md' } });
   check('routes: archiving a plain note is refused (500 from the guard)',
@@ -176,6 +216,26 @@ try {
     body: { root: vault, rel: '.deepseek/memory/records/card.md', token: 's3cret-token' }
   });
   check('routes: a valid token does NOT re-open the cross-origin path', foreignWithToken.status === 403);
+  setEnv(undefined, vault);
+
+  // ── 4b. the token's NEW name works, and WINS when both are set ────────────
+  // Until 2026-09-11 `panelToken()` read ONLY the legacy name while the preset
+  // preferred the new one, so whichever spelling the plugin injected, one side
+  // could not see it (docs/env-vars.md §4). Both spellings are now accepted in
+  // the documented order, and these two checks are what keeps that true.
+  savedEnv.newToken = process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN;
+  process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN = 'new-name-token';
+  const newOnlyNoToken = await call({ method: 'GET', path: '/memory-panel/state' });
+  check('routes: the NEW token name is enforced on its own (no token -> 403)', newOnlyNoToken.status === 403);
+  const newOnlyOk = await call({ method: 'GET', path: '/memory-panel/state', headers: { 'x-dsh-token': 'new-name-token' } });
+  check('routes: the NEW token name is accepted on its own', newOnlyOk.status === 200 && newOnlyOk.json?.ok === true);
+  process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = 'old-name-token';
+  const preferNew = await call({ method: 'GET', path: '/memory-panel/state', headers: { 'x-dsh-token': 'new-name-token' } });
+  const oldLoses = await call({ method: 'GET', path: '/memory-panel/state', headers: { 'x-dsh-token': 'old-name-token' } });
+  check('routes: with BOTH names set the new one wins (the documented alias order)',
+    preferNew.status === 200 && oldLoses.status === 403,
+    JSON.stringify({ newName: preferNew.status, oldName: oldLoses.status }));
+  delete process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN;
   setEnv(undefined, vault);
 
   // ── 5. workspaces needs no root (the panel fetches it bare) ──────────────
@@ -207,8 +267,94 @@ try {
   // ── 8. an unknown route is a 404, not a crash ───────────────────────────
   const unknown = await call({ method: 'GET', path: '/memory-panel/nope' });
   check('routes: an unknown path answers 404', unknown.status === 404 && unknown.json?.ok === false);
+
+  // ── 9. an unconfigured instance still MUTATES a registered workspace ────
+  // Deliberately last: this is the only check that legitimately creates the
+  // archive directory, and section 2 asserts a refused archive leaves none
+  // behind. Together with 2b it pins both halves — refuse the unanchored,
+  // keep serving the anchored.
+  setEnv(undefined, undefined);
+  registry.items = [{ id: 'w1', path: vault, title: 'vault' }];
+  const mutatingViaRegistry = await call({
+    method: 'POST', path: '/memory-panel/archive',
+    body: { root: vault, rel: '.deepseek/memory/records/unanchored.md' }
+  });
+  check('routes: unconfigured + registered workspace still archives (the panel keeps working)',
+    mutatingViaRegistry.status === 200 && !existsSync(unanchoredPath),
+    JSON.stringify({ status: mutatingViaRegistry.status }));
+  // ── 10. the four routes that had NO coverage until now ──────────────────
+  // The 2026-09-11 review found the suite drove 4 of 8 routes. `/feedback` is
+  // the one that matters most: it is the only route that writes INSIDE a card
+  // using a caller-supplied `rel` — the same "write endpoint trusting caller
+  // input" shape as the P0-0 root bug, and it had no positive case at all.
+  setEnv(undefined, vault);
+  registry.items = [{ id: 'w1', path: 'D:/notes', title: 'notes' }];
+
+  const fbMissing = await call({ method: 'POST', path: '/memory-panel/feedback', body: { root: vault, rel: '.deepseek/memory/records/card.md' } });
+  check('routes: /feedback requires BOTH rel and action (400)',
+    fbMissing.status === 400, JSON.stringify({ status: fbMissing.status }));
+  const fbEscape = await call({
+    method: 'POST', path: '/memory-panel/feedback',
+    body: { root: vault, rel: '../' + basename(other) + '/NOT-MINE.md', action: 'confirm' }
+  });
+  check('routes: /feedback cannot write through a `..` escape (403, file intact)',
+    fbEscape.status === 403 && readFileSync(join(other, 'NOT-MINE.md'), 'utf8') === '# other\n',
+    JSON.stringify({ status: fbEscape.status }));
+
+  const fbCard = join(vault, '.deepseek', 'memory', 'records', 'feedback-target.md');
+  writeFileSync(fbCard, '---\ntitle: fb\n---\nbody\n', 'utf8');
+  const fbBefore = readFileSync(fbCard, 'utf8');
+  const fbOk = await call({
+    method: 'POST', path: '/memory-panel/feedback',
+    body: { root: vault, rel: '.deepseek/memory/records/feedback-target.md', action: 'confirm' }
+  });
+  check('routes: /feedback really applies to a card inside the root (the positive case)',
+    fbOk.status === 200 && readFileSync(fbCard, 'utf8') !== fbBefore,
+    JSON.stringify({ status: fbOk.status }));
+
+  const toggleBad = await call({ method: 'POST', path: '/memory-panel/session-capture-toggle', body: { root: vault, enabled: 'yes' } });
+  check('routes: /session-capture-toggle requires a boolean (400)',
+    toggleBad.status === 400, JSON.stringify({ status: toggleBad.status }));
+  const toggleOn = await call({ method: 'POST', path: '/memory-panel/session-capture-toggle', body: { root: vault, enabled: true } });
+  const afterOn = await call({ method: 'GET', path: '/memory-panel/session-capture' });
+  check('routes: /session-capture-toggle round-trips through config.md',
+    toggleOn.status === 200 && toggleOn.json?.enabled === true && afterOn.json?.enabled === true,
+    JSON.stringify({ toggle: toggleOn.json, read: afterOn.json }));
+  const toggleOff = await call({ method: 'POST', path: '/memory-panel/session-capture-toggle', body: { root: vault, enabled: false } });
+  const afterOff = await call({ method: 'GET', path: '/memory-panel/session-capture' });
+  check('routes: /session-capture-toggle can turn it back off',
+    toggleOff.status === 200 && afterOff.json?.enabled === false, JSON.stringify(afterOff.json));
+
+  const captureRun = await call({ method: 'POST', path: '/memory-panel/session-capture', body: { root: vault } });
+  // `captured` here is the ARRAY of sessions just written (the GET route reports
+  // the numeric `count`); no session logs exist in this fixtures vault, so it is
+  // empty — asserting the list shape pins the contract the panel reads.
+  check('routes: POST /session-capture runs and returns the captured list',
+    captureRun.status === 200 && captureRun.json?.ok === true && Array.isArray(captureRun.json.captured),
+    JSON.stringify({ status: captureRun.status, captured: captureRun.json?.captured }));
+
+  // `archiveOldEpisodes` ages by file MTIME (not by the date in the name), so the
+  // fixture is back-dated explicitly: a fresh file would never be "older than 90
+  // days", and asserting moved===1 against the wall clock would rot.
+  const oldEpisode = join(vault, '.deepseek', 'memory', 'episodes', '2026-01-01-old.md');
+  writeFileSync(oldEpisode, '# 旧事件\n', 'utf8');
+  const longAgo = new Date(Date.now() - 200 * 86400000);
+  utimesSync(oldEpisode, longAgo, longAgo);
+  const freshEpisode = join(vault, '.deepseek', 'memory', 'episodes', '2026-09-10-new.md');
+  writeFileSync(freshEpisode, '# 新事件\n', 'utf8');
+  const archEp = await call({ method: 'POST', path: '/memory-panel/archive-episodes', body: { root: vault, maxDays: 90 } });
+  check('routes: /archive-episodes moves the aged episode and keeps the fresh one',
+    archEp.status === 200 && archEp.json?.moved === 1
+    && !existsSync(oldEpisode) && existsSync(freshEpisode)
+    && existsSync(join(vault, '.deepseek', 'memory', 'episodes', 'archive', '2026-01-01-old.md')),
+    JSON.stringify({ status: archEp.status, moved: archEp.json?.moved }));
+  const archEpDefault = await call({ method: 'POST', path: '/memory-panel/archive-episodes', body: { root: vault } });
+  check('routes: /archive-episodes falls back to 90 days when maxDays is not a number',
+    archEpDefault.status === 200 && archEpDefault.json?.moved === 0 && existsSync(freshEpisode),
+    JSON.stringify({ moved: archEpDefault.json?.moved }));
 } finally {
   if (savedEnv.token === undefined) delete process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN; else process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = savedEnv.token;
+  if (savedEnv.newToken === undefined) delete process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN; else process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN = savedEnv.newToken;
   if (savedEnv.vaultEnv === undefined) delete process.env.DSH_OBSIDIAN_VAULT; else process.env.DSH_OBSIDIAN_VAULT = savedEnv.vaultEnv;
   if (savedEnv.wsEnv === undefined) delete process.env.DSH_WORKSPACE_ROOT; else process.env.DSH_WORKSPACE_ROOT = savedEnv.wsEnv;
   rmSync(vault, { recursive: true, force: true });

@@ -231,9 +231,10 @@ class LinkServer {
     this.server = null;
     this.port = 0;
     // CSRF guard for the /feedback mutation endpoint: the token is passed to
-    // the dsh agent via DSH_OBSIDIAN_FEEDBACK_TOKEN and must be echoed back
-    // in the t= query parameter. Without a token (old paired installs) the
-    // endpoint still works for backward compatibility.
+    // the dsh agent as DSH_MATH_MEMORY_FEEDBACK_TOKEN (with the legacy
+    // DSH_OBSIDIAN_FEEDBACK_TOKEN injected alongside it) and must be echoed
+    // back in the t= query parameter. Without a token (old paired installs)
+    // the endpoint still works for backward compatibility.
     this.token = '';
   }
 
@@ -389,7 +390,7 @@ function validInstallDir(dir) {
   // npm-global layout: <dir> itself is @deepseek-ai/dsh
   const direct = tryRoot(dir);
   if (direct) return direct;
-  // custom layout: <dir>/dsh is the package (e.g. E:\software\deepseek-harness)
+  // custom layout: <dir>/dsh is the package (e.g. a checkout at <dir>, then dsh/ inside it)
   const nested = tryRoot(join(dir, 'dsh'));
   if (nested) return nested;
   return null;
@@ -468,7 +469,7 @@ function detectDshHome(settings, detected) {
 
 // ── dsh service manager ─────────────────────────────────────────────────────
 
-// ── loopback reverse proxy for the dsh web UI ───────────────────────────────
+// ── loopback reverse proxy for dsh web ─────────────────────────────────────
 //
 // WHY THIS EXISTS. dsh >= 0.1.5 authenticates the browser session with a cookie
 // it mints from the `…/?token=…` launch URL, and that cookie is `SameSite=Strict`
@@ -1082,10 +1083,22 @@ class DshService {
       // so pointing this elsewhere does not scope what the panel displays.
       // See docs/session-scope.md.
       DSH_SESSIONS_ROOT: join(location.home, 'sessions'),
-      ...(linkBaseUrl === '' ? {} : { DSH_OBSIDIAN_LINK_URL: linkBaseUrl }),
+      // Both spellings of the link base and the CSRF token are injected, new
+      // name first. The plugin and the npm package can be upgraded separately
+      // (Obsidian plugin vs `dsh-math-memory`), so injecting only the new name
+      // would break every older consumer and only the old name would keep the
+      // half-done rename alive. Both readers accept the pair in this order
+      // (`docs/env-vars.md`), which makes the order irrelevant on the wire.
+      ...(linkBaseUrl === '' ? {} : {
+        DSH_MATH_MEMORY_LINK_URL: linkBaseUrl,
+        DSH_OBSIDIAN_LINK_URL: linkBaseUrl
+      }),
       ...(this.plugin.linkServer?.token === undefined || this.plugin.linkServer.token === ''
         ? {}
-        : { DSH_OBSIDIAN_FEEDBACK_TOKEN: this.plugin.linkServer.token })
+        : {
+          DSH_MATH_MEMORY_FEEDBACK_TOKEN: this.plugin.linkServer.token,
+          DSH_OBSIDIAN_FEEDBACK_TOKEN: this.plugin.linkServer.token
+        })
     };
     // dsh listens on an OS-assigned loopback port; the PROXY owns the port the
     // user configured and the browser talks to. That is what keeps the session
@@ -1179,7 +1192,7 @@ class DshService {
 const SKIN_FALLBACK_START = "# --- skin-disable fallback (auto-added: web profile missing) ---";
 const SKIN_FALLBACK_END = "# --- end skin-disable fallback ---";
 
-// Optional skin center mount (settings.enableSkinCenter): the dsh-web-ui skin
+// Optional skin center mount (settings.enableSkinCenter): the @linxin666 skin
 // picker + its settings card host. Appended to the plugin-owned
 // notes-assistant.patch.yml overlay only when BOTH the toggle is on AND a web
 // profile exists to mirror the @linxin666 packages from; degrade mode (no web
@@ -1195,7 +1208,7 @@ const SKIN_FALLBACK_END = "# --- end skin-disable fallback ---";
 // picker. Kept intentionally; the default stays off.
 const SKIN_CENTER_INSERT = [
   '',
-  '# Optional skin center (settings.enableSkinCenter): mount the dsh-web-ui skin',
+  '# Optional skin center (settings.enableSkinCenter): mount the @linxin666 skin',
   '# picker + its settings card host. Only appended when the web profile exists',
   '# to mirror the @linxin666 packages from; otherwise boot would fail with',
   '# ERR_MODULE_NOT_FOUND, so degrade mode skips this block.',
@@ -2242,13 +2255,20 @@ class MemoryView extends ItemView {
    */
   cardMeta(card) {
     const parts = [];
-    if (card.type !== '') parts.push(card.type);
-    if (card.operator !== '') parts.push(card.operator);
-    if (card.topic !== '') parts.push(`#${card.topic}`);
+    // Every optional field is guarded with `typeof … === 'string'`, not `!== ''`.
+    // The data layer always sends strings today, but a `!== ''` guard lets
+    // `undefined` through and renders the literal text `上次 undefined` — found
+    // by `scripts/test-panel-present.mjs`, which feeds the presenter a partial
+    // card on purpose (review P1-3).
+    if (typeof card.type === 'string' && card.type !== '') parts.push(card.type);
+    if (typeof card.operator === 'string' && card.operator !== '') parts.push(card.operator);
+    if (typeof card.topic === 'string' && card.topic !== '') parts.push(`#${card.topic}`);
     // Always a badge: a card with no hook block is the LEAST evidenced one, so
     // it must not be the one that renders cleanest.
     parts.push(VERIFIED_BADGES[card.verified] ?? '❓');
-    if (card.status !== '' && card.status !== 'active') parts.push(CARD_STATUS_TEXT[card.status] ?? card.status);
+    if (typeof card.status === 'string' && card.status !== '' && card.status !== 'active') {
+      parts.push(CARD_STATUS_TEXT[card.status] ?? card.status);
+    }
     parts.push(card.uses > 0 ? `用过 ${card.uses} 次` : '从未用过');
     // Negative transfer: used AND it made things worse. Shown only when it
     // actually happened (a permanent `倒忙 0 次` would read as data).
@@ -2256,8 +2276,8 @@ class MemoryView extends ItemView {
     if (card.successRate !== null && card.successRate !== undefined) parts.push(`成功率 ${card.successRate}`);
     const trend = this.trendText(card);
     if (trend !== '') parts.push(trend);
-    if (card.lastUsed !== '') parts.push(`上次 ${card.lastUsed}`);
-    if (card.updated !== '') {
+    if (typeof card.lastUsed === 'string' && card.lastUsed !== '') parts.push(`上次 ${card.lastUsed}`);
+    if (typeof card.updated === 'string' && card.updated !== '') {
       const days = daysSinceText(card.updated);
       if (days !== '') parts.push(days);
     }

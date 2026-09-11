@@ -54,8 +54,15 @@ const originAllowed = (req) => {
 
 /**
  * Optional shared secret, read from the environment the launching plugin
- * controls (`DSH_OBSIDIAN_FEEDBACK_TOKEN` — the same variable
- * `dsh/preset/math-memory.mjs` documents for the Obsidian-side endpoint).
+ * controls — the same variable `dsh/preset/math-memory.mjs` renders into the
+ * feedback links.
+ *
+ * **Both names are accepted, new one first** (`DSH_MATH_MEMORY_FEEDBACK_TOKEN`,
+ * falling back to the legacy `DSH_OBSIDIAN_FEEDBACK_TOKEN`). Until 2026-09-11
+ * this function read ONLY the legacy name while the preset preferred the new
+ * one, so the rename was half-done: whatever the plugin injected, one of the two
+ * sides could not see it. Reading the pair the same way on both sides makes the
+ * preference order irrelevant, which is the point — see `docs/env-vars.md`.
  *
  * The plugin sets it for the notes profile it spawns, so that instance also
  * requires it on every request. The user's own `web` profile usually has it
@@ -63,7 +70,7 @@ const originAllowed = (req) => {
  * it IS set, a missing/incorrect token is fatal — that is the stronger mode.
  */
 function panelToken() {
-  return (process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN ?? "").trim();
+  return (process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN ?? process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN ?? "").trim();
 }
 
 /** Timing-safe comparison of the request token against the configured one. */
@@ -83,19 +90,41 @@ function tokenMatches(req, url, body) {
  *
  * `body.root` / `?root=` used to BE the confinement root, which made the
  * downstream `pathInside(root, target)` check vacuous — the caller chose both
- * ends. Now the configured value wins; a request may only *restate* it (the
- * panel sends the workspace it displays) and a different path is rejected.
+ * ends. A first fix made the ENV value win, but only while it was set: with
+ * neither `DSH_WORKSPACE_ROOT` nor `DSH_OBSIDIAN_VAULT` configured, the
+ * request's own root silently became the confinement root again, and the route
+ * suite never exercised that branch because every check set one of the two
+ * (reproduced by the 2026-09-11 maintainability review: a POST archived a card
+ * out of a caller-named vault).
  *
- * @returns the resolved root, or "" when neither the environment nor the
- *   request supplies one.
+ * The anchor is therefore never the request. It is this instance's own state:
+ * the configured env value AND the workspaces the instance has registered. A
+ * request may only *restate* one of those (the panel sends the workspace it
+ * displays); anything else is refused, and an instance with neither source
+ * refuses every rooted request rather than trusting the caller.
+ *
+ * @param requested the `root` the request restates (may be absent)
+ * @param registryRoots workspace paths from `ctx.workspaceRegistry`
+ * @returns the resolved root, or "" when the request does not name an allowed one
  */
-function resolveAllowedRoot(requested) {
+function resolveAllowedRoot(requested, registryRoots) {
   const configured = (process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT ?? "").trim();
+  const configuredRoot = configured === "" ? "" : resolve(configured);
+  const allowed = new Set();
+  if (configuredRoot !== "") allowed.add(configuredRoot);
+  for (const path of registryRoots) {
+    if (typeof path === "string" && path.trim() !== "") allowed.add(resolve(path));
+  }
   const asked = typeof requested === "string" ? requested.trim() : "";
-  if (configured === "") return asked === "" ? "" : resolve(asked);
-  const root = resolve(configured);
-  if (asked === "") return root;
-  return resolve(asked) === root ? root : "";
+  if (asked === "") {
+    // A configured instance keeps answering bare requests (the panel fetches
+    // `/state` etc. without restating the root). A registry-only instance
+    // answers only when its registry names exactly one workspace.
+    if (configuredRoot !== "") return configuredRoot;
+    return allowed.size === 1 ? [...allowed][0] : "";
+  }
+  const resolved = resolve(asked);
+  return allowed.has(resolved) ? resolved : "";
 }
 
 async function readJson(req) {
@@ -165,7 +194,8 @@ export function apply(ctx) {
     if (body === null) return json(res, fail("malformed json"), 400);
     if (!tokenMatches(req, url, body)) return json(res, fail("forbidden: bad or missing token"), 403);
     const requestedRoot = typeof body.root === "string" && body.root !== "" ? body.root : url.searchParams.get("root");
-    const root = resolveAllowedRoot(requestedRoot);
+    const registryRoots = (ctx.workspaceRegistry?.list?.() ?? []).map((w) => w?.path);
+    const root = resolveAllowedRoot(requestedRoot, registryRoots);
 
     try {
       // Listed BEFORE the root gate: it serves the registry, not the vault, and
