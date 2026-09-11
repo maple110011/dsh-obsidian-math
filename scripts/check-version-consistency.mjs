@@ -91,6 +91,31 @@ if (tag !== '' && tag !== packageVersion) {
   fail(`the pushed tag "${tag}" does not equal package.json version "${packageVersion}" — the release's own name would contradict its assets`);
 }
 
+/**
+ * Living documents must declare the version they describe, as an exact line:
+ *
+ *     > 当前版本：0.7.5
+ *
+ * A prose version banner decays silently: `handoff.md` advertised 0.7.2 while
+ * the repo was at 0.7.5, and `design.md` still said "v0.6.x 实现规格", so neither
+ * a human nor an agent could tell the document was releases behind the code
+ * (docs/maintainability-review-2026-09-11.md P1-2/P2-4). The exact marker keeps
+ * this guard from mistaking a historical reference — "0.1.5 adaptation",
+ * "0.7.2 时…" — for a claim about the present.
+ */
+const VERSION_BANNER = /^>\s*当前版本：(\d+\.\d+\.\d+)\s*$/m;
+const bannerDocs = ['docs/handoff.md', 'docs/memory/design.md'];
+for (const rel of bannerDocs) {
+  const banner = VERSION_BANNER.exec(read(rel));
+  if (banner === null) {
+    fail(`${rel}: no "> 当前版本：${packageVersion}" banner — a living doc must declare the version it describes`);
+  } else if (banner[1] !== packageVersion) {
+    fail(`${rel}: declares 当前版本 ${banner[1]} but the repo is at ${packageVersion}`);
+  } else {
+    ok(`${rel}: 当前版本 ${banner[1]}`);
+  }
+}
+
 if (failed === 0) {
   console.log(`\nversion-consistency: all artifacts agree on ${packageVersion}${tag === '' ? '' : ` and tag ${tag}`}`);
 }

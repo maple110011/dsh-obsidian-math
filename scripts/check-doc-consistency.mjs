@@ -9,10 +9,21 @@
 // Each suite therefore prints `__CHECKS__ <passed>/<total>`, and this guard runs
 // them, parses that line, and compares the docs against the number that really
 // ran. Exits non-zero on any divergence.
-import { execFileSync } from 'node:child_process';
+//
+// THREE outcomes per suite, and they must stay distinct:
+//   * a real count            -> anchors are compared against it
+//   * a declared SKIP         -> anchors are reported as skipped
+//   * the suite could not run -> anchors are reported as skipped, NOT compared
+// The third case is why this file no longer uses `execFileSync`: with piped
+// stdio the child could not start at all in a restricted environment, the count
+// read as 0, and the guard announced 18 "docs drifted" failures (docs claimed
+// 232 checks, "actual" 0) when the docs were right all along. The obvious
+// repair for an agent reading that output is to "fix" the correct docs, which
+// is the actual damage. See scripts/run-node.mjs.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { runNode } from './run-node.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(root, rel), 'utf8');
@@ -23,29 +34,22 @@ const fail = (msg) => { console.error('FAIL  ' + msg); ok = false; process.exitC
 /**
  * Run one suite and return its executed assertion count from `__CHECKS__`.
  *
- * `optional: true` marks a suite that legitimately does not run everywhere: the
- * sidebar-handshake suite needs a locally installed dsh + profile and reports
- * SKIP without one (CI, fresh clones). It then prints no `__CHECKS__` line — which
- * used to be treated as a failure here, so the guard passed locally and failed on
- * the first CI run of the release tag. A declared SKIP returns null and the
- * caller skips its anchors instead of inventing a count of 0.
+ * Returns null — meaning "no conclusion available" — for a declared SKIP or for
+ * a suite the environment would not let us start. Returns the real total when
+ * the suite ran. Reports a failure only when the suite ran and contradicted
+ * itself or its docs.
  */
 function runSuite(rel, { optional = false } = {}) {
-  let stdout = '';
-  try {
-    stdout = execFileSync(process.execPath, [join(root, rel)], { cwd: root, encoding: 'utf8' });
-  } catch (error) {
-    // A failing suite still reports its count; only a hard crash loses it.
-    stdout = String(error.stdout ?? '');
-    if (stdout === '') {
-      fail(`${rel}: suite did not run (${String(error.message).split('\n')[0]})`);
-      return 0;
-    }
+  const r = runNode([join(root, rel)], { cwd: root });
+  if (r.spawnError !== null) {
+    console.log(`SKIP  ${rel}: could not start it here (${r.spawnError.code ?? r.spawnError.message}) — environment, not docs`);
+    return null;
   }
+  const stdout = r.output;
   const m = /__CHECKS__ (\d+)\/(\d+)/.exec(stdout);
   if (m === null) {
     if (optional && /\bSKIP\b/.test(stdout)) {
-      console.log(`${rel}: SKIP — ${(/^.*\bSKIP\b.*$/m.exec(stdout) ?? [''])[0].trim()}`);
+      console.log(`SKIP  ${rel}: ${(/^.*\bSKIP\b.*$/m.exec(stdout) ?? [''])[0].trim()}`);
       return null;
     }
     fail(`${rel}: no __CHECKS__ line in its output`);
@@ -62,10 +66,39 @@ const actualRoutes = runSuite('scripts/test-panel-routes.mjs');
 console.log(`actual executed checks in scripts/test-panel-routes.mjs: ${actualRoutes}`);
 
 const actualAuth = runSuite('scripts/test-panel-auth.mjs', { optional: true });
-console.log(`actual executed checks in scripts/test-panel-auth.mjs: ${actualAuth === null ? 'skipped (no local dsh)' : actualAuth}`);
+console.log(`actual executed checks in scripts/test-panel-auth.mjs: ${actualAuth === null ? 'skipped (no local dsh / environment)' : actualAuth}`);
 
 const actualProxy = runSuite('scripts/test-panel-proxy.mjs');
 console.log(`actual executed checks in scripts/test-panel-proxy.mjs: ${actualProxy}`);
+
+/**
+ * Compare every anchor against the suite's real count.
+ *
+ * `actual === null` means nothing can be concluded (the suite did not run
+ * here). The anchor is then REPORTED as skipped rather than compared against an
+ * invented 0, so an environment restriction can never masquerade as doc drift.
+ */
+function compareAnchors(list, actual, { label = 'anchor', what = 'checks' } = {}) {
+  const suffix = what === '' ? '' : ' ' + what;
+  for (const [file, re] of list) {
+    const text = read(file);
+    const m = text.match(re);
+    if (!m) {
+      fail(`${file}: ${label} not found`);
+      continue;
+    }
+    const claimed = Number(m[1]);
+    if (actual === null) {
+      console.log(`SKIP  ${file}: claims ${claimed}${suffix} (that suite did not run here)`);
+      continue;
+    }
+    if (claimed !== actual) {
+      fail(`${file}: claims ${claimed}${suffix}, actual ${actual}`);
+    } else {
+      console.log(`OK    ${file}: ${claimed}${suffix}`);
+    }
+  }
+}
 
 // [file, regex] — the regex must capture the doc's claimed number.
 const anchors = [
@@ -81,32 +114,17 @@ const anchors = [
   // installer e2e".
   ['ARCHITECTURE.md', /npm test\s+# 语法 \+ (\d+) 项回归 \+ \d+ 项路由回归 \+ [^\n]*安装器 e2e/],
   ['docs/memory/README.md', /✅ (\d+) 项零 token 回归/],
-  ['docs/memory/handoff.md', /零 token 记忆回归（(\d+) 项断言，进 `npm test`）/],
-  ['docs/memory/handoff.md', /npm test\s+# (\d+) 项零 token 回归/],
+  ['docs/handoff.md', /零 token 记忆回归（(\d+) 项断言，进 `npm test`）/],
+  ['docs/handoff.md', /npm test\s+# (\d+) 项零 token 回归/],
 ];
 
-for (const [file, re] of anchors) {
-  const text = read(file);
-  const m = text.match(re);
-  if (!m) {
-    fail(`${file}: anchor not found`);
-    continue;
-  }
-  const claimed = Number(m[1]);
-  if (claimed !== actual) {
-    fail(`${file}: claims ${claimed}, actual ${actual}`);
-  } else {
-    console.log(`OK    ${file}: ${claimed}`);
-  }
-}
-
-// [file, regex] — the route-suite number, anchored separately so the two suites
-// cannot silently borrow each other's total.
+// The route-suite number, anchored separately so the two suites cannot silently
+// borrow each other's total.
 const routeAnchors = [
   ['README.md', /\+ (\d+) route-level checks/],
   ['README.zh.md', /路由回归（(\d+) 项路由断言）/],
   ['ARCHITECTURE.md', /路由信任边界回归（(\d+) 断言/],
-  ['docs/memory/handoff.md', /路由信任边界回归（(\d+) 项断言/],
+  ['docs/handoff.md', /路由信任边界回归（(\d+) 项断言/],
 ];
 
 const authAnchors = [
@@ -119,59 +137,12 @@ const proxyAnchors = [
   ['README.zh.md', /侧栏反代回归（(\d+) 项）/],
 ];
 
-for (const [file, re] of routeAnchors) {
-  const text = read(file);
-  const m = text.match(re);
-  if (!m) {
-    fail(`${file}: route anchor not found`);
-    continue;
-  }
-  const claimed = Number(m[1]);
-  if (claimed !== actualRoutes) {
-    fail(`${file}: claims ${claimed} route checks, actual ${actualRoutes}`);
-  } else {
-    console.log(`OK    ${file}: ${claimed} route checks`);
-  }
-}
-
-for (const [file, re] of authAnchors) {
-  const text = read(file);
-  const m = text.match(re);
-  if (!m) {
-    fail(`${file}: auth anchor not found`);
-    continue;
-  }
-  // The handshake suite only runs where dsh is installed; a skipped suite cannot
-  // verify its documented count, so the anchors are reported (not compared)
-  // rather than failing the whole guard on CI.
-  if (actualAuth === null) {
-    console.log(`SKIP  ${file}: claims ${Number(m[1])} auth checks (suite skipped locally)`);
-    continue;
-  }
-  const claimed = Number(m[1]);
-  if (claimed !== actualAuth) {
-    fail(`${file}: claims ${claimed} auth checks, actual ${actualAuth}`);
-  } else {
-    console.log(`OK    ${file}: ${claimed} auth checks`);
-  }
-}
-
-for (const [file, re] of proxyAnchors) {
-  const text = read(file);
-  const m = text.match(re);
-  if (!m) {
-    fail(`${file}: proxy anchor not found`);
-    continue;
-  }
-  const claimed = Number(m[1]);
-  if (claimed !== actualProxy) {
-    fail(`${file}: claims ${claimed} proxy checks, actual ${actualProxy}`);
-  } else {
-    console.log(`OK    ${file}: ${claimed} proxy checks`);
-  }
-}
+compareAnchors(anchors, actual, { what: '' });
+compareAnchors(routeAnchors, actualRoutes, { label: 'route anchor', what: 'route checks' });
+compareAnchors(authAnchors, actualAuth, { label: 'auth anchor', what: 'auth checks' });
+compareAnchors(proxyAnchors, actualProxy, { label: 'proxy anchor', what: 'proxy checks' });
 
 if (ok) {
-  const authText = actualAuth === null ? `${authAnchors.length} auth anchors skipped (no local dsh)` : `${actualAuth} auth`;
+  const authText = actualAuth === null ? `${authAnchors.length} auth anchors skipped (suite did not run here)` : `${actualAuth} auth`;
   console.log(`doc-consistency: all ${anchors.length + routeAnchors.length + proxyAnchors.length} comparable anchors match (${actual} memory + ${actualRoutes} route + ${actualProxy} proxy + ${authText})`);
 }

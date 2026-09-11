@@ -44,28 +44,42 @@ const fail = (message) => {
   console.error('FAIL  ' + message);
 };
 
-/** Extract the `new Function(...)(...)` call of the memory-admin loader. */
-function loaderCall() {
-  const anchor = template.indexOf("const source = EMBEDDED_PRESET['host-memory-admin.mjs'];");
+/**
+ * Extract the `new Function(...)(...)` call of the memory-admin loader.
+ *
+ * `text` is a parameter (defaulting to the real template) so the self-test at
+ * the bottom can run the SAME extraction over a synthetic template.
+ *
+ * Returns `fnAt`: the offset of that `new Function(` call. It MUST be returned
+ * — see the `fnAt` note further down.
+ */
+function loaderCall(text = template) {
+  const anchor = text.indexOf("const source = EMBEDDED_PRESET['host-memory-admin.mjs'];");
   if (anchor < 0) throw new Error('memory-admin loader not found in the template');
-  const at = template.indexOf('new Function(', anchor);
+  const at = text.indexOf('new Function(', anchor);
   if (at < 0) throw new Error('new Function call not found after the loader anchor');
-  const open = template.indexOf('(', at);
+  const open = text.indexOf('(', at);
   let depth = 0;
   let close = -1;
-  for (let i = open; i < template.length; i += 1) {
-    if (template[i] === '(') depth += 1;
-    else if (template[i] === ')') {
+  for (let i = open; i < text.length; i += 1) {
+    if (text[i] === '(') depth += 1;
+    else if (text[i] === ')') {
       depth -= 1;
       if (depth === 0) { close = i; break; }
     }
   }
-  const params = template.slice(open + 1, close).split(',').map((p) => p.trim().replace(/^'|'$/g, '')).filter((p) => p !== '' && p !== 'body');
+  const params = text.slice(open + 1, close).split(',').map((p) => p.trim().replace(/^'|'$/g, '')).filter((p) => p !== '' && p !== 'body');
   // The argument list follows: `(` … `)`
-  const argOpen = template.indexOf('(', close);
-  const argClose = template.indexOf(')', argOpen);
-  const args = template.slice(argOpen + 1, argClose).split(',').map((a) => a.trim()).filter(Boolean);
-  return { params, args, fnAt };
+  const argOpen = text.indexOf('(', close);
+  const argClose = text.indexOf(')', argOpen);
+  const args = text.slice(argOpen + 1, argClose).split(',').map((a) => a.trim()).filter(Boolean);
+  // `fnAt` MUST be `at`. This read `fnAt` — a module-level `let` that is still
+  // `undefined` at this point — so `lastIndexOf(marker, undefined)` searched
+  // from the END of the template and the guard silently validated whatever
+  // allowlist happened to come last. It was correct only because the
+  // memory-admin loader is currently the last one (review P3, 2026-09-11). The
+  // self-test below fails if this ever regresses.
+  return { params, args, fnAt: at };
 }
 
 /**
@@ -75,11 +89,11 @@ function loaderCall() {
  * call that receives it, and the hook-frontmatter loader above has its own
  * smaller allowlist — so anchor on the nearest one preceding this call.
  */
-function loaderAllowlist(fnAt) {
+function loaderAllowlist(fnAt, text = template) {
   const marker = "\\nreturn { ";
-  const at = template.lastIndexOf(marker, fnAt);
+  const at = text.lastIndexOf(marker, fnAt);
   if (at < 0) throw new Error('loader return allowlist not found in the template');
-  const end = template.indexOf('};', at);
+  const end = text.indexOf('};', at);
   if (end < 0) throw new Error('loader return allowlist is unterminated');
   return template.slice(at + marker.length, end)
     .split(',')
@@ -155,6 +169,51 @@ const undefinedExports = allowlist.filter((name) => MEMORY_ADMIN[name] === undef
 if (undefinedExports.length > 0) fail(`allowlist names that the module does not define: ${undefinedExports.join(', ')}`);
 else console.log(`all ${allowlist.length} allowlisted symbols resolve`);
 
+// ── the OTHER loader: dsh/preset/hook-frontmatter.mjs ───────────────────────
+// The template evaluates that file the same way but with a smaller allowlist,
+// and it does it with a bare regex on the export statement:
+//   source.replace(/export\s*\{[^}]*\};?\s*$/, '') + '\nreturn { … };'
+// That module was rewritten on 2026-09-11 (the frontmatter delimiter rule moved
+// into it, so its export list went from 3 names to 9 and became multi-line).
+// Nothing checked the transform then, so a broken hook parser — the thing the
+// memory panel reads every card's `hook:` block with — would have shipped
+// silently. It is checked now.
+{
+  const hookAllowlist = [...template.matchAll(/return \{ ([^}]*?) \};/g)]
+    .map((m) => m[1].split(',').map((s) => s.trim()).filter(Boolean))
+    .find((names) => names.includes('parseHookFrontmatter'));
+  if (hookAllowlist === undefined) {
+    fail('the template has no hook-frontmatter loader allowlist (looked for `return { … parseHookFrontmatter … };`)');
+  } else {
+    const hookSource = readFileSync(join(repo, 'dsh', 'preset', 'hook-frontmatter.mjs'), 'utf8');
+    const stripped = hookSource.replace(/export\s*\{[^}]*\};?\s*$/, '');
+    if (/\bexport\b/.test(stripped)) {
+      fail('the hook-frontmatter export statement no longer sits at the END of the file, so the loader\'s `replace(/export\\s*\\{[^}]*\\};?\\s*$/)` cannot strip it');
+    } else {
+      let HF = null;
+      try {
+        HF = new Function(`${stripped}\nreturn { ${hookAllowlist.join(', ')} };`)();
+      } catch (error) {
+        fail(`hook-frontmatter does not evaluate under the loader: ${String(error)}`);
+      }
+      if (HF !== null) {
+        const hookMissing = hookAllowlist.filter((name) => HF[name] === undefined);
+        if (hookMissing.length > 0) fail(`hook allowlist names the module does not define: ${hookMissing.join(', ')}`);
+        const hookConsumed = [...new Set([...template.matchAll(/HOOK_FRONTMATTER\.(\w+)/g)].map((m) => m[1]))];
+        const uncovered = hookConsumed.filter((name) => !hookAllowlist.includes(name));
+        if (uncovered.length > 0) fail(`the hook allowlist is missing template-consumed symbols: ${uncovered.join(', ')}`);
+        // Behavioural smoke: the whole point of the module.
+        const parsed = HF.parseHookFrontmatter?.('---\ntitle: t\nhook:\n  operator: probability\n  uses: 3\n---\n');
+        if (parsed === null || parsed === undefined || parsed.operator !== 'probability' || parsed.uses !== '3') {
+          fail(`the embedded hook parser no longer parses a hook block (got ${JSON.stringify(parsed)})`);
+        } else {
+          console.log(`hook-frontmatter loader: ok (${hookAllowlist.length} allowlisted, ${hookConsumed.length} consumed, parses a hook block)`);
+        }
+      }
+    }
+  }
+}
+
 // ── self-test ───────────────────────────────────────────────────────────────
 // The extraction above must actually be load-bearing: if the template drops a
 // symbol from its allowlist, this guard has to notice. Simulate the drop in
@@ -167,6 +226,34 @@ else console.log(`all ${allowlist.length} allowlisted symbols resolve`);
   const detected = consumed.some((name) => !mutated.includes(name));
   if (!detected) fail(`self-test: dropping "${victim}" from the allowlist would NOT be detected`);
   else console.log(`self-test: dropping any consumed symbol (e.g. "${victim}") is detected`);
+}
+
+// The ANCHOR of the extraction is also load-bearing, and it used to be wrong:
+// `loaderCall()` returned an unassigned module-level `fnAt`, so
+// `lastIndexOf(marker, undefined)` searched from the END of the template and the
+// guard validated whichever allowlist came LAST — correct only because the
+// memory-admin loader currently is the last one (review P3). Re-run the real
+// extraction over a synthetic template that appends a SECOND loader: the
+// allowlist it finds must still be the memory-admin one.
+{
+  const synthetic = `${template}\nconst SYNTHETIC = new Function('x', '\\nreturn { syntheticOnlyAllowlistName };');\n`;
+  try {
+    const { fnAt: synAt } = loaderCall(synthetic);
+    if (!Number.isInteger(synAt)) {
+      // The `fnAt` bug, stated as its own failure: an unassigned `fnAt` makes
+      // `lastIndexOf(marker, undefined)` search from the END of the template.
+      fail(`self-test: loaderCall() returned a non-integer fnAt (${JSON.stringify(synAt)}) — the allowlist anchor would search from the end of the template (the \`fnAt\` bug is back)`);
+    } else {
+      const synList = loaderAllowlist(synAt, synthetic);
+      if (!synList.includes('probeService') || synList.includes('syntheticOnlyAllowlistName')) {
+        fail(`self-test: the allowlist anchor is not the nearest PRECEDING loader — it resolved to [${synList.join(', ')}] instead of the memory-admin allowlist (the \`fnAt\` bug is back)`);
+      } else {
+        console.log('self-test: the allowlist anchor is the nearest preceding loader, not the last one');
+      }
+    }
+  } catch (error) {
+    fail(`self-test: extraction threw on a template with two loaders: ${String(error.message ?? error)}`);
+  }
 }
 
 const vault = process.argv[2];
