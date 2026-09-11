@@ -73,7 +73,12 @@ jobs:
       - name: Publish (trusted publishing, no long-lived token)
         id: publish
         continue-on-error: true
-        run: npm publish --provenance 2>&1 | tee publish.log
+        run: |
+          # `set -o pipefail` is load-bearing: without it the pipeline's status is
+          # tee's (0), so a failed publish reported SUCCESS and the failure
+          # summary below never ran.
+          set -o pipefail
+          npm publish --provenance 2>&1 | tee publish.log
       # Job summaries are readable in the run page without repo admin rights, so
       # the registry's own error text (404 = no trusted publisher configured,
       # 401 = OIDC not accepted, E409 = that version already exists) lands where
