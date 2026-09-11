@@ -90,6 +90,31 @@ if (raw === null) {
   }
 }
 
+// ── the two changelogs must stay two DIFFERENT things ───────────────────────
+// `CHANGELOG.md`       = per-version release summary (what a USER gets).
+// `docs/changelog.md`  = the maintenance ledger (WHY it changed, how it was
+//                        found, what went wrong).
+//
+// They overlap in SUBJECT by design — two layers, as the maintenance guide
+// prescribes — but never in STRUCTURE. The rot to prevent is the ledger growing
+// per-version headings and quietly becoming a second release changelog, which
+// would bury the "why" it exists for. Both files must also point at each other:
+// a reader who finds only one layer never learns the other exists.
+{
+  const releaseNotes = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+  const ledger = readFileSync(join(root, "docs", "changelog.md"), "utf8");
+  const versionHeading = /^## \[\d+\.\d+\.\d+\]/m.exec(ledger);
+  if (versionHeading !== null) {
+    fail(`docs/changelog.md has a version heading (${versionHeading[0]}) — release notes belong in CHANGELOG.md; the ledger is organised by dated topic`);
+  }
+  if (!/docs\/changelog\.md/.test(releaseNotes)) {
+    fail("CHANGELOG.md must point at docs/changelog.md for the why — otherwise a reader of the release summary never learns the ledger exists");
+  }
+  if (!/CHANGELOG\.md/.test(ledger)) {
+    fail("docs/changelog.md must point at CHANGELOG.md for the release summary");
+  }
+}
+
 if (failed > 0) {
   console.log(`\n${failed} semantic-constant mismatch(es). Prose numbers must come from the code, not from memory.`);
   process.exit(1);
