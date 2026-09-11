@@ -71,4 +71,27 @@ jobs:
           echo -n "whoami: "
           npm whoami --registry=https://registry.npmjs.org || echo "(no token — expected: publishing goes through trusted publishing)"
       - name: Publish (trusted publishing, no long-lived token)
-        run: npm publish --provenance
+        id: publish
+        continue-on-error: true
+        run: npm publish --provenance 2>&1 | tee publish.log
+      # Job summaries are readable in the run page without repo admin rights, so
+      # the registry's own error text (404 = no trusted publisher configured,
+      # 401 = OIDC not accepted, E409 = that version already exists) lands where
+      # whoever re-runs the job can see it. The job still fails on purpose.
+      - name: Publish failure summary
+        if: steps.publish.outcome == 'failure'
+        run: |
+          {
+            echo "## npm publish failed"
+            echo ""
+            echo "Registry error (last 30 lines of publish.log):"
+            echo ""
+            echo '```'
+            tail -30 publish.log || true
+            echo '```'
+            echo ""
+            echo "Checklist: (1) Trusted Publisher configured on npmjs.com for \`dsh-math-memory\`"
+            echo "→ GitHub Actions, repo \`maple110011/dsh-obsidian-math\`, workflow filename \`npm-publish.yml\`;"
+            echo "(2) \`npm --version\` above is >= 11.5.1; (3) the tag equals \`package.json\` version."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
