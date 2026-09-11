@@ -17,8 +17,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildRecallDoc, rankRecallDocuments } from "../../dsh/preset/note-tools.mjs";
 
-const vault = process.env.DSH_OBSIDIAN_VAULT || process.env.DSH_WORKSPACE_ROOT || "";
-if (!vault) { console.error("engine-probe: 需要 DSH_OBSIDIAN_VAULT 或 DSH_WORKSPACE_ROOT 指定 vault 路径"); process.exit(2); }
+// Precedence must match the PRODUCT (`dsh/preset/note-tools.mjs` uses
+// `DSH_WORKSPACE_ROOT ?? DSH_OBSIDIAN_VAULT`). This probe previously read them in
+// the opposite order, so with both set to different vaults it scored a vault the
+// engine would never read — a green probe saying nothing about the real one.
+const vault = process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT ?? "";
+if (!vault) { console.error("engine-probe: 需要 DSH_WORKSPACE_ROOT 或 DSH_OBSIDIAN_VAULT 指定 vault 路径"); process.exit(2); }
 const exclude = new Set([".obsidian", ".trash", ".git", "node_modules", "deploy-backup-20260816"]);
 const files = [];
 const walk = (dir, rel) => {

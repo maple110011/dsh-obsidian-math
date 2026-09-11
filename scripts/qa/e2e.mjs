@@ -28,10 +28,13 @@ const CASES_PATH = opt("--cases", new URL("./cases.json", import.meta.url).pathn
 const PORT = Number(opt("--port", "3191"));
 const BASE = `http://127.0.0.1:${PORT}`;
 const HOME = process.env.DSH_HOME;
-const VAULT = process.env.DSH_OBSIDIAN_VAULT || process.env.DSH_WORKSPACE_ROOT;
+// Same precedence as the product (`DSH_WORKSPACE_ROOT ?? DSH_OBSIDIAN_VAULT`) —
+// see the note in engine-probe.mjs. Reversed here, the E2E could drive a vault
+// the engine never reads.
+const VAULT = process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT;
 const DSH_BIN = process.env.DSH_BIN;
 if (!HOME || !VAULT || !DSH_BIN) {
-  console.error("e2e: 需要 DSH_HOME、DSH_OBSIDIAN_VAULT（或 DSH_WORKSPACE_ROOT）、DSH_BIN 三个环境变量");
+  console.error("e2e: 需要 DSH_HOME、DSH_WORKSPACE_ROOT（或 DSH_OBSIDIAN_VAULT）、DSH_BIN 三个环境变量");
   process.exit(2);
 }
 const cases = JSON.parse(readFileSync(CASES_PATH, "utf8"));
