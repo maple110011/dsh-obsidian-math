@@ -25,7 +25,7 @@ updated: 2026-09-10
 两点补充：
 
 1. **`structure` 是后加的字段**：如果你的 `capture-policy.md` 里没有这一行，行为等同于 `auto`（与 0.7.x 一致，升级不会让你被多问）。
-2. **事件层（`memory/episodes/`）不受本表管辖**：整场对话的原文由确定性捕获写入，开关是 `.deepseek/config.md` 的 `sessionCapture`（默认开）。它的定位是「原始证据」，不是模型决定要不要记的内容。
+2. **事件层（`memory/episodes/`）不受本表管辖**：整场对话的原文由确定性捕获写入，开关是 `.deepseek/config.md` 的 `sessionCapture`（**默认关**；需要时在插件设置里开启）。它的定位是「原始证据」，不是模型决定要不要记的内容。
 
 修改方式：编辑上方 frontmatter 的四个字段（`auto` / `ask` / `off`），并更新 `updated` 日期。
 例如：不希望任何自动写入打扰时把 `idea`/`fact`/`preference` 全改为 `ask`；只想被问、完全手动时全改为 `off`；嫌索引类写入太啰嗦时把 `structure` 也改成 `ask`。

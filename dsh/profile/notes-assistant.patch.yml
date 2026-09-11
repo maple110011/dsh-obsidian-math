@@ -26,7 +26,7 @@
 # "启用皮肤中心" setting: when enabled, the plugin appends an extra `insert:`
 # block for those two packages to THIS file at runtime (and only when a web
 # profile exists to mirror them from). This base file mounts neither, so the
-# default boot stays independent of the dsh-web-ui plugin family.
+# default boot stays independent of the @linxin666 UI plugin family.
 #
 # dsh 0.1.5 / dsh-web-all 0.3.20: the aggregate web bundle now mounts its own
 # `web-ui-skin-center` row, so on a machine carrying the aggregate this optional
