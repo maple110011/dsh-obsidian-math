@@ -85,10 +85,11 @@ git push origin 0.7.6  # ← 这一步才会真正产出 Release
 | `release.yml` | 推 `x.y.z` tag | 版本一致性（含 tag）→ 重建 + diff 门禁 → `npm test` → 从 CHANGELOG 抽取**该版本**段落当 Release notes → 上传 `main.js` / `manifest.json` / `styles.css` / `versions.json` |
 | `npm-publish.yml` | 推 `x.y.z` tag | 同上校验 → `npm publish --provenance`（OIDC，无 token）→ **按 registry 实际状态判定成败**（public 即成功并关闭历史失败 issue；missing 则打印 npm 原话 + OIDC claims、开 issue、判失败） |
 
-**发布是否成功只由 registry 状态决定，不看 npm 的退出码**——两种「退出码在撒谎」的情况都遇到过：
+**发布是否成功只由 registry 状态决定，不看 npm 的退出码**——「退出码/流水线在撒谎」的情况已经遇到过三种：
 
 - **退出码 0 ≠ 已发布**：分阶段发布（staged publishing）上传后等人用 2FA 批准，此时公开 registry 上什么都没有，而 pipeline 会全绿（0.7.5 就出现过一次「全绿但 npm 上没有」）。
 - **退出码非 0 ≠ 未发布**：重复推送同一个 tag 时 npm 报 `You cannot publish over the previously published versions`，而该版本其实早就在了（仓库为修发布链路反复移动过 0.7.5 tag）。现在这种情况算成功。
+- **⚠️ 第三种：registry 的可见性有延迟（0.7.6 实测）**。`Publish` 步 success、日志里已有 `+ dsh-math-memory@0.7.6`，但下一步 `Confirm the registry state` 在 60 秒内查到的仍是 missing ⇒ 开 issue + 判红。实测 **约 60–80 秒**后 registry 才出现该版本。**处置：等一两分钟再 `Re-run failed jobs`**（`POST /actions/runs/<id>/rerun-failed-jobs`），第二次即可确认并自动关 issue。**不要据此改代码或版本号**。
 
 历史教训（已修，勿回退）：
 

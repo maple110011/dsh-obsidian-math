@@ -36,6 +36,12 @@ new session failed: SessionCreateError: session create failed: agent-preset/inva
 
 与 2026-09-11 真实 Obsidian 的读数（13 102 元素、410 次重算 22.76 s = **55 ms/op**）同一量级——真实的会话节点比注入的纯 div 还贵。⇒ 用户在"关掉其他程序 + 重启 Obsidian"后连续 2 小时流畅，是因为**换了新会话**（文档从 13k 节点回到几百），不是"关程序"本身；关闭其他程序只是让内存压力这个**放大器**消失，而已经变大的文档不会因此变小（所以当时"没有马上恢复"）。详见 `handoff.md` 坑 71 与 `docs/memory/sidebar-performance.md` §0.3。
 
+### 发布 0.7.6：又一条"红得没有道理"的 npm 流水线（坑 72）
+
+`git push origin main`（CI 双平台绿）→ `git push origin 0.7.6`。Release 一次成功（4 个资产、notes 正确取到 `## [0.7.6]` 段）。npm 那条**判红，但包其实发出去了**：`Publish (trusted publishing)` 步 **success**、日志有 `+ dsh-math-memory@0.7.6` 与 provenance 上链记录，可紧接着的 `Confirm the registry state` 在 **60 秒**内查到的还是 missing ⇒ 开了 issue #3 并 fail job。
+
+实测 **约 60–80 秒后** registry 才出现 0.7.6（`latest` 才翻过去）。**处置 = Re-run failed jobs**（`POST /actions/runs/<id>/rerun-failed-jobs`）：第二次跑确认到版本、job 转绿、issue #3 自动关闭。**这条红不需要改任何代码**。与坑 58 的两种情形同族但方向相反：那两条讲"退出码在撒谎"，这条讲"**registry 的可见性有延迟，查早了就是假红**"。
+
 ## 2026-09 · 新守卫的第一次 CI 运行就红：换行，以及"本地全绿"是假的
 
 用户报「npm test 好像有一个出问题了」。是 GitHub Actions 的 `CI`（run 65，我推的 `3ce0835`）：**上一次 run 64 是绿的**——因为出问题的这道门禁（`check-client-bundle.mjs`，客户端产物新鲜度）正是这 22 个提交里新加的，**它从未在 CI 上通过过**，我这一推才把它暴露出来。GitHub API 确认：`test (windows-latest)` failure、`test (ubuntu-latest)` success（含 ubuntu 的 `npm test` 步骤）。

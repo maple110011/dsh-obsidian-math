@@ -181,6 +181,8 @@
     对照 2026-09-11 在**真实 Obsidian** 里的读数：13 102 元素时 410 次重算共 **22.76 s = 55 ms/op**（比注入的纯 div 还贵，因为真实会话节点带着自己的样式与合成层）。三条推论：① 卡顿的主成本是 **RecalcStyle/布局**，与 dsh 前端把侧栏宽度做成 CSS grid 轨道有关（上游）；② 插件侧能做的只有"别让这份文档继续长大"（皮肤脚本减速/停用已做，见 §0 原因 1）；③ 所以"重开会话 / 少留超长会话"是当前**唯一用户可用的缓解手段**。
     - **为什么"关掉其他程序后没有马上恢复"**：内存压力只是放大器，不是主因。关掉程序后 ① Windows 回收工作集/页文件是滞后的；② 那个已经很大的文档仍在同一个渲染进程里，重算成本不会因为别的程序退出而下降——**要恢复得让 dsh 侧那份文档变小（切换/重开会话、重载面板、重启 Obsidian）**。用户在"关掉其他程序 + 重启 Obsidian"之后连续 2 小时流畅，正是因为**换了新会话、少了 13k 节点**。
     - 复现：`node scripts/qa/sidebar-newchat-probe.mjs --vault=<vault> --bloat=3000`。
+72. **★ npm 发布有一条"publish 成功了但 registry 还没可见"的竞态，会被判成失败**（2026-09-14 发 0.7.6 实测）。整条流水线的每一步都是绿的——`Publish (trusted publishing)` 步 **success**、日志里已有 `+ dsh-math-memory@0.7.6` 与 `Provenance statement published to transparency log`——但紧跟着的 `Confirm the registry state` 在 **60 秒**内查到 registry 上 still missing，于是走失败分支：开 issue「npm publish failed for 0.7.6」并把 job 判红。**实测约 60–80 秒后** `https://registry.npmjs.org/dsh-math-memory` 才出现 0.7.6（`latest` 也才翻过去）。**处置：Re-run failed jobs**（`POST /actions/runs/<id>/rerun-failed-jobs`），第二次跑该步就能确认到 —— 转绿并自动 close 掉那个 issue。**不要因为这条红去改代码或改版本号**。这与坑 58 记的两种"退出码在撒谎"是同一族但方向相反：那条讲"退出码 0 ≠ 已发布"，这条讲"**registry 的可见性有延迟，查早了就是假红**"；`docs/release.md` §2 的"判断成败一律看 registry 实际状态"要加一条限定——**看 registry 也要给它一两分钟**。
+    - 顺带核实了本次 claims 与 0.7.5 一致（`job_workflow_ref` 带 `@refs/tags/0.7.6`、无 `environment`、`aud = npm:registry.npmjs.org`），所以 trusted publisher 配置无需改动。
 
 
 ## 5. 用户决策记录（不要推翻）
@@ -248,7 +250,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **记忆引擎去重（P0-3 的目标态）** | `dsh/preset/math-memory.mjs` 与 `dsh/host/memory-admin.mjs` 仍有 22 个同名符号、其中 6 个已实质偏离（`check-engine-sync.mjs` 已逐条登记理由）。彻底做法是把共享引擎抽成一个模块、两边各自薄封装——现在至少有守卫，不会再静默漂移 | 中 |
 | **大函数拆分** | `buildAuditReport`(582 行) / `MemoryView`(537) / `apply`(471) / `DshWebProxy`(387) / `DshObsidianSettingTab`(298)（审查报告 P1-5） | 低 |
 | **可溯源（source 链 + 引用次数）** | `control-panel.md` §2.3 要求的「每条记忆显示 source 证据链与引用次数」**仍未交付**：`collectMemoryState` 至今不解析 `source`，两个面板都没有 | 中 |
-| **发布 0.7.5（推 tag）** | 版本号已对齐、守卫已就位、`docs/release.md` 已写；**推 tag 需要用户口令**，推完才会产出 Release 与 npm 包 | 高（发布前） |
+| **发布 0.7.5（推 tag）** | ✅ 已发布（2026-09-11 推 tag `0.7.5`）。**发布 0.7.6（2026-09-14）也已发布**：`git push origin main` + `git push origin 0.7.6` 后，CI 双平台绿 → Release `0.7.6`（4 个资产）→ `dsh-math-memory@0.7.6` 上 npm（latest，带 provenance）。⚠️ 本次又踩到"**publish 步成功但 registry 还没可见**"：`Confirm the registry state` 在 60 s 内看到 missing → 开 issue #3 并判失败；实测约 **60–80 秒**后 registry 才出现 0.7.6，随后 **Re-run failed jobs** 即转绿并自动关掉 issue #3。⇒ **看到 npm 那条红，先查 registry 实际状态、等一两分钟再 re-run，不要改代码**（已记入 `docs/release.md` §2 与坑 72） | 完成 |
 | **persona / AGENTS.md 语义解耦** | persona 仍自称「Obsidian …」，改「工作区」措辞（语义改动，需拍板） | 中 |
 | **侧栏性能：宿主侧已量（原"空白"已补）** | ✅ 2026-09-11 用 `scripts/qa/sidebar-attach-probe.mjs`（附着到真实 Obsidian：`--remote-debugging-port`，**只读**观察用户手动点击）测出结论：**同一 90 秒内宿主 0 帧 >33ms、最差 18 ms、LoAF 0、`RecalcStyle` 0.067 s；iframe 63 帧 >33ms、最差 2183 ms、`RecalcStyle` 22.76 s（410 次）**。⇒ 卡顿全在 dsh 侧，主成本是**布局/重算**（13 102 元素文档上 55 ms/次），不是脚本空转；原因 3/4 属廉价保险。**剩余唯一 A/B**：关掉「侧栏加载皮肤动态装饰」复测，以分离皮肤脚本与上游布局的贡献（见 `sidebar-performance.md` §0.2/§9） | 中（A/B 待做） |
 | **命名空间隔离** | `.deepseek` → 可配置 `memoryRoot`（多套记忆共存时再做，需迁移） | 低（延后） |
