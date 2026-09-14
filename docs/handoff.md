@@ -200,6 +200,23 @@
     - **规则**：任何会调 `session/create`（或点「新建会话」）的探针，跑完必须自己摘登记项，并把这一步做成断言（"残留在 json 里的条目数 === 0"），否则它会静默污染用户环境。**探针的默认工作区应该是固定路径 + 用完即删**，不要每次 `mkdtempSync` 一个新目录。
     - **顺带一条**：如果探针在 3180 上跑，它点的「新建会话」会在**用户真实 vault 的工作区**里建一个空白会话（我第一次就这么干了，两个空会话已删）。用 `--entry` 打用户实例时要接受这一点，或者只读不点。
 
+75. **★ 工具返回值多一个字段 = 整次调用失败（dsh 的严格校验 + `additionalProperties: false`）**（2026-09-14，用户实测：模型说"note_recall 返回结构不合 schema，我改用 note_search/grep"）。
+    - **机制**：dsh ≥0.1.5 的 `ToolRuntime` 对**成功返回值**也做 `validateJsonSchemaValue(tool.output.schema, value)`，而我们的 output schema 一律 `additionalProperties: false`。于是"**多返回**一个未声明字段"就是失败（不是"少返回"）。
+    - **实测到的三处**：`rankRecallDocuments` 的 match 对象带 `hook` / `boundary` 且被原样返回给 `note_recall`；`note_recall` / `note_strategy` 的 `excluded` 项曾经带 `kind` / `score`；`note_create` 返回 `{ path, operation }` 时把键写成 `rel`（schema 里没有 `rel`）。**`note_strategy` 还少一个必填字段**（schema 声明了 `title`，返回里没有）。
+    - **修法**：在**工具边界**收窄（管线内部可以继续带 rich 值给探针用），并补齐声明。`rankRecallDocuments` 的 matches 现在就在管线里收窄，因为它同时是探针与工具的输入。
+    - **守卫**：`scripts/test-tool-schemas.mjs`（静态"声明了但没出现"+ 用 dsh 真校验器跑 fixture，含 `--mutate` 变异验证）、`scripts/test-tool-shape.mjs`（**真调管线**再递归比对声明与实际，并留一条"直通值必须被判违规"的反证）。
+    - **设计教训**：静态文本匹配**不能**用来找"多字段"——第一版用"逗号/冒号切 token"读键，把 `path: a ?? "all"` 里的 `:` 当键分隔符，报出 `all`/`rel`/`null` 四个**假阳性**。**假阳性比不检查更糟**（教人忽略这个套件）。静态只报"缺"，"多"交给真值测试。
+76. **★ `entry.doc.X` 的形状错误：`note_recall` 只要遇到一张"适用边界命中查询"的卡就整体抛 TypeError**（2026-09-14，同一轮修掉）。
+    - `rankRecallDocuments` 的 `boundaryHitsOf(entry)` 原先写 `entry.doc.boundary`，而 `entry` **本身就是** scored 项（`{ doc, i, score, operatorMatch }`）⇒ `entry.doc` 是 `undefined`，读 `.boundary` 直接抛。`excluded` 的 map 又写 `entry.doc.rel`，同一处错误。
+    - **为什么一直没被发现**：记忆回归（240 项）测的是**打分与排名**，不读 `excluded`；探针也不覆盖"边界命中"这条分支。**这条分支没有任何测试走过**——正是坑 68 那族（"没有用例走到的分支，不算被测过"）。
+    - **触发条件**：库里任何一张带 `not_applicable_when` 的卡，其边界短语出现在查询里 → 整个 `note_recall` 不可用（模型侧只能退回 grep，用户看到的就是这句话）。
+    - **修法**：`excluded.push({ doc: entry.doc, hits })` + map 用 `doc.*`，返回的四个键与 schema 逐字一致。守卫见坑 75 的两个套件（fixture 里**故意**放一张带边界的卡）。
+77. **★ 链接跳转服务的端口与令牌必须跨加载稳定**（2026-09-14，用户实测"回复里的双链点了没反应"）。
+    - **机制**：模型回复里的笔记链接是 `http://127.0.0.1:<LinkServer 端口>/open?path=…&t=<令牌>`，而这个地址是**写进系统提示**的（`DSH_MATH_MEMORY_LINK_URL` / `DSH_MATH_MEMORY_FEEDBACK_TOKEN`），提示又只在 **dsh 子进程启动时**生成一次。原先端口是 `listen(0)`（每次随机）、令牌每次插件加载重新 `randomBytes` ⇒ **插件一重载，此前所有回复里的链接立刻失效**：端口没人听（连接被拒），或者令牌对不上（403）。
+    - **实测证据**：会话日志里模型生成的链接指向 `127.0.0.1:52269`，`netstat` 显示该端口早已不存在；同一时刻**任何**回环端口上都没有 LinkServer 在听。
+    - **修法**：端口与令牌进 `data.json`（`linkServerPort` / `linkServerToken`），启动时复用；端口被占则回落随机端口**并写一行日志**（"链接又变了"必须有痕迹，否则下次还得从零排查）。守卫 `scripts/test-link-server.mjs`（12 项：固定端口、重载后端口/令牌不变、占用时回落不抛、两个端点的令牌与路径穿越判定）。
+    - **仍未做**：把链接模板改成**运行时**注入（`ctx.systemPrompt.context()`），这样即使 LinkServer 换端口，新回复也总带当前地址；以及 3180 代理在"服务还活着但代理没绑上"时能自愈（本次排查中我把代理 reload 成了无监听状态，只能靠 reload 插件恢复）。
+
 ## 5. 用户决策记录（不要推翻）
 
 - **单仓**（不拆双 git 仓库），两个产物独立分发（npm 包 + Obsidian 插件）+ 仓库内文献库/面板子系统。

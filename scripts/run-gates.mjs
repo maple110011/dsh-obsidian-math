@@ -61,6 +61,13 @@ const GATES = [
   // 「新建会话」真的能建出来吗：preset 字段漂移（persona 的 text→prefix）会让每次建会话
   // 都以 HTTP 200 + ok:false 失败，而 UI 只写一行 console.warn ——零 token，需要本机 dsh，
   // 否则按设计 SKIP（见 scripts/test-agent-preset.mjs 与 handoff.md 坑 70）。
+  // 工具 output schema 的契约：dsh ≥0.1.5 严格校验成功返回值，而我们的 schema 是
+  // `additionalProperties: false` ⇒ 多返回一个字段 = 每次调用都失败（2026-09-14 真实故障）。
+  { name: 'test: tool output schemas vs dsh validator', args: ['scripts/test-tool-schemas.mjs'] },
+  { name: 'test: tool output shape (real pipeline)', args: ['scripts/test-tool-shape.mjs'] },
+  // 链接跳转服务的端口/令牌必须跨插件加载稳定：否则旧回复里的笔记链接会静默失效
+  // （端口没人听 / 令牌 403）。2026-09-14 用户实测的"双链点了没反应"就是这个。
+  { name: 'test: link server port+token stability', args: ['scripts/test-link-server.mjs'] },
   { name: 'test: agent preset mounts (real dsh, no tokens)', args: ['scripts/test-agent-preset.mjs'] }
 ];
 

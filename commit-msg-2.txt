@@ -1,0 +1,29 @@
+fix(tools,links): note_recall 的 schema/形状缺陷，以及链接服务端口令牌不稳定
+
+用户实测两问：① 模型说"note_recall 返回结构不合 schema，我改用 note_search/grep"；
+② "回复中的双链依旧无法跳转"。
+
+① 三个工具契约缺陷（其中一个把 note_recall 整个打死）
+- dsh ≥0.1.5 对**成功返回值**也做 validateJsonSchemaValue，而我们的 output schema 是
+  additionalProperties: false ⇒ 多一个字段就整次失败。
+- rankRecallDocuments 的 match 多带 hook/boundary 且被原样返回给 note_recall；
+  note_recall/note_strategy 的 excluded 多带 kind/score；note_create 的键 rel 不是
+  声明的 path；note_strategy 少返回必填的 title。
+- 更严重：boundaryHitsOf/excluded 写成 entry.doc.X，而 entry 本身就是 { doc, … }
+  ⇒ 只要有一张卡被适用边界排除，note_recall 直接抛 TypeError。这条分支零覆盖
+  （记忆回归只测打分与排名，从不读 excluded）。
+- 修法：在工具边界收窄返回值（管线内部保留 rich 值），补齐 title。
+- 新门禁：test-tool-schemas.mjs（静态"声明了却没出现" + dsh 真校验器 + --mutate）、
+  test-tool-shape.mjs（真调管线、递归比对、含"直通值必须被判违规"的反证）。
+- 教训：静态"切 token"读键会误报（把 `path: a ?? "all"` 的 `:` 当分隔符），
+  假阳性比不检查更糟 —— 静态只报"缺"，"多"交给真值测试。
+
+② 链接服务端口/令牌一重载就变
+- 回复里的链接是 http://127.0.0.1:<LinkServer 端口>/open?path=…&t=<令牌>，写进系统
+  提示；而提示只在 dsh 启动时生成。原先端口 listen(0) 随机、令牌每次加载重生成
+  ⇒ 插件一重载，此前所有链接失效（端口没人听 / 令牌 403）。
+- 实测：会话日志里模型生成的链接指向 127.0.0.1:52269，netstat 确认该端口已不存在。
+- 修法：端口与令牌进 data.json（linkServerPort 默认 39217 / linkServerToken），
+  启动复用；被占则回落随机端口并写日志。新门禁 test-link-server.mjs（12 项）。
+
+门禁 35 → 38（全绿）。main.js 已重建并 deploy-local 到本机 vault / .agent-presets。

@@ -151,7 +151,21 @@ const DEFAULT_SETTINGS = {
   // 实测它是侧栏卡顿的最大来源；关掉后装饰消失，但按钮/展开动画不再掉帧。
   // 默认 true = 保留装饰（用户可选更流畅的那一档）。
   sidebarSkinScripts: true,
-  memoryPanelUrl: 'http://127.0.0.1:3080/'
+  memoryPanelUrl: 'http://127.0.0.1:3080/',
+  // 链接跳转服务（LinkServer）的端口与 CSRF 令牌，**持久化**。
+  //
+  // WHY: 这两个值会被写进 agent 的系统提示（`DSH_MATH_MEMORY_LINK_URL` /
+  // `..._FEEDBACK_TOKEN`），而提示是在 **dsh 子进程启动时**生成的。原先端口是
+  // `listen(0)` 随机分配、令牌每次插件加载重新生成 ⇒ **插件一重载（更新/重开 Obsidian/
+  // 关开插件），此前所有回复里的笔记链接立刻失效**：端口没人听，或者令牌对不上 403。
+  // 用户侧看到的就是"回复里的双链点了没反应"（2026-09-14 实测：日志里模型生成的链接指向
+  // `127.0.0.1:52269`，而那个端口早已不存在）。
+  //
+  // 现在：端口固定（默认挑一个不常用的高位端口），令牌首次生成后存进 data.json，
+  // 之后每次启动复用 ⇒ 旧回复里的链接在插件重载后仍然有效；万一端口被占，回落随机端口
+  // 并写日志（宁可不稳定，也不能起不来）。
+  linkServerPort: 39217,
+  linkServerToken: ''
 };
 
 // ── small helpers ───────────────────────────────────────────────────────────
@@ -260,15 +274,42 @@ class LinkServer {
       }
     });
     try {
-      this.token = randomBytes(16).toString('hex');
+      // 令牌持久化：随机生成一次后存进 data.json 复用。理由见 DEFAULT_SETTINGS 里
+      // linkServerToken 的注释——它被钉进了 agent 的系统提示，换掉就等于让旧链接全部 403。
+      const saved = typeof this.plugin?.settings?.linkServerToken === 'string'
+        ? this.plugin.settings.linkServerToken.trim()
+        : '';
+      if (saved !== '') {
+        this.token = saved;
+      } else {
+        this.token = randomBytes(16).toString('hex');
+        if (this.plugin !== null && this.plugin !== undefined && this.plugin.settings !== undefined) {
+          this.plugin.settings.linkServerToken = this.token;
+          Promise.resolve(this.plugin.saveSettings?.()).catch(() => {});
+        }
+      }
     } catch {
       this.token = '';
     }
-    this.server.listen(0, '127.0.0.1', () => {
+    const wanted = Number(this.plugin?.settings?.linkServerPort ?? 0);
+    const onListening = () => {
       const address = this.server.address();
       this.port = typeof address === 'object' && address !== null ? address.port : 0;
-      this.plugin.service?.appendLog(`链接跳转服务已启动：http://127.0.0.1:${this.port}`);
+      this.plugin?.service?.appendLog(`链接跳转服务已启动：http://127.0.0.1:${this.port}`);
+    };
+    // 先试固定端口；EADDRINUSE 时才回落到 OS 分配，并明确记一行日志
+    // （"链接又变了"必须有痕迹可查，否则下次还会从零排查）。
+    let fellBack = false;
+    this.server.on('error', (error) => {
+      if (fellBack || wanted <= 0) {
+        this.plugin?.service?.appendLog(`链接跳转服务无法监听：${String(error)}`);
+        return;
+      }
+      fellBack = true;
+      this.plugin?.service?.appendLog(`链接跳转端口 ${wanted} 不可用（${String(error?.code ?? error)}），改用临时端口；本次启动之前生成的链接会失效。`);
+      try { this.server.listen(0, '127.0.0.1', onListening); } catch { /* ignore */ }
     });
+    this.server.listen(wanted > 0 && wanted < 65536 ? wanted : 0, '127.0.0.1', onListening);
   }
 
   /** One request: /feedback (memory mutation) or /open (note jump). */

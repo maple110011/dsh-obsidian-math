@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`note_recall` 会因返回值不合 schema 而整次失败**（模型侧表现为"工具侧报错，我改用 note_search/grep"）：dsh ≥0.1.5 会对**成功返回值**做严格校验，而本插件的工具 output schema 一律 `additionalProperties: false` —— 多返回一个未声明字段就是失败。已修三处：`note_recall` 的 match 多带 `hook`/`boundary`；`note_recall`/`note_strategy` 的 `excluded` 多带 `kind`/`score`；`note_create` 的返回键 `rel` 与声明的 `path` 不一致（另补上 `note_strategy` 漏返回的 `title`）。**新增两个零 token 门禁**：`test-tool-schemas.mjs`（含用 dsh 自己的校验器做变异验证）与 `test-tool-shape.mjs`（真调检索管线再递归比对）。
+- **`note_recall` 遇到"适用边界命中查询"的卡时直接抛异常**：`rankRecallDocuments` 里 `entry.doc.boundary` / `entry.doc.rel` 的形状写错了（`entry` 本身就是 scored 项，`.doc` 是 `undefined`）。只要库里任何一张卡带 `not_applicable_when` 且其边界短语出现在查询里，整个 `note_recall` 就不可用。这条分支此前**没有任何测试走过**。
+- **回复里的笔记链接一点就失效**：链接跳转服务的端口原先随机分配、令牌每次插件加载重新生成，而这两个值被写进 agent 的系统提示 ⇒ **插件一重载（更新 / 重开 Obsidian / 关开插件），此前所有回复里的链接就打不开了**（端口没人听，或令牌 403）。现在端口与令牌持久化在插件数据里，重载后复用；端口被占时回落随机端口并写日志。**旧的已生成链接仍需新回复才会带新地址。**
+
 ## [0.7.6] - 2026-09-14
 
 > 两件事：① 修掉一个让 Obsidian 侧栏「新建会话」**永久失效**的静默缺陷（agent preset 字段与 dsh-persona 新 schema 漂移）；② 把"用久了才卡"量化成可复现的数字，并留下探针。**只改 preset 字段、加探针与门禁，不改任何记忆行为。**

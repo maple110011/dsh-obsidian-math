@@ -1,0 +1,85 @@
+{
+  "note_recall": [
+    {
+      "query": "证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli",
+      "mode": "unified",
+      "operator": null,
+      "matches": [
+        {
+          "path": ".deepseek/memory/records/subsequence-trick.md",
+          "kind": "record",
+          "title": "子列收敛技巧",
+          "snippet": "先取子列，再用 Borel-Cantelli 把 a.s. 收敛拉回来",
+          "verified": "user-confirmed",
+          "hookOperator": "bound",
+          "uses": 3,
+          "successRate": 0.66,
+          "score": 1.2345,
+          "coverage": 0.71
+        }
+      ],
+      "excluded": []
+    },
+    {
+      "query": "只有边界排除的查询",
+      "mode": "fallback",
+      "operator": "bound",
+      "matches": [],
+      "excluded": [
+        {
+          "path": ".deepseek/memory/records/boundary-card.md",
+          "title": "只适用于有限维",
+          "boundary": "有限维 / 紧集",
+          "boundaryHits": ["有限维"]
+        }
+      ]
+    }
+  ],
+  "note_strategy": [
+    {
+      "query": "定义层证明冗长",
+      "matches": [
+        {
+          "path": ".deepseek/memory/strategy/strat-a.md",
+          "title": "定义层证明冗长",
+          "difficulty": "定义层证明冗长",
+          "moves": ["先换等价刻画", "再回到定义"],
+          "retrieve": ["records/subsequence-trick.md"],
+          "abstraction": "把定义展开成可操作的不等式",
+          "notApplicableWhen": "有限维 / 紧集",
+          "verified": "single-source",
+          "score": 0.9876
+        }
+      ],
+      "excluded": [
+        {
+          "path": ".deepseek/memory/strategy/strat-b.md",
+          "title": "只在有限维成立",
+          "boundary": "有限维",
+          "boundaryHits": ["有限维"]
+        }
+      ]
+    },
+    {
+      "query": "没有命中",
+      "matches": [],
+      "excluded": []
+    }
+  ],
+  "note_search": [
+    { "matches": [] },
+    {
+      "matches": [
+        { "path": "数学/泛函分析.md", "title": "泛函分析", "snippet": "凸共轭的定义", "tags": ["math/analysis", "凸分析"] }
+      ]
+    }
+  ],
+  "note_links": [
+    { "queried": null, "exists": true, "backlinks": {}, "total": 0 },
+    { "queried": "泛函分析", "exists": true, "backlinks": { "泛函分析": ["凸分析笔记"] }, "total": 1 },
+    { "queried": "不存在的笔记", "exists": false, "backlinks": { "不存在的笔记": [] }, "total": 0 }
+  ],
+  "note_create": [
+    { "path": "数学/新笔记.md", "operation": "create" }
+  ]
+}

@@ -773,13 +773,22 @@ export function rankRecallDocuments(docs, query, options = {}) {
   // silently dropped — a silent false negative would hide a memory the user has,
   // and an unexplained one is indistinguishable from "not found" (design-intake
   // §4 risk 2). Excluded entries never consume a result slot.
+  // 注意 `entry` 本身就是 scored 项（形状是 `{ doc, i, score, operatorMatch }`），
+  // 不是 `{ entry: … }` 包装。曾经这里写成 `entry.doc.boundary`，于是**任何一次有卡被
+  // 适用边界排除的检索都会抛 TypeError**（`Cannot read properties of undefined`），
+  // 也就是 note_recall 在"边界卡命中查询"时整体不可用（2026-09-14 用户实测）。
   const boundaryHitsOf = (entry) => (entry.doc.boundary === "" ? [] : boundaryHits(query, entry.doc.boundary));
+  // 注意 `entry` 本身就是 scored 项（形状是 `{ doc, i, score, operatorMatch }`），
+  // 不是 `{ entry: … }` 包装。曾经这里写成 `entry.doc.*`，于是**任何一次有卡被适用边界
+  // 排除的检索都会抛 TypeError**（`Cannot read properties of undefined`），也就是
+  // note_recall 在"边界卡命中查询"时整体不可用（2026-09-14 用户实测：模型看到工具侧报错，
+  // 只好改用 note_search / grep）。返回的键也必须与 output schema 逐字一致。
   const excluded = [];
   const eligible = [];
   for (const entry of pool) {
     const hits = boundaryHitsOf(entry);
     if (hits.length === 0) { eligible.push(entry); continue; }
-    excluded.push({ entry, hits });
+    excluded.push({ doc: entry.doc, hits });
   }
   const top = eligible.slice(0, safeLimit);
 
@@ -802,20 +811,21 @@ export function rankRecallDocuments(docs, query, options = {}) {
       uses: Math.max(0, Math.trunc(hookNumber(doc.hook, "uses", 0))),
       successRate: Number.isFinite(Number(doc.hook?.success_rate)) ? Number(doc.hook.success_rate) : null,
       score: Number(score.toFixed(4)),
-      coverage: Number(queryCoverage(queryTokens, docTokenSets[i]).toFixed(2)),
-      // Carried so callers can act on the card without re-joining the corpus.
-      hook: doc.hook,
-      boundary: doc.boundary ?? ""
+      coverage: Number(queryCoverage(queryTokens, docTokenSets[i]).toFixed(2))
+      // 注意：这里**不要**再加 `hook` / `boundary` 之类的内部字段。dsh ≥0.1.5 会对成功
+      // 返回值做严格校验，而 note_recall 的 output schema 是 `additionalProperties: false`
+      // ⇒ 多一个字段 = 整次工具调用失败（ToolOutputError）。曾经的 `hook: doc.hook,
+      // boundary: doc.boundary ?? ""` 就是这样把 note_recall 打死的（2026-09-14）。
+      // 需要 rich 值的是**调用方**：`rankRecallDocuments` 的返回值里仍然带着它们。
     })),
     // Boundary-excluded cards, with the phrase that triggered the exclusion. The
     // caller reports them; it must not silently pretend they do not exist.
-    excluded: excluded.map(({ entry, hits }) => ({
-      path: entry.doc.rel,
-      kind: entry.doc.kind,
-      title: entry.doc.title,
-      boundary: entry.doc.boundary,
-      boundaryHits: hits,
-      score: Number(entry.score.toFixed(4))
+    // 这四个键就是 output schema 声明的全部（多一个都会被 dsh 的严格校验判失败）。
+    excluded: excluded.map(({ doc, hits }) => ({
+      path: doc.rel,
+      title: doc.title,
+      boundary: doc.boundary,
+      boundaryHits: hits
     }))
   };
 }
@@ -1227,6 +1237,8 @@ export async function apply(ctx, config) {
         throw error;
       }
       ctx.emit("fs/observed", target, { kind: "present", version: outcome.version }, exec);
+      // 键名必须与 output schema 一致：`rel` 既不是声明里的 `path`，也会被 dsh 的严格校验
+      // 判成"未声明字段"⇒ 建笔记成功但整次调用报错（2026-09-14 修）。
       return { path: rel, operation: "create" };
     },
     presentCall: (args) => ({
@@ -1453,6 +1465,7 @@ export async function apply(ctx, config) {
               additionalProperties: false,
               properties: {
                 path: { type: "string", required: true },
+                title: { type: "string", required: true },
                 difficulty: { type: "string", required: true },
                 moves: { type: "array", required: true, items: { type: "string" } },
                 retrieve: { type: "array", required: true, items: { type: "string" } },
@@ -1542,6 +1555,7 @@ export async function apply(ctx, config) {
         query,
         matches: top.map(({ card, score }) => ({
           path: card.path,
+          title: card.title,
           difficulty: card.difficulty,
           moves: card.moves,
           retrieve: card.retrieve,
@@ -1550,7 +1564,15 @@ export async function apply(ctx, config) {
           verified: card.verified,
           score: Number(score.toFixed(4))
         })),
-        excluded: ranked.excluded
+        // 只带 schema 声明的四个键：dsh 会对返回值做严格校验，多一个字段整次调用就失败
+        // （schema 是 `additionalProperties: false`；`card.kind`/`score` 曾经让
+        // note_strategy 每次都抛 ToolOutputError，2026-09-14 修）。
+        excluded: ranked.excluded.map((item) => ({
+          path: item.path,
+          title: item.title,
+          boundary: item.boundary,
+          boundaryHits: item.boundaryHits
+        }))
       };
     },
     presentCall: (args) => ({ card: "generic", title: "Retrieve strategy", kind: "search", rawInput: args.query })
