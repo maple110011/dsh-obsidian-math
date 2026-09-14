@@ -17,7 +17,8 @@
 //
 // 零 token：只创建会话，不发消息。需要本机已安装 dsh + notes-assistant profile，
 // 否则按设计 SKIP 并 exit 0（与 scripts/test-panel-auth.mjs 同一约定）。
-import { readFileSync, existsSync, mkdtempSync, rmSync, openSync, closeSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, rmSync, openSync, closeSync } from 'node:fs';
+import { pruneWorkspaces } from './lib/workspace-registry.mjs';
 import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
@@ -61,12 +62,33 @@ check('已安装的 preset 也用 `prefix:`（插件不会强制刷新它，必�
 check('已安装的 preset 不再用 `text:`', !/^\s{4}text:/m.test(deployedPersona));
 
 // ── ② 动态：真的建一个会话 ──────────────────────────────────────────────────
+//
+// ⚠️ 本套件会向 dsh **注册一个工作区**（`session/create` 的副作用），而工作区登记是
+// **持久**的：它写在 `$DSH_HOME/storages/workspace.json` 里，会出现在用户侧栏的
+// 「工作区」列表里。第一版用 `mkdtempSync('dsh-preset-ws-')`（每次新目录）⇒ 每次
+// `npm test` 都在用户侧栏留下一个 `dsh-preset-ws-XXXXXX`（2026-09-14 实际发生了 8 个）。
+//
+// 现在的规矩：**固定路径 + 用完即删 + 无论如何都要把登记项从 workspace.json 里摘掉**。
+// 只删目录是不够的——登记项留在 json 里，侧栏照样显示。
+const PROBE_WORKSPACE = join(tmpdir(), 'dsh-math-memory-preset-probe');
+
+/** 把探针工作区从 dsh 的工作区登记表里摘掉（按 `path` 匹配，不按 id）。 */
+function unregisterProbeWorkspace() {
+  // 大小写不敏感由 pruneWorkspaces 负责：`os.tmpdir()` 在 Windows 上给 `C:\WINDOWS\TEMP`，
+  // 而 dsh 写的是 `C:\Windows\Temp`——逐字符比较会漏掉全部条目（第一版就是这么漏的）。
+  const wanted = PROBE_WORKSPACE.replaceAll('\\', '/').toLowerCase();
+  return pruneWorkspaces(dshHome, (normalized) => normalized.startsWith(wanted));
+}
+
 let child = null;
 let logDir = null;
 let workspace = null;
+let probeRegistered = 0;
 try {
   logDir = mkdtempSync(join(tmpdir(), 'dsh-preset-'));
-  workspace = mkdtempSync(join(tmpdir(), 'dsh-preset-ws-'));
+  workspace = PROBE_WORKSPACE;
+  rmSync(workspace, { recursive: true, force: true });
+  mkdirSync(workspace, { recursive: true });
   const logFd = openSync(join(logDir, 'child.log'), 'w');
   let spawnError = null;
   child = spawn(process.execPath, [binJs, '--profile', 'notes-assistant', '--patch', patch, '--no-open', '--port', '0'], {
@@ -142,10 +164,27 @@ try {
   check('套件自身未抛异常', false, String(error?.message ?? error));
 } finally {
   child?.kill();
-  await sleep(300);
+  // 等子进程真的退出：它在退出路径上还会写一次 workspace.json，先摘登记项会被它覆盖回去。
+  for (let i = 0; i < 40 && child !== null && child.exitCode === null && child.signalCode === null; i += 1) await sleep(250);
+  await sleep(500);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let removed = null;
+    try { removed = unregisterProbeWorkspace(); } catch { /* registry unreadable: nothing to undo */ }
+    if (removed !== null && removed > 0) { probeRegistered = removed; break; }
+    await sleep(500);
+  }
   for (const dir of [logDir, workspace]) {
     if (dir !== null) { try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ } }
   }
+  // 探针留下的痕迹必须为零：否则用户的侧栏会出现一个他从未创建过的「工作区」。
+  const leftovers = (() => {
+    try {
+      const parsed = JSON.parse(readFileSync(join(dshHome, 'storages', 'workspace.json'), 'utf8'));
+      return Object.values(parsed?.tables?.workspaces ?? {}).filter((v) => typeof v?.path === 'string' && v.path.startsWith(PROBE_WORKSPACE)).length;
+    } catch { return 0; }
+  })();
+  const stripped = probeRegistered;
+  check('探针工作区已从 dsh 的工作区登记表里摘掉（不留痕）', leftovers === 0, leftovers === 0 ? `摘掉 ${stripped} 条` : `仍残留 ${leftovers} 条`);
 }
 
 console.log(`__CHECKS__ ${passed}/${total}`);

@@ -1,0 +1,21 @@
+fix(test): 探针不再往用户侧栏注册工作区（并清掉我留下的 8 个）
+
+用户发现侧栏「工作区」里多了 7 个 dsh-preset-ws-XXXXXX —— 那是我
+test-agent-preset.mjs 留下的：session/create 的副作用是**永久登记工作区**
+（$DSH_HOME/storages/workspace.json，直接喂给侧栏列表），而我第一版每次用
+一个新建的临时目录，于是每次 npm test 留一个。
+
+修法：
+- scripts/lib/workspace-registry.mjs：pruneWorkspaces / pruneMissingWorkspacePaths。
+  按规范化后的 path（小写 + 反斜杠归一）匹配——os.tmpdir() 给 C:\WINDOWS\TEMP
+  而 dsh 写 C:\Windows\Temp，逐字符比较会一条都删不掉（第一版就是这么漏的）。
+- test-agent-preset.mjs：固定探针目录 + 用完即删 + 无条件摘登记项，并新增一条
+  断言"残留在 json 里的条目数 === 0"（10/10）。
+- sidebar-newchat-probe.mjs：跑完摘掉所有"路径已不存在"的登记项；--entry 模式
+  只观察不动（那是用户的实例）。
+- handoff 坑 74 记下三条：删目录删不掉登记项；大小写会静默漏删；运行中的服务
+  持有内存态，清理顺序必须是"先停服务 → 改文件 → 再起服务"。
+
+清库：已从 workspace.json 摘掉 8 个 dsh-preset-ws-* 条目，并删掉我测试期间在
+用户 vault 工作区里留下的 2 个空白会话 id。现在只剩用户自己的 4 个工作区。
+备份：~/.dsh/storages/workspace.json.bak-20260914。

@@ -22,13 +22,14 @@
 //      行数有没有增加 + 有没有跳到新会话，而不是只看 `/api/session/create` 的返回。
 //      dsh 的语义是：新建 = 创建一个空白会话并**选中**它，界面留在 hero 页等第一条输入；
 //      它**不会**打开一个对话视图。所以"点完停在首页"是设计行为，不是故障。
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pruneMissingWorkspacePaths } from '../lib/workspace-registry.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
@@ -217,6 +218,7 @@ let child = null;
 let chrome = null;
 let proxy = null;
 let userData = null;
+let workspace = null;
 try {
   // --entry：直接打一个已经在跑的实例（例如 Obsidian 反代 http://127.0.0.1:3180/），
   // 不自己启动 dsh、也不套代理。判断"用户侧到底怎么了"时用这个，别用自建实例的结论代替。
@@ -482,7 +484,19 @@ try {
   try { await proxy?.close(); } catch { /* ignore */ }
   chrome?.kill();
   child?.kill();
+  if (child !== null) {
+    for (let i = 0; i < 40 && child.exitCode === null && child.signalCode === null; i += 1) await sleep(250);
+  }
   await sleep(400);
   if (userData !== null) rmSync(userData, { recursive: true, force: true });
+  if (workspace !== null) { try { rmSync(workspace, { recursive: true, force: true }); } catch { /* ignore */ } }
+  // 探针点「新建会话」会在 dsh 里登记工作区（持久，会出现在用户的侧栏里）。凡是路径已经
+  // 不存在的登记项都是探针的临时目录留下的，一律摘掉；真实 vault / 仓库不受影响。
+  if (ENTRY === '') {
+    try {
+      const removed = pruneMissingWorkspacePaths(DSH_HOME, existsSync);
+      if (removed !== null && removed > 0) console.log(`[cleanup] 摘掉 ${removed} 个已消失路径的工作区登记项`);
+    } catch { /* registry unreadable: nothing to undo */ }
+  }
 }
 process.exit(0);

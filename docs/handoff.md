@@ -192,6 +192,14 @@
     - **④ 顺带纠正一条数字**：`sidebar-performance.md` §0.3 那张"12 731 元素 19.9 ms/次"的表是**注入 3000 行 div** 造的，而 `data-chat-flow` 未必挂在可注入位置（实测 `flow=DIV[other]`，注入落在 `body`）。它只能证明"同页面上文档越大越贵"，**不能**预测"你会话写到 13k 节点时一定卡"——真实数字只认 §0.2 的真实 Obsidian 读数（13 102 节点、55 ms/次）。该节已加更正块。
     - **⑤ 结论**：坑 70 的 preset 修复是**真实且必要**的（服务端 `session/create` 从 `ok:false` 变 `ok:true`，有变异验证），用户也在**没有重启 Obsidian** 的情况下确认「新建会话会正常新建跳转了」（`agent-presets` 每次建会话现读，所以改盘即生效）。但"点按钮没反应"当时是否**只**由 preset 引起，我没有把用户实例的界面状态测到底——**别再把它当成"已完整解释"**。
 
+74. **★ 探针会往用户的 dsh 里"注册工作区"，而且删目录删不掉它**（2026-09-14，用户发现侧栏多了 7 个 `dsh-preset-ws-XXXXXX`）。
+    - **机制**：`session/create` 的副作用是**永久登记一个工作区**，dsh 把它写进 `$DSH_HOME/storages/workspace.json`（`tables.workspaces` + `global.workspaceIds`），这份表直接喂给侧栏的「工作区」列表。所以"用一个 `mkdtempSync` 临时目录建个会话试试"这种探针，会在**用户自己的侧栏**留下一个他从未创建过的工作区。我的 `test-agent-preset.mjs` 第一版用 `mkdtempSync('dsh-preset-ws-')`（每次新目录）⇒ 每次 `npm test` 留一个，一共留了 8 个。
+    - **删目录没用**：登记项在 json 里，路径不存在也照样显示。必须**摘登记项**（现在有 `scripts/lib/workspace-registry.mjs` 的 `pruneWorkspaces` / `pruneMissingWorkspacePaths`）。
+    - **第二个坑：大小写**。`os.tmpdir()` 在 Windows 给 `C:\WINDOWS\TEMP`，而 dsh 写的是 `C:\Windows\Temp` —— `path.startsWith(probePath)` 逐字符比较**全部漏掉**，于是"清理成功但一条没删"。`pruneWorkspaces` 负责把小写化 + 反斜杠归一，调用方只给谓词。
+    - **第三个坑：服务内存里还有一份**。只手改 `workspace.json` 不管用——**运行中的 dsh 服务持有内存态**，它下次落盘会把删掉的条目写回来。清理顺序必须是：**先让服务结束 → 再改文件 → 再让服务起来**（实测：kill 后它并不会在退出时把旧列表刷回去，所以这个顺序是安全的）。
+    - **规则**：任何会调 `session/create`（或点「新建会话」）的探针，跑完必须自己摘登记项，并把这一步做成断言（"残留在 json 里的条目数 === 0"），否则它会静默污染用户环境。**探针的默认工作区应该是固定路径 + 用完即删**，不要每次 `mkdtempSync` 一个新目录。
+    - **顺带一条**：如果探针在 3180 上跑，它点的「新建会话」会在**用户真实 vault 的工作区**里建一个空白会话（我第一次就这么干了，两个空会话已删）。用 `--entry` 打用户实例时要接受这一点，或者只读不点。
+
 ## 5. 用户决策记录（不要推翻）
 
 - **单仓**（不拆双 git 仓库），两个产物独立分发（npm 包 + Obsidian 插件）+ 仓库内文献库/面板子系统。
