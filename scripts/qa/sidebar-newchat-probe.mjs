@@ -10,6 +10,18 @@
 //   node scripts/qa/sidebar-newchat-probe.mjs --vault="D:\Obsidian笔记数据库"
 //   node scripts/qa/sidebar-newchat-probe.mjs --vault=... --no-proxy        # 直连（对照）
 //   node scripts/qa/sidebar-newchat-probe.mjs --vault=... --bloat=4000      # 只做规模对照
+//
+// 也可以直接打在**正在运行的实例**上（例如 Obsidian 反代）：--entry=http://127.0.0.1:3180/
+//
+// ⚠️ 两条测量纪律（2026-09-14 实测踩出来的，别重犯）：
+//   1. **不要在这个页面上 patch `window.fetch` 去"记录一切"**。dsh 客户端用流式响应维持
+//      会话控制流，`res.clone().text()` 会把那条流消耗掉，页面随即永久停在
+//      「自动重连中...」/`phase=connecting`——那是**仪器制造的故障**，不是被测对象的问题。
+//      （第一次据此得出"服务连不上"的结论是错的。）
+//   2. **服务端 `ok:true` ≠ 用户界面有反应**。判断「新建会话能不能用」必须同时看会话列表
+//      行数有没有增加 + 有没有跳到新会话，而不是只看 `/api/session/create` 的返回。
+//      dsh 的语义是：新建 = 创建一个空白会话并**选中**它，界面留在 hero 页等第一条输入；
+//      它**不会**打开一个对话视图。所以"点完停在首页"是设计行为，不是故障。
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
@@ -30,6 +42,8 @@ const PROFILE = arg('profile', 'notes-assistant');
 const DEBUG_PORT = Number(arg('debug-port', '9341'));
 const BLOAT = Number(arg('bloat', '0'));
 const SESSION = arg('session', '');
+/** 直接打一个已经在跑的实例（如 Obsidian 反代 3180），跳过自己启动 dsh。 */
+const ENTRY = arg('entry', '');
 const VIA_PROXY = !process.argv.includes('--no-proxy');
 const SKIN_SCRIPTS = arg('skin-scripts', 'on') === 'on';
 const PERF = arg('perf', 'on') === 'on';
@@ -194,8 +208,8 @@ const openSessionJs = (title) => `(() => {
   return 'clicked:' + clickable.tagName + '.' + String(clickable.className || '').slice(0, 40);
 })()`;
 
-if (!VAULT) {
-  console.error('sidebar-newchat-probe: 需要 --vault=<vault 路径>（或设 DSH_OBSIDIAN_VAULT）');
+if (!VAULT && ENTRY === '') {
+  console.error('sidebar-newchat-probe: 需要 --vault=<vault 路径>（或设 DSH_OBSIDIAN_VAULT），或用 --entry=<已在运行的实例 URL>');
   process.exit(2);
 }
 
@@ -204,6 +218,10 @@ let chrome = null;
 let proxy = null;
 let userData = null;
 try {
+  // --entry：直接打一个已经在跑的实例（例如 Obsidian 反代 http://127.0.0.1:3180/），
+  // 不自己启动 dsh、也不套代理。判断"用户侧到底怎么了"时用这个，别用自建实例的结论代替。
+  let entryUrl = ENTRY;
+  if (ENTRY === '') {
   const patchFile = join(DSH_HOME, 'profiles', PROFILE, `${PROFILE}.patch.yml`);
   const dshArgs = [DSH_BIN, '--profile', PROFILE, '--no-open', '--port', '0'];
   try { readFileSync(patchFile); dshArgs.splice(3, 0, '--patch', patchFile); } catch { /* no patch */ }
@@ -222,7 +240,7 @@ try {
   }
   if (launchUrl === null) { console.error('dsh 没有输出启动地址：\n' + stdout.slice(-800)); process.exit(1); }
 
-  let entryUrl = launchUrl;
+  entryUrl = launchUrl;
   if (VIA_PROXY) {
     const DshWebProxy = shippedProxyClass();
     proxy = new DshWebProxy({ settings: { sidebarPerformanceMode: PERF, sidebarSkinScripts: SKIN_SCRIPTS } });
@@ -230,6 +248,7 @@ try {
     await proxy.listen(0);
     if (!await proxy.redeem(launchUrl)) throw new Error('代理无法兑换启动 token');
     entryUrl = proxy.baseUrl;
+  }
   }
 
   userData = mkdtempSync(join(tmpdir(), 'dsh-newchat-probe-'));
@@ -255,15 +274,43 @@ try {
   await cdp.send('Page.navigate', { url: entryUrl });
   await sleep(10000);
 
-  const page = await cdp.eval(`(() => ({
-    url: location.href, skin: document.documentElement.dataset.dshSkin ?? null,
-    elements: document.querySelectorAll('*').length,
-    perfStyle: !!document.getElementById('dsh-obsidian-sidebar-perf'),
-    buttons: document.querySelectorAll('button').length,
-    sidebarTop: (document.querySelector("[data-slot='sidebar']")?.innerText ?? '').split('\\n').slice(0, 14)
-  }))()`);
+  const page = await cdp.eval(`(() => {
+    const boot = (typeof window.__DSH_BOOT__ === 'object' && window.__DSH_BOOT__ !== null) ? window.__DSH_BOOT__ : {};
+    let modules = null;
+    const raw = JSON.stringify(boot);
+    const found = raw.match(/@deepseek-ai\\/[a-z0-9-]+|@linxin666\\/[a-z0-9-]+|@dsh-math-memory\\/[a-z0-9-]+/g);
+    if (found !== null) modules = [...new Set(found)].sort();
+    return {
+      url: location.href, skin: document.documentElement.dataset.dshSkin ?? null,
+      elements: document.querySelectorAll('*').length,
+      perfStyle: !!document.getElementById('dsh-obsidian-sidebar-perf'),
+      buttons: document.querySelectorAll('button').length,
+      bootKeys: Object.keys(boot),
+      modules,
+      workspaceSlot: document.querySelector("[data-slot='sidebar']")?.querySelectorAll('[role="treeitem"]').length ?? 0,
+      storage: Object.keys(localStorage),
+      sidebarTop: (document.querySelector("[data-slot='sidebar']")?.innerText ?? '').split('\\n').slice(0, 14)
+    };
+  })()`);
   console.log('=== 页面状态 ===');
   console.log(JSON.stringify(page, null, 2));
+
+  // 侧栏里的会话行：找出"选中/展开"等会改变点击路径的状态。
+  const rows = await cdp.eval(`(() => {
+    const root = document.querySelector("[data-slot='sidebar']");
+    if (root === null) return null;
+    const out = [];
+    root.querySelectorAll('*').forEach((el) => {
+      const t = (el.textContent || '').trim();
+      if (t.length === 0 || t.length > 60) return;
+      if (/分钟|小时|天|刚刚/.test(t) === false && /会话|新建/.test(t) === false) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      out.push({ tag: el.tagName, cls: String(el.className || '').slice(0, 44), text: t.slice(0, 30), sel: el.getAttribute('aria-selected'), y: Math.round(rect.y), h: Math.round(rect.height), role: el.getAttribute('role'), hasHandlerHint: el.onclick !== null, sessionId: el.getAttribute('data-session-id') || el.closest('[data-session-id]')?.getAttribute('data-session-id') || '' });
+    });
+    return JSON.stringify(out.slice(0, 12));
+  })()`);
+  console.log('\n=== 侧栏行（含选中态的原始属性） ===\n' + rows);
 
   const found = JSON.parse(await cdp.eval(NEW_SESSION_JS) ?? '[]');
   console.log('\n=== 候选「新建对话」控件 ===');
@@ -296,7 +343,37 @@ try {
       ?? found.find((f) => !f.disabled && f.w > 0 && f.h > 0)
       ?? found[0];
     const before = await cdp.eval(stateJs);
+    const rowsBefore = await cdp.eval(`document.querySelectorAll('[role="treeitem"]').length`);
     cdp.events.length = 0;
+    // 命中测试：这个坐标最上层到底是谁？（皮肤/宿主可能在按钮上盖了装饰层）
+    const hit = await cdp.eval(`(() => {
+      const el = document.elementFromPoint(${at.x}, ${at.y});
+      if (el === null) return null;
+      const chain = [];
+      for (let n = el; n !== null && chain.length < 6; n = n.parentElement) chain.push(n.tagName + '.' + String(n.className || '').slice(0, 40));
+      const btn = document.querySelector('button.hHd-Xa_newSession');
+      const r = btn?.getBoundingClientRect();
+      return JSON.stringify({ top: chain[0], chain, covered: btn !== null && !btn.contains(el) && el !== btn, pointerEvents: getComputedStyle(el).pointerEvents, rect: r ? [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] : null });
+    })()`);
+    console.log('\n=== 命中测试 (x,y) ===\n' + hit);
+    // 谁在处理这个按钮？React 的合成事件挂在 root，但"谁注册了监听器/处理器是谁"
+    // 只有 CDP 的 DOMDebugger 说得清。
+    try {
+      const described = await cdp.send('DOM.describeNode', { objectId: (await cdp.send('Runtime.evaluate', { expression: 'document.querySelector("button.hHd-Xa_newSession")' })).result.objectId });
+      const objId = described.node.backendNodeId;
+      const listeners = await cdp.send('DOMDebugger.getEventListeners', { objectId: (await cdp.send('Runtime.evaluate', { expression: 'document.querySelector("button.hHd-Xa_newSession")' })).result.objectId, depth: 0, pierce: true });
+      const direct = (listeners.listeners ?? []).map((l) => ({ type: l.type, useCapture: l.useCapture, scriptId: l.scriptId, line: l.lineNumber, column: l.columnNumber, passive: l.passive }));
+      // 合成事件在 root：把祖先链上的监听器也列一遍，找 React 的宿主 root。
+      const chainIds = await cdp.eval(`(() => {
+        const out = []; let n = document.querySelector('button.hHd-Xa_newSession');
+        while (n !== null && out.length < 8) { n.setAttribute('data-probe-chain', String(out.length)); out.push(out.length); n = n.parentElement; }
+        return JSON.stringify(out);
+      })()`);
+      const rootListeners = await cdp.send('DOMDebugger.getEventListeners', { objectId: (await cdp.send('Runtime.evaluate', { expression: 'document.getElementById("root") ?? document.body' })).result.objectId, depth: 3, pierce: true });
+      const rootDirect = (rootListeners.listeners ?? []).filter((l) => l.type === 'click').map((l) => ({ type: l.type, useCapture: l.useCapture, scriptId: l.scriptId, line: l.lineNumber, column: l.columnNumber }));
+      console.log(`\n=== 按钮自身的 click 监听器 ===\n${JSON.stringify(direct)}\n=== root 上的 click 监听器（前 6） ===\n${JSON.stringify(rootDirect.slice(0, 6))}`);
+      void described; void objId; void chainIds;
+    } catch (error) { console.log('listener probe failed: ' + String(error.message ?? error)); }
     console.log(`\n=== 真实点击 (${at.x},${at.y}) cls="${at.cls}" label="${at.label}" pointerEvents=${at.pointerEvents} ===`);
     await cdp.click(at.x, at.y);
     await sleep(4000);
@@ -305,6 +382,9 @@ try {
     console.log('after .sidebar: ' + JSON.stringify(after.sidebar.replace(/\n/g, ' / ')));
     console.log('before: ' + JSON.stringify({ url: before.url, links: before.links, phase: before.phase }));
     console.log('after : ' + JSON.stringify({ url: after.url, links: after.links, phase: after.phase, toast: after.toast }));
+    // 判据：点「新建会话」**必须**让侧栏的会话行数增加（那一刻服务端真的建了一个空白会话）。
+    // 只看 phase 会误判——dsh 的新建语义就是"建一个空白会话并选中它"，界面留在 hero 页等输入。
+    console.log(`点击前后会话行数: ${rowsBefore} → ${await cdp.eval(`document.querySelectorAll('[role="treeitem"]').length`)}（增加 = 新建成功；phase 停在 hero 是设计行为）`);
 
     const failures = cdp.events.filter((e) => e.method === 'Network.loadingFailed').map((e) => e.params.errorText + ' ' + (e.params.type ?? ''));
     const responses = cdp.events.filter((e) => e.method === 'Network.responseReceived').map((e) => `${e.params.response.status} ${e.params.response.url}`).filter((s) => !/\.(js|css|woff2?|ttf|png|webp|svg|ico|jpg)/.test(s));
@@ -393,24 +473,8 @@ try {
   }
 
   if (BLOAT > 0) {
-    const bloatInfo = await cdp.eval(`(() => {
-      const flow = document.querySelector('[data-chat-flow]') ?? document.querySelector('[data-conversation-scroll]') ?? document.body;
-      const host = document.createElement('div');
-      host.setAttribute('data-probe-bloat', '');
-      for (let i = 0; i < ${BLOAT}; i += 1) {
-        const row = document.createElement('div');
-        row.innerHTML = '<div class="probe-row"><span>行 ' + i + '</span><p>占位内容 ' + i + ' —— 用来模拟长会话的渲染树规模</p></div>';
-        host.append(row);
-      }
-      flow.append(host);
-      return { inserted: host.querySelectorAll('*').length, flow: flow.tagName + '[' + (flow.getAttribute('data-chat-flow') !== null ? 'data-chat-flow' : 'other') + ']', totalElements: document.querySelectorAll('*').length };
-    })()`);
-    console.log('\n=== 注入 ' + BLOAT + ' 行模拟长会话 ===\n' + JSON.stringify(bloatInfo));
-    await sleep(1500);
-    const bloated = await toggleMeasurement(cdp);
-    console.log('\n=== 侧栏开合成本：注入后 ===');
-    console.log(JSON.stringify(bloated));
-    console.log('\n判读：RecalcStyle 增量与「最差帧」若随元素数显著上升 ⇒ 卡顿随会话/文档规模增长');
+    console.log('\n[synthetic bloat] 段已删除：靠注入 div 造出来的数字没有解释力（2026-09-14 结论）。');
+    console.log('要看真实长会话的成本，请用 --entry 打开你自己的实例，再点侧栏开合。');
   }
 
   await cdp.send('Browser.close').catch(() => {});
