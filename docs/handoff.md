@@ -1,9 +1,9 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、决策、已修坑、未做事项与工作约定。
-> 当前版本：0.7.5
+> 当前版本：0.7.6
 > （本文件描述**当前**状态；它与 `package.json` 的一致性由 `check-version-consistency.mjs` 守卫）
-> 最后更新：2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**0.7.2 时**（记忆纠错与确定性自维护落地，见 `self-correction.md`；上一版 0.7.1 = 2026-08-26）。0.7.1 新增 **dsh-native 分发重构**（bundle + `dsh plugin add` 原生安装、`--direct` 离线拷贝、owner marker 冲突解决、对称 `uninstall`；功能无变化，仅优化安装方式），详见 `docs/dsh-native-refactor.md` 与 `docs/installation.md`。
+> 最后更新：2026-09-14（0.7.6）——「新建会话」静默失效的根因与修复（agent preset 的 persona 字段 `text`→`prefix`，见坑 70）+ 卡顿随文档规模增长的实测（坑 71、`sidebar-performance.md` §0.3）；新增门禁 `test-agent-preset.mjs`（34 → **35/35**）。此前的 2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**0.7.2 时**（记忆纠错与确定性自维护落地，见 `self-correction.md`；上一版 0.7.1 = 2026-08-26）。0.7.1 新增 **dsh-native 分发重构**（bundle + `dsh plugin add` 原生安装、`--direct` 离线拷贝、owner marker 冲突解决、对称 `uninstall`；功能无变化，仅优化安装方式），详见 `docs/dsh-native-refactor.md` 与 `docs/installation.md`。
 
 ## 1. 项目是什么
 
@@ -164,6 +164,23 @@
     - **规则**：① 写字节比较的守卫前，先看同族守卫有没有归一化（这里是坑 57）；② **别用"汇总全绿"代替"这一条真的跑了"**——看到 `SKIP`/环境字样就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only bundle`）；③ 本地与 CI 不一致时优先怀疑**换行、路径分隔符、大小写**。
     - **复现与变异验证（修复时实做）**：`git checkout -- <file>` 在内容未变时是 **no-op**，必须 `Remove-Item` 后再 `git checkout --`，才能拿到真检出（实测 `bytes=14456 CRLF=11`）。修前报 `committed 14456 bytes vs fresh 14445 bytes`（**与 CI 逐字一致**）、修后 OK；再故意追加 7 字节 → 仍然 FAIL（证明没有把守卫改成恒真）。
     - **附带**：`core.autocrlf=true` 会让这种"LF 工作区 vs LF blob"在 `git status` 里显示成 `M`，而 `git diff --quiet` 退出 0、`git hash-object -- <file>` 与 `git rev-parse HEAD:<file>` 相同 ⇒ **那是 stat 假象，不是内容变化**；要判断"到底改了没有"，用哈希而不是 status。
+70. **★ 「按钮点了没反应」不一定是前端：`/api/session/create` 用 HTTP 200 回答失败，而 UI 只在控制台写一行 warning**（2026-09-14，真实故障：Obsidian 侧栏的「新建会话」永久失效）。
+    - **表象**：侧栏界面正常渲染、能上网关、按钮可点、网络面板里**没有任何失败请求**、Obsidian 通知区**什么都不弹**。用户只知道"新建对话按钮没法新建对话了"。
+    - **真因**：agent preset 挂载失败 —— `.agent-presets/notes-assistant/agent.cordis.yml` 的 persona 行写的是旧字段 `text:`，而 `@deepseek-ai/dsh-persona` ≥ 0.1.5-rc.1 的 Config 是 `prefix` **必填**：
+      `agent-presets: preset "notes-assistant" failed to mount: failed to apply loader entry persona (@deepseek-ai/dsh-persona): invalid config: - $.prefix missing required value (at prefix)`
+      preset 挂不了 ⇒ 每次建会话都失败。**这不是插件 UI、反代或按钮的缺陷，是"配置 schema 变了下游没跟"**。
+    - **为什么难查**：① 接口是 RPC 风格，成功与业务失败都返回 **HTTP 200**，`ok:false` 在响应体里（`{"type":"server-response","result":{"ok":false,"error":{…}}}`），只看状态码/网络失败**永远看不到**；② 前端只 `console.warn('new session failed: …')`，不弹 toast；③ 反代按设计原样透传、日志里也没有异常。
+    - **排查手法（可复用）**：headless Chromium + CDP 打开**真实** dsh（要经插件反代就经反代），点那个按钮，然后读 `Runtime.consoleAPICalled` 与 `Network.getResponseBody` —— 本次就是这样一次拿到完整错误链的（工具：`scripts/qa/sidebar-newchat-probe.mjs`）。
+    - **守卫**：`scripts/test-agent-preset.mjs`（零 token）：① 静态断言仓库与**已安装** preset 的 persona 行都用 `prefix:`、都不含 `text:`；② 真的用已安装的 dsh 建一个会话，断言 `ok:true` 且错误里没有 `failed to mount`。**变异验证**：把已安装 preset 改回 `text:` → 套件 5/9 红并打印上面那条原始错误；改回 `prefix` → 9/9 绿。
+    - **推论（重要）**：`bootstrapDshConfig` 对 `agent.cordis.yml` / `cordis.patch.yml` 用 `force=false`（保护用户手改），所以 **dsh 升级后 preset 不会自动跟上新 schema**。dsh 每次升级都要问一句："我这份 preset 的字段还是当前 schema 吗？"——本次正是 9/10 升级 dsh 到 0.1.5-rc.1 后遗留的**静默**失效。
+71. **★ 侧栏卡顿随"当前会话的渲染树规模"增长——这是"刚启动不卡、用久了才卡"的第一解释**（2026-09-14 实测，同轮同一 harness）：
+    | 文档元素数 | 每次样式重算 | 帧 >50ms | 最差帧 | LoAF |
+    |---|---|---|---|---|
+    | 730（空会话 hero） | **1.2 ms/op** | 0–1 | 50–67 ms | 1–3 |
+    | 12 731（注入占位行模拟长会话） | **19.9 ms/op**（16.6×） | **52** | **533 ms** | 54 |
+    对照 2026-09-11 在**真实 Obsidian** 里的读数：13 102 元素时 410 次重算共 **22.76 s = 55 ms/op**（比注入的纯 div 还贵，因为真实会话节点带着自己的样式与合成层）。三条推论：① 卡顿的主成本是 **RecalcStyle/布局**，与 dsh 前端把侧栏宽度做成 CSS grid 轨道有关（上游）；② 插件侧能做的只有"别让这份文档继续长大"（皮肤脚本减速/停用已做，见 §0 原因 1）；③ 所以"重开会话 / 少留超长会话"是当前**唯一用户可用的缓解手段**。
+    - **为什么"关掉其他程序后没有马上恢复"**：内存压力只是放大器，不是主因。关掉程序后 ① Windows 回收工作集/页文件是滞后的；② 那个已经很大的文档仍在同一个渲染进程里，重算成本不会因为别的程序退出而下降——**要恢复得让 dsh 侧那份文档变小（切换/重开会话、重载面板、重启 Obsidian）**。用户在"关掉其他程序 + 重启 Obsidian"之后连续 2 小时流畅，正是因为**换了新会话、少了 13k 节点**。
+    - 复现：`node scripts/qa/sidebar-newchat-probe.mjs --vault=<vault> --bloat=3000`。
 
 
 ## 5. 用户决策记录（不要推翻）

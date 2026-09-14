@@ -57,7 +57,11 @@ const GATES = [
   { name: 'syntax: dsh/host/index.mjs', args: ['--check', 'dsh/host/index.mjs'] },
   { name: 'syntax: dsh/host/preset-sync.mjs', args: ['--check', 'dsh/host/preset-sync.mjs'] },
   { name: 'syntax: dsh/host/hook-frontmatter.mjs', args: ['--check', 'dsh/host/hook-frontmatter.mjs'] },
-  { name: 'test: preset sync', args: ['scripts/test-preset-sync.mjs'] }
+  { name: 'test: preset sync', args: ['scripts/test-preset-sync.mjs'] },
+  // 「新建会话」真的能建出来吗：preset 字段漂移（persona 的 text→prefix）会让每次建会话
+  // 都以 HTTP 200 + ok:false 失败，而 UI 只写一行 console.warn ——零 token，需要本机 dsh，
+  // 否则按设计 SKIP（见 scripts/test-agent-preset.mjs 与 handoff.md 坑 70）。
+  { name: 'test: agent preset mounts (real dsh, no tokens)', args: ['scripts/test-agent-preset.mjs'] }
 ];
 
 const argv = process.argv.slice(2);

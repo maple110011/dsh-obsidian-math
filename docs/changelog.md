@@ -3,6 +3,39 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-14 · 「新建会话」静默失效（preset schema 漂移）+ 卡顿随文档规模增长的实测
+
+用户报两件事：① Obsidian 侧栏里的 dsh「新建对话按钮无法新建对话了」；② 卡顿不是一启动就有，**用久了才出现**，怀疑是"什么东西一直在堆积"。
+
+### ① 新建会话失效：不是前端，是 preset 挂载失败（HTTP 200 + `ok:false`）
+
+**排查路径**（值得复用）：不猜前端，直接把**真实 dsh** 跑起来、用 headless Chromium 经**插件自己的反代**打开，用 CDP 真实鼠标点那个按钮，然后把 `Runtime.consoleAPICalled` 与 `Network.getResponseBody` 都读出来。第一次运行就拿到完整错误链：
+
+```
+new session failed: SessionCreateError: session create failed: agent-preset/invalid:
+  agent-presets: preset "notes-assistant" failed to mount:
+  failed to apply loader entry persona (@deepseek-ai/dsh-persona): invalid config:
+  - $.prefix missing required value (at prefix) (…/.agent-presets/notes-assistant/agent.cordis.yml)
+```
+
+**根因**：`dsh/preset/agent.cordis.yml` 的 persona 行的配置字段写的是 `text:`，而 `@deepseek-ai/dsh-persona` 0.1.5-rc.1 的 `Config` 是 `prefix: z.string().required()`（+ `suffix` 默认空）。字段不认识 ⇒ 校验失败 ⇒ preset 挂不掉 ⇒ 每次建会话都失败。响应体是 `{"type":"server-response","result":{"ok":false,"error":{"code":"agent-preset/invalid",…}}}`，**HTTP 是 200**，前端只 `console.warn`，所以用户侧表现为"点了没反应"。
+
+**为什么"以前能用"**：本机 dsh 于 2026-09-10 14:02 升级到 0.1.5-rc.1，而 `bootstrapDshConfig` 对 `agent.cordis.yml` 用 `force=false`（保护用户手改），所以升级后 preset **不会自动跟上新 schema**。这是坑 70。
+
+**修法**：仓库与已安装 preset 的 `text:` → `prefix:`（不改文案；`{{model}}`/`{{cwd}}` 仍是 prompt variable，照旧解析），重建 `main.js`。
+
+**守卫（新门禁）**：`scripts/test-agent-preset.mjs`（零 token，需要本机 dsh 否则 SKIP）。9 项断言：仓库 preset 用 `prefix`、不含 `text`；**已安装** preset 同样；真的调 `/api/session/create` 并断言 `ok:true` 且错误里没有 `failed to mount`。
+**变异验证**：把已安装 preset 改回 `text:` → **5/9 红**并打印上面那条原始错误；改回 `prefix` → **9/9 绿**。
+
+### ② 卡顿：随"当前会话的渲染树规模"增长（同轮同 harness，`sidebar-newchat-probe.mjs`）
+
+| 文档元素数 | 每次样式重算 | 帧 >50ms | 最差帧 | LoAF |
+|---|---|---|---|---|
+| 730（空会话 hero） | **1.2 ms/op** | 0–1 | 50–67 ms | 1–3 |
+| 12 731（注入 3000 行占位内容） | **19.9 ms/op（16.6×）** | 52 | **533 ms** | 54 |
+
+与 2026-09-11 真实 Obsidian 的读数（13 102 元素、410 次重算 22.76 s = **55 ms/op**）同一量级——真实的会话节点比注入的纯 div 还贵。⇒ 用户在"关掉其他程序 + 重启 Obsidian"后连续 2 小时流畅，是因为**换了新会话**（文档从 13k 节点回到几百），不是"关程序"本身；关闭其他程序只是让内存压力这个**放大器**消失，而已经变大的文档不会因此变小（所以当时"没有马上恢复"）。详见 `handoff.md` 坑 71 与 `docs/memory/sidebar-performance.md` §0.3。
+
 ## 2026-09 · 新守卫的第一次 CI 运行就红：换行，以及"本地全绿"是假的
 
 用户报「npm test 好像有一个出问题了」。是 GitHub Actions 的 `CI`（run 65，我推的 `3ce0835`）：**上一次 run 64 是绿的**——因为出问题的这道门禁（`check-client-bundle.mjs`，客户端产物新鲜度）正是这 22 个提交里新加的，**它从未在 CI 上通过过**，我这一推才把它暴露出来。GitHub API 确认：`test (windows-latest)` failure、`test (ubuntu-latest)` success（含 ubuntu 的 `npm test` 步骤）。

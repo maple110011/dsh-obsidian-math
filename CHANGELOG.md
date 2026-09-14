@@ -4,10 +4,13 @@
 
 ## [Unreleased]
 
-> 内容：2026-09-11 可维护性审查（[docs/maintainability-review-2026-09-11.md](docs/maintainability-review-2026-09-11.md)，视角是"agent 能否长期维护这个仓库"）的落地。**未发版**：版本号仍是 0.7.5，发版动作留给维护者。台账见 [docs/maintainability-fixes-2026-09-11.md](docs/maintainability-fixes-2026-09-11.md)。
+## [0.7.6] - 2026-09-14
+
+> 两件事：① 修掉一个让 Obsidian 侧栏「新建会话」**永久失效**的静默缺陷（agent preset 字段与 dsh-persona 新 schema 漂移）；② 把"用久了才卡"量化成可复现的数字，并留下探针。**只改 preset 字段、加探针与门禁，不改任何记忆行为。**
 
 ### Fixed
 
+- **Obsidian 侧栏的「新建会话」永久失效（点按钮没反应、无任何提示）**：真因不在按钮、反代或插件 UI，而在 agent preset —— `notes-assistant` 的 persona 行写的是旧字段 `text:`，而 `@deepseek-ai/dsh-persona` ≥0.1.5-rc.1 要求必填的 `prefix:`，于是 preset 挂载失败（`$.prefix missing required value`），每次建会话都失败。该接口用 **HTTP 200 + 体内 `ok:false`** 回答失败，前端只在控制台写一行 warning，所以用户侧只看到"点了没反应"。仓库与已安装的 preset 都已改为 `prefix:`。**新增零 token 门禁** `scripts/test-agent-preset.mjs`：钉住 preset 字段，并且真的建一个会话断言 `ok:true`（变异验证：还原 `text:` → 5/9 红并复现原始错误）。**dsh 升级后若忘记同步 preset，这道门禁会当场报出来。**
 - **面板约束根在"未配置"时会退回请求方自带的 `root`（安全）**：`/memory-panel` 的根锚定此前只在**环境变量已配置**时生效（`DSH_WORKSPACE_ROOT` / `DSH_OBSIDIAN_VAULT`）；两个都没配时，请求里的 `root` 直接成为约束根，于是下游 `pathInside(root, target)` 的**两端都由调用方决定**，形同虚设。现在允许的根 = 环境变量 ∪ 本实例已注册的 workspace（`ctx.workspaceRegistry`），**两者都空则拒绝一切带 root 的请求**。补了 5 项路由断言（含"未配置 + 空注册表 → 403 且文件未被移动"）；**变异验证**：还原旧逻辑，新断言立即失败并报 `status: 200`（确实把卡移走了）。
 - **`npm test` 在受限环境下必然失败，而且静默跳过其后 16 个门禁**：node 子进程在禁止"管道 stdio"的环境里无法被 spawn（`spawn EPERM`），`&&` 链因此在第 5 个门禁断掉；更隐蔽的是 `check-doc-consistency.mjs` 拿到空输出后把计数读成 0，报出 **18 条"文档漂移"**——而文档是对的。现在子进程 stdio 走**真实文件描述符**而非管道（两种环境都能捕获输出），门禁**全部跑完再汇总**，并把"子进程根本没起来"单独标成环境结果。**本机 `npm test` 从"2 处红 + 跳过 16 条"变为 27/27 全绿。**
 - **`dsh/client-panel/lib/client.js` 这个提交进仓库的构建产物此前没有任何门禁引用**：源码改了它不重新构建，所有门禁依然全绿，而它是**实际下发给 dsh web 面板**的代码。新增新鲜度门禁（与一次全新构建逐字节比对）；构建需要 esbuild 子进程，环境不允许时按 SKIP 报告并仍执行形状检查。
@@ -52,6 +55,10 @@
 - **捕获索引失败的语义**：`appendEpisodeIndex` 由「返回 void / 抛异常」改为「返回布尔（读回校验）」。
 
 ### Added
+
+- **卡顿的新答案：「卡」随当前会话的渲染树规模增长**。实测（同轮同一 harness，真实 dsh + 真实皮肤，headless Chromium）：空会话 730 个元素时**每次样式重算 1.2 ms**；注入内容把文档撑到 12 731 个元素后是 **19.9 ms/次（16.6×）**，帧 >50ms 从 0–1 涨到 52，最差帧 50 ms → **533 ms**。对照真实 Obsidian（13 102 元素）是 **55 ms/次**。⇒ 「刚启动不卡、用久了才卡」的直接解释是**会话说得越长、面板里那棵树越大**；关掉其他程序不会让这棵树变小（所以不会马上恢复），有效动作是**切换/重开会话或重启 Obsidian**。内存压力是放大器而非主因（本机 14 GB，实测页文件仅用 0.3 GB）。数字与结论见 [`docs/memory/sidebar-performance.md`](docs/memory/sidebar-performance.md) §0.3，复现命令 `node scripts/qa/sidebar-newchat-probe.mjs --vault=<vault> --bloat=3000`。
+- **`scripts/qa/sidebar-newchat-probe.mjs`**（按需运行的诊断探针）：经插件反代打开真实 dsh，用**真实鼠标事件**点「新建会话」，把 URL / DOM / 新会话是否真的建出来 / 控制台 / 失败请求 / 非静态响应体**全部**打出来；带 `--bloat=N` 做文档规模对照。它同时是上面那条结论的复现工具。
+- **`scripts/test-agent-preset.mjs`**（第 **35** 个门禁，零 token）：断言 preset 与**已安装** preset 的 persona 字段是当前 schema 的 `prefix:`，并真的向 dsh 发一次 `session/create` 断言 `ok:true`。
 
 - **仓库根 `AGENTS.md`**（维护协议）：两个产物与数据流、文件地图（改哪里 → 接着必须做什么）、五条铁律（生成物 `main.js`、模板清单、双份实现、版本五处一致、提交前看 `git status`）、**验证纪律**（受限环境的"红"不是回归；`npm run qa:e2e` 要烧钱需先问）、记录纪律、已知陷阱。
 - **`scripts/run-node.mjs`**：不用管道的子进程捕获（附实测对照）。**`scripts/run-gates.mjs`**：门禁汇总器。

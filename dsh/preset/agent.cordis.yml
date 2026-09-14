@@ -20,10 +20,16 @@
 # `complete: true` because the math-memory plugin below appends its
 # per-request memory section during system-prompt assembly, and a complete
 # persona would discard every other section.
+#
+# 字段名是 `prefix`（dsh-persona 0.1.5-rc.1 的 Config：prefix 必填、suffix 默认空）。
+# 这里曾写作 `text` —— 那是更早版本的写法。0.1.5-rc.1 起 `text` 不再是合法字段，
+# 于是校验直接失败（`$.prefix missing required value (at prefix)`），而 preset 挂载
+# 失败 = **每一次「新建会话」都失败**（界面只表现为点按钮没反应、没有任何提示）。
+# 见 docs/handoff.md 陷阱 70。
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: >-
+    prefix: >-
       You are the user's long-term Obsidian knowledge-base assistant for
       mathematical (and adjacent: statistics, R/LaTeX) notes and
       research thinking, powered by the {{model}} model. Your working
