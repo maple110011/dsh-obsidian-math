@@ -1,0 +1,25 @@
+feat(links): 笔记链接默认新标签页打开，并且不再出现"外部网页"
+
+用户第二次反馈（链接已经能跳转之后）：
+① "我希望的是新开一个页面，而不是直接顶掉原页面"；
+② "每次我点击 dsh 中双链时都会打开一个外部网页，我希望没有这个网页"。
+
+① 开在新标签页
+- `/open` 原先写死 `openLinkText(path, '', false)`（替换当前页）。现在默认 true，
+  取 setting `noteLinkPane`（默认 'new-tab'）；链接带 `pane=current` 时按链接自身意图走。
+- 新增设置项「点回复里的笔记链接时，笔记开在哪里」（新标签页 / 当前标签页）。
+
+② 没有那个"外部网页"
+- 真因：`/open` 返回一张 "已在 Obsidian 中打开：<路径>" 的 HTML，再靠
+  `setTimeout(history.back, 400)` 退回 dsh。那张中转页既是"打开的网页"，
+  也让 iframe 白白卸载重载一次 SPA（丢草稿与滚动位置）。
+- 改法两层：
+  a) `/open` 改回 **204 空响应**（什么都不显示、什么都不跳）；
+  b) 代理给侧栏注入一段点击拦截脚本：凡是 `/open?`、`/feedback?` 且与页面同源的链接，
+     preventDefault + stopImmediatePropagation，改用 `fetch(..., {mode:'no-cors',
+     redirect:'error'})` 静默请求。于是页面根本不跳走，也就没有任何网页出现。
+     带修饰键、中键、外部域名的链接一律放行（不劫持用户的正常操作）。
+- 回归：test-link-server.mjs 13 → 19 项，其中 ⑤ 用**真 headless Chromium + CDP** 验证
+  "点笔记链接不导航、请求确实发出、外部链接不被拦截"。
+
+门禁 38/38。main.js 已重建并 deploy-local。

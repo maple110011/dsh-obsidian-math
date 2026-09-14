@@ -165,7 +165,12 @@ const DEFAULT_SETTINGS = {
   // 之后每次启动复用 ⇒ 旧回复里的链接在插件重载后仍然有效；万一端口被占，回落随机端口
   // 并写日志（宁可不稳定，也不能起不来）。
   linkServerPort: 39217,
-  linkServerToken: ''
+  linkServerToken: '',
+  // 点 dsh 回复里的笔记链接时，笔记开在哪里：
+  //   'new-tab'（默认）在新标签页打开，不顶掉你正在看的笔记；
+  //   'current'  沿用 Obsidian 的"在当前页打开"行为（旧行为）。
+  // 拼成 'split' 的语义由 Obsidian 自己的"新标签页默认位置"设置决定。
+  noteLinkPane: 'new-tab'
 };
 
 // ── small helpers ───────────────────────────────────────────────────────────
@@ -392,13 +397,30 @@ class LinkServer {
         return;
       }
       try {
-        this.plugin.app.workspace.openLinkText(notePath, '', false);
+        // `newLeaf` = true ⇒ 在新标签页/新分屏里打开，**不顶掉**用户当前正在看的笔记。
+        // Obsidian 用 `openLinkText` 的第三个参数区分这两种行为；默认取插件设置
+        // （`noteLinkPane`，默认 new-tab），链接里带 `pane=current` 时按链接自身的意图走
+        // （这样"回到旧行为"不需要改设置，模型/用户都能逐条决定）。
+        const paneParam = (url.searchParams.get('pane') ?? '').trim().toLowerCase();
+        const openInNewPane = paneParam === 'current'
+          ? false
+          : paneParam === 'new-tab' || paneParam === 'new'
+            ? true
+            : this.plugin?.settings?.noteLinkPane !== 'current';
+        this.plugin.app.workspace.openLinkText(notePath, '', openInNewPane);
       } catch (error) {
         finish(500, String(error));
         return;
       }
-      const display = notePath.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-      finish(200, `<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;padding:24px"><p>已在 Obsidian 中打开：<code>${display}</code></p><script>setTimeout(function(){history.back()},400)</script></body>`, true);
+      // 空响应：**不再返回中转页**。以前这里返回一张 "已在 Obsidian 中打开：<路径>"
+      // 的 HTML，再靠 `history.back()` 退回 dsh；那张页面就是用户看到的"每次点链接都
+      // 打开一个外部网页"（在侧栏 iframe 里闪现、在浏览器里则是真的跳走）。
+      // 侧栏里的点击现在由注入的拦截脚本改成静默请求（见 perfStylesheet 后的脚本），
+      // 这条 204 是给"直接在浏览器里点开链接"的兜底：什么都不显示、什么都不跳。
+      if (!res.headersSent) {
+        res.writeHead(204, { 'cache-control': 'no-store' });
+        res.end();
+      }
     }
   }
 
@@ -615,12 +637,42 @@ class DshWebProxy {
     ].join('\n');
   }
 
+  /**
+   * Intercept clicks on note links INSIDE the sidebar frame.
+   *
+   * WHY: those links point at the plugin's LinkServer (`…/open?path=…&t=…`). Left alone they
+   * navigate the frame itself away from dsh, and even though `/open` now answers `204` the
+   * navigation is still wrong: the SPA is torn down and reloaded (losing the composer draft and
+   * the scroll position), and in a plain browser the tab really does leave dsh. Swallowing the
+   * click and replaying the request with `fetch` keeps the app mounted and shows nothing.
+   *
+   * `redirect: 'error'` is what makes this safe to run against ANY link: if the target ever
+   * answers with a redirect or an HTML document we abort silently instead of fetching a whole
+   * page into memory (and we never look at the response otherwise — `mode: 'no-cors'` would
+   * forbid it anyway).
+   */
+  noteLinkInterceptor() {
+    return `<script id="dsh-obsidian-note-link" data-plugin="dsh-math-assistant">!function(){` +
+      `if(window.__dshObsidianNoteLink)return;window.__dshObsidianNoteLink=1;` +
+      `document.addEventListener("click",function(e){` +
+      `if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;` +
+      `var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;` +
+      `if(!a)return;var href=a.getAttribute("href")||"";` +
+      `if(href.indexOf("/open?")<0&&href.indexOf("/feedback?")<0)return;` +
+      `var url;try{url=new URL(a.href,location.href)}catch(_){return}` +
+      `var sameAuthority=url.port===""?location.port:(url.port===location.port);` +
+      `if(url.hostname!=="127.0.0.1"||!sameAuthority)return;` +
+      `e.preventDefault();e.stopImmediatePropagation();` +
+      `try{fetch(url.pathname+url.search,{mode:"no-cors",redirect:"error",credentials:"omit",cache:"no-store"}).catch(function(){})}catch(_){}}` +
+      `,true)}();<\/script>`;
+  }
+
   /** Insert the perf stylesheet as the LAST thing in <head> (wins the cascade). */
   injectPerfStyle(html) {
     if (html.includes(this.perfStyleId)) return html;
     const at = html.lastIndexOf('</head>');
     if (at === -1) return html;
-    return html.slice(0, at) + this.perfStylesheet() + html.slice(at);
+    return html.slice(0, at) + this.perfStylesheet() + this.noteLinkInterceptor() + html.slice(at);
   }
 
   /** A navigation (not a fetch for CSS/JS/JSON): the only HTML we inject into. */
@@ -2853,6 +2905,20 @@ class DshObsidianSettingTab extends PluginSettingTab {
         this.plugin.reloadViews();
         new Notice(value ? '侧栏已恢复皮肤动态装饰，面板正在重新加载。' : '侧栏已停用皮肤动态脚本（最流畅），面板正在重新加载。');
       }));
+
+    containerEl.createEl('h3', { text: '笔记链接' });
+    new Setting(containerEl)
+      .setName('点回复里的笔记链接时，笔记开在哪里')
+      .setDesc('默认「新标签页」：不顶掉你正在看的笔记。选「当前页」则沿用 Obsidian 的默认行为（会替换当前标签页）。无论哪种，链接本身都不会再导航侧栏——点击是静默请求，页面不会被顶掉、也不会出现中转网页。')
+      .addDropdown((dropdown) => dropdown
+        .addOption('new-tab', '新标签页（不顶掉当前笔记）')
+        .addOption('current', '当前标签页')
+        .setValue(this.plugin.settings.noteLinkPane === 'current' ? 'current' : 'new-tab')
+        .onChange(async (value) => {
+          this.plugin.settings.noteLinkPane = value === 'current' ? 'current' : 'new-tab';
+          await this.plugin.saveSettings();
+          new Notice(value === 'current' ? '笔记链接将替换当前标签页。' : '笔记链接将在新标签页打开。');
+        }));
 
     containerEl.createEl('h3', { text: '捕获策略' });
     containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制助手把新信息写入记忆的方式。选择结果直接写入 vault 内的 .deepseek/capture-policy.md（模型不得修改此文件；你的口头指令永远优先于策略）。' });

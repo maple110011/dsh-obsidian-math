@@ -104,7 +104,8 @@ await new Promise((resolve) => blocker.close(resolve));
 
 // ④ 两个端点都受令牌保护（CSRF），且各自的状态码符合契约。
 const pluginD = makePlugin({ linkServerPort: 39302, linkServerToken: 'abc123' });
-pluginD.app.workspace = { openLinkText: () => { pluginD.opened = true; } };
+const openedWith = [];
+pluginD.app.workspace = { openLinkText: (path, source, newLeaf) => { openedWith.push({ path, source, newLeaf }); } };
 const d = new LinkServer(pluginD);
 d.start();
 await sleep(400);
@@ -123,12 +124,106 @@ check('④ /open 缺令牌 → 403（CSRF 防护，与 /feedback 一致）', ope
 const openBadToken = await get('/open?path=' + encodeURIComponent('数学/随便.md') + '&t=wrong');
 check('④ /open 令牌不对 → 403', openBadToken.status === 403, `status=${openBadToken.status}`);
 const openOk = await get('/open?path=' + encodeURIComponent('数学/随便.md') + '&t=abc123');
-check('④ /open 令牌正确 → 200 且真的调用了 openLinkText', openOk.status === 200 && pluginD.opened === true, `status=${openOk.status} opened=${pluginD.opened === true}`);
+check('④ /open 令牌正确 → 204 且**空响应体**（不再有中转页）', openOk.status === 204 && openOk.body === '', `status=${openOk.status} bodyLen=${openOk.body.length}`);
+check('④ 打开笔记时 newLeaf=true（不顶掉用户当前页）', openedWith.length === 1 && openedWith[0].newLeaf === true, JSON.stringify(openedWith[0] ?? null));
+const openCurrent = await get('/open?path=' + encodeURIComponent('数学/随便.md') + '&t=abc123&pane=current');
+check('④ pane=current 时 newLeaf=false（可回退旧行为）', openedWith.length === 2 && openedWith[1].newLeaf === false, JSON.stringify(openedWith[1] ?? null));
 const feedbackBadToken = await get('/feedback?path=.deepseek/memory/records/a.md&action=confirm&t=wrong');
 check('④ /feedback 令牌不对 → 403', feedbackBadToken.status === 403, `status=${feedbackBadToken.status}`);
 const feedbackTraversal = await get('/feedback?path=' + encodeURIComponent('.deepseek/../secret.md') + '&action=confirm&t=abc123');
 check('④ /feedback 路径穿越 → 400/403', feedbackTraversal.status === 400 || feedbackTraversal.status === 403, `status=${feedbackTraversal.status}`);
 await d.stop();
+
+// ⑤ 注入的点击拦截脚本：点笔记链接**不能**把 iframe 导航走（否则 SPA 被卸载重载），
+//    但请求必须发出去。用真浏览器（headless Chromium）+ CDP 验证，因为这是页内行为。
+const interceptor = (() => {
+  const at = template.indexOf('noteLinkInterceptor()');
+  if (at < 0) throw new Error('noteLinkInterceptor not found in the template');
+  const body = template.slice(at, template.indexOf('\n  }', at));
+  const start = body.indexOf('return `<script');
+  const end = body.lastIndexOf('`;');
+  // 取出模板字面量的内容，把 `\`` 与 `<\/script>` 还原成真实字符。
+  const raw = body.slice(start + 'return `'.length, end);
+  return raw.replace(/<\\\/script>/g, '</script>');
+})();
+check('⑤ 拦截脚本里有 click 捕获 + fetch + preventDefault', interceptor.includes('addEventListener("click"') && interceptor.includes('fetch(') && interceptor.includes('preventDefault'), `${interceptor.length} 字节`);
+
+const CHROME = process.env.CHROME_PATH ?? 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+if (!existsSync(CHROME)) {
+  console.log('[skip] ⑤ 真浏览器验证 | 找不到 Chromium（' + CHROME + '）');
+} else {
+  const { spawn } = await import('node:child_process');
+  const { mkdtempSync, rmSync: rm } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const hits = [];
+  const page = createServer((req, res) => {
+    if (req.url.startsWith('/open')) { hits.push(req.url); res.writeHead(204, { 'cache-control': 'no-store' }); res.end(); return; }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><html><head>' + interceptor + '</head><body><div id="marker">dsh-app-mounted</div>'
+      + '<a id="note" href="/open?path=' + encodeURIComponent('数学/随便.md') + '&t=abc123">笔记</a>'
+      + '<a id="outside" href="http://example.com/x">外部</a></body></html>');
+  });
+  await new Promise((resolve) => page.listen(0, '127.0.0.1', resolve));
+  const pagePort = page.address().port;
+  const userData = mkdtempSync(join(tmpdir(), 'dsh-link-'));
+  const debugPort = 9371;
+  const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${debugPort}`, `--user-data-dir=${userData}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore'] });
+  let target = null;
+  for (let i = 0; i < 60 && target === null; i += 1) {
+    await sleep(400);
+    try {
+      const list = await new Promise((resolve, reject) => {
+        import('node:http').then(({ get }) => get(`http://127.0.0.1:${debugPort}/json/list`, (r) => {
+          const c = [];
+          r.on('data', (d) => c.push(d));
+          r.on('end', () => resolve(JSON.parse(Buffer.concat(c).toString('utf8'))));
+        }).on('error', reject));
+      });
+      target = list.find((t) => t.type === 'page') ?? null;
+    } catch { /* wait */ }
+  }
+  if (target === null) {
+    check('⑤ 真浏览器验证', false, 'Chromium 没有暴露 page target');
+  } else {
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((res, rej) => { ws.addEventListener('open', res, { once: true }); ws.addEventListener('error', rej, { once: true }); });
+    let id = 0;
+    const pending = new Map();
+    ws.addEventListener('message', (e) => {
+      const m = JSON.parse(e.data);
+      if (m.id !== undefined && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result); }
+    });
+    const send = (method, params = {}) => new Promise((res, rej) => { const n = ++id; pending.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method, params })); setTimeout(() => { if (pending.has(n)) { pending.delete(n); rej(new Error('timeout ' + method)); } }, 30000); });
+    const evalJs = async (expr) => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })).result?.value;
+    await send('Page.enable');
+    await send('Runtime.enable');
+    await send('Page.navigate', { url: `http://127.0.0.1:${pagePort}/` });
+    await sleep(1200);
+    await evalJs('document.getElementById("note").click()');
+    await sleep(700);
+    check('⑤ 点笔记链接后页面没有被导航走（marker 还在）', await evalJs('!!document.getElementById("marker")') === true);
+    check('⑤ 点笔记链接确实发出了 /open 请求', hits.length === 1, `hits=${hits.join(',') || '(none)'}`);
+    // 外部链接必须**不被**拦截。判据不能看 location（点完页面已经导航走了，读到的就是
+    // example.com，我第一版就写错了）：直接在**窗口级捕获**里记录 defaultPrevented——
+    // 窗口监听先于 document 监听执行，此时读到的就是拦截器是否调用过 preventDefault。
+    const outsidePrevented = await evalJs(`(() => {
+      let prevented = null;
+      const spy = (event) => { prevented = event.defaultPrevented; };
+      window.addEventListener('click', spy, true);
+      document.getElementById('outside').click();
+      window.removeEventListener('click', spy, true);
+      return prevented;
+    })()`);
+    check('⑤ 外部链接不被拦截（defaultPrevented 为 false）', outsidePrevented === false, `defaultPrevented=${String(outsidePrevented)}`);
+    check('⑤ 外部链接没有产生 /open 请求', hits.length === 1, `hits=${hits.length}`);
+    ws.close();
+  }
+  chrome.kill();
+  await new Promise((resolve) => page.close(resolve));
+  // Chromium 的 profile 目录在 kill 之后仍可能被锁住（Windows 上频繁 EPERM）；
+  // 删不掉只是留下一个临时目录，绝不能因此把整套测试判红。
+  try { rm(userData, { recursive: true, force: true }); } catch { /* 留给系统清理 */ }
+}
 
 console.log(`__CHECKS__ ${passed}/${total}`);
 process.exit(passed === total ? 0 : 1);
