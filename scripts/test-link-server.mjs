@@ -135,18 +135,37 @@ check('④ /feedback 路径穿越 → 400/403', feedbackTraversal.status === 400
 await d.stop();
 
 // ⑤ 注入的点击拦截脚本：点笔记链接**不能**把 iframe 导航走（否则 SPA 被卸载重载），
-//    但请求必须发出去。用真浏览器（headless Chromium）+ CDP 验证，因为这是页内行为。
+//    也不能留下 `target="_blank"`（那会在事件分派之外开新窗口 ⇒ Electron 交给系统浏览器，
+//    就是用户看到的"外部网页"）。用真浏览器（headless Chromium）+ CDP 验证，因为这是页内行为。
+//
+// ⚠️ 提取方法的坑（我自己先踩了两次）：
+//   ① 按"从方法名切到第一个 `\n  }`"取源码 ⇒ 撞上方法体内的内嵌函数声明，脚本被**截断**；
+//   ② 取出 `return \`…\`` 之间的**源码文本**（还带着 `` ` + `` 拼接符号与 `\`` 转义）
+//      当作字符串用 ⇒ 浏览器里 `SyntaxError: Unexpected token 'if'`，拦截器根本没跑，
+//      而现象（target 还在）会把人引向"代码没生效"这个错误结论。
+//   正确做法：按配平大括号取出方法体，**求值 `return` 那段源码**，拿到真正的字符串。
 const interceptor = (() => {
-  const at = template.indexOf('noteLinkInterceptor()');
+  const at = template.indexOf('noteLinkInterceptor() {');
   if (at < 0) throw new Error('noteLinkInterceptor not found in the template');
-  const body = template.slice(at, template.indexOf('\n  }', at));
-  const start = body.indexOf('return `<script');
-  const end = body.lastIndexOf('`;');
-  // 取出模板字面量的内容，把 `\`` 与 `<\/script>` 还原成真实字符。
-  const raw = body.slice(start + 'return `'.length, end);
-  return raw.replace(/<\\\/script>/g, '</script>');
+  const braceStart = template.indexOf('{', at);
+  let depth = 0;
+  let end = -1;
+  for (let i = braceStart; i < template.length; i += 1) {
+    if (template[i] === '{') depth += 1;
+    else if (template[i] === '}') { depth -= 1; if (depth === 0) { end = i; break; } }
+  }
+  const body = template.slice(braceStart, end + 1);
+  const start = body.indexOf('return ');
+  const stop = body.lastIndexOf(';');
+  if (start < 0 || stop < 0) throw new Error('noteLinkInterceptor: return statement not found');
+  // eslint-disable-next-line no-new-func -- 源码是本仓库的；这里只是让 JS 自己解析模板字面量
+  return new Function(body.slice(start, stop + 1))();
 })();
-check('⑤ 拦截脚本里有 click 捕获 + fetch + preventDefault', interceptor.includes('addEventListener("click"') && interceptor.includes('fetch(') && interceptor.includes('preventDefault'), `${interceptor.length} 字节`);
+check('⑤ 拦截脚本提取完整且是真字符串（含 candidate/strip/MutationObserver/click）',
+  typeof interceptor === 'string' && !interceptor.includes('` +')
+  && interceptor.includes('function candidate') && interceptor.includes('function strip')
+  && interceptor.includes('MutationObserver') && interceptor.includes('addEventListener("click"'),
+  `${typeof interceptor === 'string' ? interceptor.length : 'n/a'} 字节`);
 
 const CHROME = process.env.CHROME_PATH ?? 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 if (!existsSync(CHROME)) {
@@ -159,9 +178,13 @@ if (!existsSync(CHROME)) {
   const page = createServer((req, res) => {
     if (req.url.startsWith('/open')) { hits.push(req.url); res.writeHead(204, { 'cache-control': 'no-store' }); res.end(); return; }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    // 关键：dsh 的 markdown 渲染器会给这些链接加 `target="_blank" rel="noopener noreferrer"`，
+    // 而 `_blank` 的新窗口请求发生在事件分派**之外**（preventDefault 拦不住）——夹具必须带上它，
+    // 否则这条回归测不到真问题。
     res.end('<!doctype html><html><head>' + interceptor + '</head><body><div id="marker">dsh-app-mounted</div>'
-      + '<a id="note" href="/open?path=' + encodeURIComponent('数学/随便.md') + '&t=abc123">笔记</a>'
-      + '<a id="outside" href="http://example.com/x">外部</a></body></html>');
+      + '<a id="note" href="/open?path=' + encodeURIComponent('数学/随便.md') + '&t=abc123" target="_blank" rel="noopener noreferrer">笔记</a>'
+      + '<a id="outside" href="http://example.com/x" target="_blank">外部</a>'
+      + '<div id="late"></div></body></html>');
   });
   await new Promise((resolve) => page.listen(0, '127.0.0.1', resolve));
   const pagePort = page.address().port;
@@ -199,6 +222,21 @@ if (!existsSync(CHROME)) {
     await send('Runtime.enable');
     await send('Page.navigate', { url: `http://127.0.0.1:${pagePort}/` });
     await sleep(1200);
+    check('⑤ 初始化时就去掉了 target/rel（否则 _blank 会开外部窗口）',
+      (await evalJs('document.getElementById("note").getAttribute("target")')) === null
+      && (await evalJs('document.getElementById("note").getAttribute("rel")')) === null,
+      'target=' + String(await evalJs('document.getElementById("note").getAttribute("target")')));
+    // 渲染器会不断重建链接 ⇒ 后续插入的链接也必须被清掉（MutationObserver）。
+    await evalJs(`(() => {
+      const a = document.createElement('a');
+      a.id = 'lateLink';
+      a.setAttribute('href', '/open?path=x.md&t=abc123');
+      a.setAttribute('target', '_blank');
+      a.textContent = '晚到的链接';
+      document.getElementById('late').appendChild(a);
+    })()`);
+    await sleep(300);
+    check('⑤ 运行中新插入的链接也被清掉 target（渲染器会重建）', (await evalJs('document.getElementById("lateLink").getAttribute("target")')) === null);
     await evalJs('document.getElementById("note").click()');
     await sleep(700);
     check('⑤ 点笔记链接后页面没有被导航走（marker 还在）', await evalJs('!!document.getElementById("marker")') === true);

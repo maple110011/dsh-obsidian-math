@@ -638,32 +638,59 @@ class DshWebProxy {
   }
 
   /**
-   * Intercept clicks on note links INSIDE the sidebar frame.
+   * Intercept note links INSIDE the sidebar frame.
    *
-   * WHY: those links point at the plugin's LinkServer (`…/open?path=…&t=…`). Left alone they
-   * navigate the frame itself away from dsh, and even though `/open` now answers `204` the
-   * navigation is still wrong: the SPA is torn down and reloaded (losing the composer draft and
-   * the scroll position), and in a plain browser the tab really does leave dsh. Swallowing the
-   * click and replaying the request with `fetch` keeps the app mounted and shows nothing.
+   * WHY: those links point at the plugin's LinkServer (`…/open?path=…&t=…`). Two things go
+   * wrong if we leave them alone:
    *
-   * `redirect: 'error'` is what makes this safe to run against ANY link: if the target ever
-   * answers with a redirect or an HTML document we abort silently instead of fetching a whole
-   * page into memory (and we never look at the response otherwise — `mode: 'no-cors'` would
-   * forbid it anyway).
+   * 1. **dsh's markdown renderer puts `target="_blank"` + `rel="noopener noreferrer"` on
+   *    them.** Measured on a real click (headless Chromium + CDP, 2026-09-14): the click emits
+   *    `Page.windowOpen` for the `/open` URL and `window.open` is never called from JS — i.e.
+   *    the new-window request comes from the `_blank` default action, *outside* the event
+   *    dispatch. Electron hands that to the system browser, which is the "外部网页" the user
+   *    sees on every click. `preventDefault()` in a click listener does **not** stop it.
+   *    ⇒ the fix is to **strip the target/rel attributes** on these links (and keep doing it,
+   *    because the renderer recreates them on every re-render).
+   * 2. Left as a normal link they would navigate THIS frame away from dsh, tearing down the SPA
+   *    (composer draft, scroll position). Swallowing the click and replaying the request with
+   *    `fetch` keeps the app mounted and shows nothing at all.
+   *
+   * `redirect: 'error'` is what makes the click path safe to run against ANY link: if the target
+   * ever answers with a redirect or an HTML document we abort silently instead of pulling a whole
+   * page into memory.
    */
   noteLinkInterceptor() {
     return `<script id="dsh-obsidian-note-link" data-plugin="dsh-math-assistant">!function(){` +
       `if(window.__dshObsidianNoteLink)return;window.__dshObsidianNoteLink=1;` +
+      // 判定：同源的 127.0.0.1 链接，且路径里带 /open? 或 /feedback?
+      `function candidate(a){` +
+      `if(!a||!a.getAttribute)return null;var href=a.getAttribute("href")||"";` +
+      `if(href.indexOf("/open?")<0&&href.indexOf("/feedback?")<0)return null;` +
+      `var u;try{u=new URL(a.href,location.href)}catch(_){return null}` +
+      `if(u.hostname!=="127.0.0.1")return null;` +
+      `if((u.port||"")!==(location.port||""))return null;` +
+      `return u}` +
+      // ① 去掉 _blank：这是"外部网页"的真正来源（target=_blank 的新窗口请求发生在事件分派之外，
+      //    preventDefault 拦不住）。渲染器每次重绘都会重建链接，所以用 MutationObserver 持续清。
+      `function strip(a){if(a.hasAttribute("target"))a.removeAttribute("target");if(a.hasAttribute("rel"))a.removeAttribute("rel")}` +
+      `function sweep(root){` +
+      `if(!root||!root.querySelectorAll)return;` +
+      `if(root.tagName==="A"&&candidate(root))strip(root);` +
+      `var list=root.querySelectorAll("a[target]");` +
+      `for(var i=0;i<list.length;i++)if(candidate(list[i]))strip(list[i])}` +
+      `new MutationObserver(function(records){` +
+      `for(var i=0;i<records.length;i++){var r=records[i];` +
+      `for(var j=0;j<r.addedNodes.length;j++)sweep(r.addedNodes[j]);` +
+      `if(r.type==="attributes"&&r.target&&r.target.tagName==="A")sweep(r.target)}})` +
+      `.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["target","rel"]});` +
+      `sweep(document.documentElement);` +
+      // ② 吞掉点击、改为静默请求：页面不跳走，也就任何页面都不出现。
       `document.addEventListener("click",function(e){` +
       `if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;` +
       `var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;` +
-      `if(!a)return;var href=a.getAttribute("href")||"";` +
-      `if(href.indexOf("/open?")<0&&href.indexOf("/feedback?")<0)return;` +
-      `var url;try{url=new URL(a.href,location.href)}catch(_){return}` +
-      `var sameAuthority=url.port===""?location.port:(url.port===location.port);` +
-      `if(url.hostname!=="127.0.0.1"||!sameAuthority)return;` +
+      `var u=candidate(a);if(u===null)return;` +
       `e.preventDefault();e.stopImmediatePropagation();` +
-      `try{fetch(url.pathname+url.search,{mode:"no-cors",redirect:"error",credentials:"omit",cache:"no-store"}).catch(function(){})}catch(_){}}` +
+      `try{fetch(u.pathname+u.search,{mode:"no-cors",redirect:"error",credentials:"omit",cache:"no-store"}).catch(function(){})}catch(_){}}` +
       `,true)}();<\/script>`;
   }
 
