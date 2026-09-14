@@ -21,3 +21,4 @@ scripts/qa/benchmark-vault/.deepseek/cache/
 
 # local promo/draft notes (user decided these stay out of the repo; use `git add -f` to override)
 推文-*.md
+commit-msg.txt
