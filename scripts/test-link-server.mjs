@@ -175,14 +175,19 @@ if (!existsSync(CHROME)) {
   const { mkdtempSync, rmSync: rm } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const hits = [];
+  // ⚠️ 链接指向**另一个端口**（模拟 LinkServer 端口 ≠ 页面端口）。离线夹具最初把两者放在同一
+  // 端口，于是"端口必须一致"的错误判定一路绿灯，而真实页面上链接全被放行 —— 夹具必须复现真实
+  // 拓扑，否则它只证明了一个不存在的场景是对的。
+  const otherPortServer = createServer((req, res) => { hits.push('other:' + req.url); res.writeHead(204); res.end(); });
+  await new Promise((resolve) => otherPortServer.listen(0, '127.0.0.1', resolve));
+  const otherPort = otherPortServer.address().port;
   const page = createServer((req, res) => {
-    if (req.url.startsWith('/open')) { hits.push(req.url); res.writeHead(204, { 'cache-control': 'no-store' }); res.end(); return; }
+    if (req.url.startsWith('/open')) { hits.push('page:' + req.url); res.writeHead(204, { 'cache-control': 'no-store' }); res.end(); return; }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    // 关键：dsh 的 markdown 渲染器会给这些链接加 `target="_blank" rel="noopener noreferrer"`，
-    // 而 `_blank` 的新窗口请求发生在事件分派**之外**（preventDefault 拦不住）——夹具必须带上它，
-    // 否则这条回归测不到真问题。
+    // 夹具复现两件真实事实：① 渲染器给链接加 `target="_blank" rel="noopener noreferrer"`；
+    // ② 链接的 host:port 是 LinkServer 那个（与页面不同源）。
     res.end('<!doctype html><html><head>' + interceptor + '</head><body><div id="marker">dsh-app-mounted</div>'
-      + '<a id="note" href="/open?path=' + encodeURIComponent('数学/随便.md') + '&t=abc123" target="_blank" rel="noopener noreferrer">笔记</a>'
+      + '<a id="note" href="http://127.0.0.1:' + otherPort + '/open?path=' + encodeURIComponent('数学/随便.md') + '&t=abc123" target="_blank" rel="noopener noreferrer">笔记</a>'
       + '<a id="outside" href="http://example.com/x" target="_blank">外部</a>'
       + '<div id="late"></div></body></html>');
   });
@@ -226,6 +231,9 @@ if (!existsSync(CHROME)) {
       (await evalJs('document.getElementById("note").getAttribute("target")')) === null
       && (await evalJs('document.getElementById("note").getAttribute("rel")')) === null,
       'target=' + String(await evalJs('document.getElementById("note").getAttribute("target")')));
+    check('⑤ href 被改写成页面自己的 origin（链接变成同源）',
+      String(await evalJs('document.getElementById("note").getAttribute("href")')).startsWith(`http://127.0.0.1:${pagePort}/open?`),
+      String(await evalJs('document.getElementById("note").getAttribute("href")')).slice(0, 60));
     // 渲染器会不断重建链接 ⇒ 后续插入的链接也必须被清掉（MutationObserver）。
     await evalJs(`(() => {
       const a = document.createElement('a');

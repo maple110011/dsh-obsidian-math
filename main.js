@@ -662,27 +662,33 @@ class DshWebProxy {
   noteLinkInterceptor() {
     return `<script id="dsh-obsidian-note-link" data-plugin="dsh-math-assistant">!function(){` +
       `if(window.__dshObsidianNoteLink)return;window.__dshObsidianNoteLink=1;` +
-      // 判定：同源的 127.0.0.1 链接，且路径里带 /open? 或 /feedback?
+      // 判定：回环地址，且路径带 /open? 或 /feedback?
+      // ⚠️ **不要求端口相同**——链接原本写成 LinkServer 自己的端口（如 :39217）而页面在
+      // :3180，早先按"端口必须一致"判定，于是真实页面上的链接**全部被放行**、`_blank`
+      // 没被清掉、点击也没被吞，用户看到的仍然是"有跳转 + 有外部网页"。离线夹具当时把两者
+      // 放在同一端口，所以一直是绿的（夹具太宽松）。现在靠**路径 + 回环主机**识别。
       `function candidate(a){` +
       `if(!a||!a.getAttribute)return null;var href=a.getAttribute("href")||"";` +
       `if(href.indexOf("/open?")<0&&href.indexOf("/feedback?")<0)return null;` +
       `var u;try{u=new URL(a.href,location.href)}catch(_){return null}` +
       `if(u.hostname!=="127.0.0.1")return null;` +
-      `if((u.port||"")!==(location.port||""))return null;` +
       `return u}` +
-      // ① 去掉 _blank：这是"外部网页"的真正来源（target=_blank 的新窗口请求发生在事件分派之外，
-      //    preventDefault 拦不住）。渲染器每次重绘都会重建链接，所以用 MutationObserver 持续清。
-      `function strip(a){if(a.hasAttribute("target"))a.removeAttribute("target");if(a.hasAttribute("rel"))a.removeAttribute("rel")}` +
+      // ① 去掉 _blank（外部网页的真正来源：_blank 的新窗口请求发生在事件分派之外，
+      //    preventDefault 拦不住），并把 href 改写成**页面自己的 origin**，让链接同源。
+      `function strip(a,u){` +
+      `if(a.hasAttribute("target"))a.removeAttribute("target");if(a.hasAttribute("rel"))a.removeAttribute("rel");` +
+      `var want=location.origin+u.pathname+u.search;` +
+      `if(a.getAttribute("href")!==want)a.setAttribute("href",want)}` +
       `function sweep(root){` +
       `if(!root||!root.querySelectorAll)return;` +
-      `if(root.tagName==="A"&&candidate(root))strip(root);` +
-      `var list=root.querySelectorAll("a[target]");` +
-      `for(var i=0;i<list.length;i++)if(candidate(list[i]))strip(list[i])}` +
+      `if(root.tagName==="A"){var s=candidate(root);if(s!==null)strip(root,s)}` +
+      `var list=root.querySelectorAll("a[href]");` +
+      `for(var i=0;i<list.length;i++){var u=candidate(list[i]);if(u!==null)strip(list[i],u)}}` +
       `new MutationObserver(function(records){` +
       `for(var i=0;i<records.length;i++){var r=records[i];` +
       `for(var j=0;j<r.addedNodes.length;j++)sweep(r.addedNodes[j]);` +
       `if(r.type==="attributes"&&r.target&&r.target.tagName==="A")sweep(r.target)}})` +
-      `.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["target","rel"]});` +
+      `.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["target","rel","href"]});` +
       `sweep(document.documentElement);` +
       // ② 吞掉点击、改为静默请求：页面不跳走，也就任何页面都不出现。
       `document.addEventListener("click",function(e){` +
@@ -690,7 +696,7 @@ class DshWebProxy {
       `var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;` +
       `var u=candidate(a);if(u===null)return;` +
       `e.preventDefault();e.stopImmediatePropagation();` +
-      `try{fetch(u.pathname+u.search,{mode:"no-cors",redirect:"error",credentials:"omit",cache:"no-store"}).catch(function(){})}catch(_){}}` +
+      `try{fetch(u.pathname+u.search,{redirect:"error",credentials:"omit",cache:"no-store"}).catch(function(){})}catch(_){}}` +
       `,true)}();<\/script>`;
   }
 
@@ -873,7 +879,46 @@ class DshWebProxy {
     return { host: '127.0.0.1', port: this.upstreamPort, method: req.method, path: req.url, headers };
   }
 
+  /**
+   * Relay a LinkServer request (`/open`, `/feedback`) that arrived on the PROXY's port.
+   *
+   * Returns true when it owned the response. The link URL the agent renders may name either the
+   * LinkServer's own port or the proxy's; both work, because the injected script rewrites note
+   * links to the page origin and this relay accepts whatever arrives.
+   */
+  forwardToLinkServer(req, res) {
+    let url;
+    try {
+      url = new URL(String(req.url ?? '/'), 'http://127.0.0.1');
+    } catch {
+      return false;
+    }
+    if (url.pathname !== '/open' && url.pathname !== '/feedback') return false;
+    if ((url.searchParams.get('t') ?? '') === '') return false;
+    const port = Number(this.plugin?.settings?.linkServerPort ?? 0);
+    const running = Number(this.plugin?.linkServer?.port ?? 0) > 0;
+    if (!running || !(port > 0 && port < 65536)) return false;
+    const relay = httpRequest({ host: '127.0.0.1', port, path: url.pathname + url.search, method: req.method, headers: { host: `127.0.0.1:${port}` } }, (up) => {
+      res.writeHead(up.statusCode ?? 502, { 'content-type': up.headers['content-type'] ?? 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      up.pipe(res);
+    });
+    relay.on('error', () => {
+      this.log('[link] 转发 ' + url.pathname + ' 到 LinkServer 失败');
+      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('link server unreachable');
+    });
+    req.pipe(relay);
+    return true;
+  }
+
   forward(req, res) {
+    // `/open` 与 `/feedback` 属于 LinkServer（127.0.0.1:<linkServerPort>）。代理把它们**直接
+    // 转给 LinkServer**，于是这两个链接与 dsh 页面**同源**：
+    //   · 同源 ⇒ 注入的拦截脚本敢兜住点击（不同端口它必须放行，否则会连外部网页一起吞）；
+    //   · 同源 ⇒ Electron 不会把导航交给系统浏览器（跨源导航正是"外部网页"的来源）。
+    // 判据用"路径 + `t=` token"而不是"端口等于某个值"：token 是这两个端点独有的凭据，
+    // 而端口可能因被占而回落。
+    if (this.forwardToLinkServer(req, res)) return;
     const upstream = httpRequest(this.upstreamOptions(req), (up) => {
       const headers = { ...up.headers };
       // The cookie is ours to manage; framing headers would fight the sidebar.
