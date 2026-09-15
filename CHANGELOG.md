@@ -4,11 +4,24 @@
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-09-15
+
+> 承接 0.7.6 的三处实测缺陷：**工具返回值不合 schema**（`note_recall` 有一次直接不可用）、**链接跳转服务的端口/令牌一重载就变**、以及**点笔记链接会额外弹一个外部网页**。修完并各自补了零 token 门禁（35 → 38）。
+
 ### Fixed
 
 - **`note_recall` 会因返回值不合 schema 而整次失败**（模型侧表现为"工具侧报错，我改用 note_search/grep"）：dsh ≥0.1.5 会对**成功返回值**做严格校验，而本插件的工具 output schema 一律 `additionalProperties: false` —— 多返回一个未声明字段就是失败。已修三处：`note_recall` 的 match 多带 `hook`/`boundary`；`note_recall`/`note_strategy` 的 `excluded` 多带 `kind`/`score`；`note_create` 的返回键 `rel` 与声明的 `path` 不一致（另补上 `note_strategy` 漏返回的 `title`）。**新增两个零 token 门禁**：`test-tool-schemas.mjs`（含用 dsh 自己的校验器做变异验证）与 `test-tool-shape.mjs`（真调检索管线再递归比对）。
 - **`note_recall` 遇到"适用边界命中查询"的卡时直接抛异常**：`rankRecallDocuments` 里 `entry.doc.boundary` / `entry.doc.rel` 的形状写错了（`entry` 本身就是 scored 项，`.doc` 是 `undefined`）。只要库里任何一张卡带 `not_applicable_when` 且其边界短语出现在查询里，整个 `note_recall` 就不可用。这条分支此前**没有任何测试走过**。
-- **回复里的笔记链接一点就失效**：链接跳转服务的端口原先随机分配、令牌每次插件加载重新生成，而这两个值被写进 agent 的系统提示 ⇒ **插件一重载（更新 / 重开 Obsidian / 关开插件），此前所有回复里的链接就打不开了**（端口没人听，或令牌 403）。现在端口与令牌持久化在插件数据里，重载后复用；端口被占时回落随机端口并写日志。**旧的已生成链接仍需新回复才会带新地址。**
+- **回复里的笔记链接一点就失效**：链接跳转服务的端口原先随机分配、令牌每次插件加载重新生成，而这两个值被写进 agent 的系统提示 ⇒ **插件一重载（更新 / 重开 Obsidian / 关开插件），此前所有回复里的链接就打不开了**（端口没人听，或令牌 403）。现在端口与令牌持久化在插件数据里，重载后复用；端口被占时回落随机端口并写日志。
+- **点笔记链接会额外打开一个外部网页**：dsh 的 markdown 渲染器给链接加了 `target="_blank"`，其新窗口请求发生在**事件分派之外**，`preventDefault()` 拦不住；Electron 又把它交给系统浏览器。而且链接的 host:port 是链接服务自己的（与侧栏页面**不同源**），跨源导航同样会被外开。现在：注入脚本把链接改写成**页面自己的 origin**（同源）并**去掉 `target`/`rel`**（用 MutationObserver 持续清，因为渲染器每次重绘都会重建），点击改为静默请求；代理新增 `/open`、`/feedback` 中转，把落在外层端口上的这两个请求转给链接服务。**效果：点链接只在新标签页打开笔记，不跳转、不出现任何网页。**
+
+### Changed
+
+- **笔记链接默认在新标签页打开**（原先会顶掉你正在看的笔记）：新增设置项「点回复里的笔记链接时，笔记开在哪里」（新标签页 / 当前标签页）；链接带 `pane=current` 时按链接自身意图走。
+
+### Added
+
+- 门禁 35 → **38**：`test-tool-schemas.mjs`、`test-tool-shape.mjs`、`test-link-server.mjs`（后者用**真 headless Chromium + CDP** 验证"点链接不导航、请求确实发出、外部链接不被拦截"，夹具复现跨端口 + `target="_blank"` 的真实拓扑）。
 
 ## [0.7.6] - 2026-09-14
 

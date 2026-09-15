@@ -1,0 +1,29 @@
+0.7.7: 工具契约、note_recall 形状、链接跳转（端口稳定性 / 同源 / 新标签页）
+
+承接 0.7.6 的三处实测缺陷，修完各自补了零 token 门禁（35 → 38）。
+
+Fixed
+- note_recall 因返回值不合 schema 整次失败：dsh ≥0.1.5 对**成功返回值**也做严格校验，
+  而工具 output schema 一律 additionalProperties: false ⇒ 多一个未声明字段就是失败。
+  修三处：match 多带 hook/boundary；excluded 多带 kind/score；note_create 的键 rel
+  不是声明的 path（另补 note_strategy 漏返回的 title）。
+- note_recall 遇到"适用边界命中查询"的卡时直接抛 TypeError：rankRecallDocuments 里
+  entry.doc.boundary / entry.doc.rel 的形状写错了（entry 本身就是 scored 项）。
+  这条分支此前没有任何测试走过。
+- 链接跳转服务端口/令牌一重载就变（端口随机 + 令牌每次重生成，而两者被写进系统提示）
+  ⇒ 插件一重载，此前所有回复里的链接失效。现在持久化在插件数据里并复用。
+- 点笔记链接额外弹一个外部网页：渲染器给链接加 target="_blank"（其新窗口请求发生在
+  事件分派之外，preventDefault 拦不住），且链接 host:port 与侧栏页面不同源（跨源导航
+  在 Electron 里被交给系统浏览器）。现在注入脚本把 href 改写成页面 origin 并去掉
+  target/rel（MutationObserver 持续清），点击改为静默请求；代理新增 /open、/feedback
+  中转到链接服务。
+
+Changed
+- 笔记链接默认在新标签页打开（新增设置项「点回复里的笔记链接时，笔记开在哪里」；
+  链接带 pane=current 时按链接自身意图走）。
+
+Added（门禁 35 → 38）
+- test-tool-schemas.mjs：静态"声明了却没出现" + 用 dsh 自己的校验器跑 fixture + 变异验证。
+- test-tool-shape.mjs：真调检索管线，递归比对声明与实际，含"直通值必须被判违规"的反证。
+- test-link-server.mjs：真 headless Chromium + CDP 验证"点链接不导航、请求确实发出、
+  外部链接不被拦截"；夹具复现跨端口 + target="_blank" 的真实拓扑。
