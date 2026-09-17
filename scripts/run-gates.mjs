@@ -70,6 +70,11 @@ const GATES = [
   // `additionalProperties: false` ⇒ 多返回一个字段 = 每次调用都失败（2026-09-14 真实故障）。
   { name: 'test: tool output schemas vs dsh validator', args: ['scripts/test-tool-schemas.mjs'] },
   { name: 'test: tool output shape (real pipeline)', args: ['scripts/test-tool-shape.mjs'] },
+  // 文献索引的「状态」列是生成的：它原先取条目的机器默认值（恒为 unread），而
+  // cards/*.md 跨导入是保留的 —— 于是全库卡片其实都已蒸馏、索引却全显示「未读」，
+  // 且没有任何门禁会因此失败。逻辑抽到 scripts/lib/lit-index.mjs，本套件**进程内**
+  // 导入它（沙箱禁止捕获子进程管道输出，spawn/exec → EPERM，所以不能 shell 出去）。
+  { name: 'test: lit-import index logic', args: ['scripts/test-lit-import.mjs'] },
   // 链接跳转服务的端口/令牌必须跨插件加载稳定：否则旧回复里的笔记链接会静默失效
   // （端口没人听 / 令牌 403）。2026-09-14 用户实测的"双链点了没反应"就是这个。
   { name: 'test: link server port+token stability', args: ['scripts/test-link-server.mjs'] },
