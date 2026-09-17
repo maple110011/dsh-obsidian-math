@@ -18,7 +18,7 @@
 |---|---|
 | 目录结构、模块职责、数据流 | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | 上手/交接：改哪里、跑什么、**69 条历史陷阱** | [`docs/handoff.md`](docs/handoff.md)（§2 入口地图、§4 陷阱、§7 未做清单） |
-| **给 agent 的仓库维护方法（通用）** | [`docs/agent-repo-maintenance.md`](docs/agent-repo-maintenance.md) |
+| **给 agent 的仓库维护方法（通用）** | [`docs/agent-repo-maintenance.md`](docs/agent-repo-maintenance.md)（**§0.5 = 八荣八耻，动手前先读**） |
 | 可维护性审查与整改台账 | [`docs/maintainability-review-2026-09-11.md`](docs/maintainability-review-2026-09-11.md)（审计，只读）、[`docs/maintainability-fixes-2026-09-11.md`](docs/maintainability-fixes-2026-09-11.md)（状态 + 证据） |
 | 记忆系统的当前实现规格 | [`docs/memory/design.md`](docs/memory/design.md) |
 | 每条行为/契约**为什么**变成现在这样 | [`docs/changelog.md`](docs/changelog.md) |
