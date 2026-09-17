@@ -21,7 +21,20 @@
 **下一轮查清了，是夹具的问题，不是代码的问题**：我把同一段 profile 用**不同预算**量了一遍——`budgets.profile = 100 → 渲染 354 字符`、`2500 → 2453`、`99999 → 2453`。**上限一直是生效的**；我那个夹具的实际内容只有约 350 字符，**远小于 compact 档的 2500**，所以两档都够装、长度自然相同。
 > 教训比结论更值钱：**一个不超过上限的夹具，无法用来测上限**。而且我上一轮"登记异常、不硬改断言"的做法虽然方向对（没有把测试调绿），但**结论下早了**——"我查不出来"与"那里有问题"是两件事，我写成了后者。现在断言是真的：`compact 4600 < standard 6096 < rich 8102`，并另有一条"上限是**被强制**的而非仅仅被接近"（rich 8102 < 原始文件 10205）。**变异验证**：① `resolveBudgetTier` 恒返回 `standard` ⇒ 回落断言失败；② 把 compact 换成 standard 的值 ⇒ 递增断言与体积断言同时失败。
 
-**未做（第三批剩余）**：**Obsidian 设置页的档位下拉框**。它要改 `obsidian/main.template.js`（大文件）、重建 `main.js`，并且若新增环境变量还要同步 `docs/env-vars.md`（有双向一致守卫）。留待下一轮单独做，避免在上下文末端仓促改设置页。
+**未做（第三批剩余）：Obsidian 设置页的档位下拉框——查档后发现它卡在一条不存在的通道上，不是"还没写"。**
+
+设置项在这套架构里只写插件自己的 `data.json`（`DEFAULT_SETTINGS` → `loadData()`），而**预算档位是 preset 层的配置**（`agent.cordis.yml` 的 `config:` 段，由 `dsh/preset/math-memory.mjs` 的 `normalizeConfig` 读取）。查了两处，**插件里没有任何把它写回 preset 的路径**：
+
+- `agent.cordis.yml` 是**嵌入生成物**（`main.js` 里的 `EMBEDDED_PRESET`），bootstrap 时按它写入；`dsh/host/preset-sync.mjs` 的 `syncPresetTree` 是幂等字节同步，但**插件侧没有调用它**（grep `syncPreset|presetSync|PRESET_SYNC` 在 `main.template.js` 里无命中）。
+- 所以一个只改 `data.json` 的下拉框会**写进一个没人读的地方**——那种"看起来能用但什么都不做"的控件比没有更糟。
+
+**要落地需要先选一条通道（这是设计决定，不是实现细节）**：
+
+1. **插件写 `$DSH_HOME/<profile>/preset/agent.cordis.yml` 的 `config.budget` 并触发一次 preset 同步**——但这会让插件去改一个当前属于 bootstrap 生成物的文件，需处理"用户手改过怎么办"与字节门禁。
+2. **改由 vault 侧文件承载**（例如 `.deepseek/memory/config.md` 的 frontmatter），与 `capture-policy.md` 同一套路——现有先例是捕获策略：**用户在设置页改，插件把结果写进 vault 内的文件，preset 读那个文件**。这条与既有设计一致，我倾向它。
+3. 也可以先只写文档，让用户改 `agent.cordis.yml`（功能已可用，见上）。
+
+**结论**：档位功能**已经可用且已被断言**（改 preset 配置即可生效）；缺的是用户可达的入口，而入口需要先定通道。**登记为待办 + 需要你拍板**，不硬做。
 
 ## 2026-09-17 · 探针新增 §3 检索成本 Avg-R（第二批之五，第二批收尾）
 
