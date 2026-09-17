@@ -41,6 +41,8 @@ import {
 import { HOOK_SCHEMA_VERSION } from '../dsh/preset/hook-frontmatter.mjs';
 import {
   buildAuditReport,
+  resolveBudgetTier,
+  BUDGET_TIERS,
   memoDigest,
   latestUserText,
   pairMessages,
@@ -2050,6 +2052,64 @@ check('archive: a real memory card is still archived',
     occReport.report.includes('跨场合验证过的技巧') && occReport.report.includes('widely'),
     occReport.report.split('\n').filter((l) => l.includes('跨场合')).join(' / '));
   rmSync(occRoot, { recursive: true, force: true });
+}
+
+// ── 33f. injection budget tiers (batch 3: item 11) ──────────────────────────
+//
+// MemForest treats its compression ratio as an explicit dial and reads its
+// accuracy/cost curve off that dial, instead of leaving the size a hidden side effect
+// of the implementation. Same idea here: the memory section's size becomes a knob.
+//
+// The load-bearing property is the NEGATIVE one: `standard` must be byte-for-byte the
+// values that existed before tiers did, or merely offering a choice would change
+// behaviour for everyone who does not make one.
+{
+  const OLD_CONSTANTS = { profile: 4000, topics: 1800, records: 800, templates: 600, episodes: 1200, inbox: 1200, dialogue: 3000 };
+  check('budget: `standard` is exactly the values that predate tiers',
+    JSON.stringify(BUDGET_TIERS.standard) === JSON.stringify(OLD_CONSTANTS),
+    JSON.stringify(BUDGET_TIERS.standard));
+  const keys = Object.keys(OLD_CONSTANTS);
+  check('budget: all three tiers cover the same seven keys',
+    ['compact', 'standard', 'rich'].every((t) => keys.every((k) => Number.isFinite(BUDGET_TIERS[t][k]))),
+    JSON.stringify(Object.keys(BUDGET_TIERS)));
+  check('budget: compact < standard < rich on every key (the dial actually turns)',
+    keys.every((k) => BUDGET_TIERS.compact[k] < BUDGET_TIERS.standard[k] && BUDGET_TIERS.standard[k] < BUDGET_TIERS.rich[k]),
+    JSON.stringify(keys.map((k) => [k, BUDGET_TIERS.compact[k], BUDGET_TIERS.standard[k], BUDGET_TIERS.rich[k]])));
+  check('budget: an unset or unknown tier resolves to standard, it does not throw',
+    resolveBudgetTier(undefined) === 'standard'
+    && resolveBudgetTier('') === 'standard'
+    && resolveBudgetTier('nonsense') === 'standard'
+    && resolveBudgetTier('compact') === 'compact'
+    && resolveBudgetTier('rich') === 'rich'
+    && resolveBudgetTier(null) === 'standard',
+    JSON.stringify([resolveBudgetTier(undefined), resolveBudgetTier('nonsense'), resolveBudgetTier('compact')]));
+
+  // The dial must actually turn the section size, or the tiers are just a data
+  // structure. Built on a vault with a fat profile so the cap is what binds.
+  //
+  // ⚠️ NOT ASSERTED YET — and that is deliberate. A first version of this check
+  // compared `compact` vs `rich` and got IDENTICAL section lengths, which is not what
+  // the code reads like: the profile block was only ~354 chars into the section while
+  // the profile file is 6805 chars, so something between `readMemoryFile` and the
+  // rendered block shrinks it in a way I have not pinned down (`clip` is a plain
+  // slice; there is no profile post-processing in `buildMemorySection`). Two of my
+  // guesses were wrong, so the honest move is to record the anomaly rather than tune
+  // the fixture until an assertion goes green — a test shaped to pass proves nothing.
+  // Task: find what bounds the profile block, then assert the tier effect.
+  const budgetRoot = mkdtempSync(join(tmpdir(), 'dsh-budget-'));
+  mkdirSync(join(budgetRoot, '.deepseek', 'memory'), { recursive: true });
+  writeFileSync(join(budgetRoot, '.deepseek', 'memory', 'profile.md'),
+    '# 偏好\n' + '这条偏好很长，用来把注入预算撑满。'.repeat(400), 'utf8');
+  const sectionFor = (tier) => buildMemorySection(
+    { vaultRoot: budgetRoot, sessionsRoot: budgetRoot, maxHistoryEntries: 0, maxHistoryChars: 0, cacheTtlMs: 0, budgets: BUDGET_TIERS[tier] },
+    'session-x', null, null, ''
+  );
+  const compactSection = sectionFor('compact');
+  const richSection = sectionFor('rich');
+  check('budget: the tier is threaded into the section builder without throwing',
+    compactSection.length > 0 && richSection.length > 0,
+    JSON.stringify({ compact: compactSection.length, rich: richSection.length }));
+  rmSync(budgetRoot, { recursive: true, force: true });
 }
 
 // ── 33d-2. paired decision guidance (item 8, second half) ───────────────────

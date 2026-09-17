@@ -1,4 +1,4 @@
-﻿/**
+/**
  * math-memory — cross-session memory injection for the `obsidian` dsh
  * agent preset. It also applies the sibling note-tools.mjs plugin on the
  * same context, which registers note_recall / note_search / note_create / note_links.
@@ -89,6 +89,37 @@ const MAX_DIALOGUE_PAIRS = 6;
 const MAX_DIALOGUE_CHARS = 3000;
 const DEFAULT_MAX_HISTORY_ENTRIES = 40;
 const DEFAULT_MAX_HISTORY_CHARS = 6000;
+
+/**
+ * Injection budgets by tier, so the size of the memory section is a knob instead of a
+ * set of constants buried in the code (MemForest, arXiv:2609.08273: its compression
+ * ratio is an explicit dial — 30/50/70% — and its accuracy/cost curve is read off that
+ * dial, rather than being an undocumented side effect of the implementation).
+ *
+ * `standard` is BYTE-FOR-BYTE the previous values: choosing a tier must never change
+ * behaviour for anyone who does not choose one. `compact` suits a small context window
+ * or a slow sidebar; `rich` suits a large window where more navigation is affordable.
+ * These are navigation-layer budgets only — evidence still lives on disk and is pulled
+ * with note_recall, so raising them costs prompt space, never accuracy of the store.
+ */
+const BUDGET_TIERS = {
+  compact: { profile: 2500, topics: 1200, records: 500, templates: 400, episodes: 800, inbox: 800, dialogue: 2000 },
+  standard: { profile: MAX_PROFILE_CHARS, topics: MAX_TOPIC_INDEX_CHARS, records: MAX_RECORD_INDEX_CHARS, templates: MAX_TEMPLATE_INDEX_CHARS, episodes: MAX_EPISODE_INDEX_CHARS, inbox: MAX_INBOX_CHARS, dialogue: MAX_DIALOGUE_CHARS },
+  rich: { profile: 6000, topics: 2600, records: 1200, templates: 900, episodes: 1800, inbox: 1800, dialogue: 4000 }
+};
+
+/**
+ * Resolve a configured tier name, defaulting to `standard`.
+ *
+ * An unrecognised value falls back rather than throwing: a typo in a config file must
+ * not take the whole preset down, and the safe direction is "the behaviour that existed
+ * before tiers did". Exported so the regression suite can assert that fallback — it is
+ * the property most likely to rot into a crash.
+ */
+export function resolveBudgetTier(raw) {
+  return Object.prototype.hasOwnProperty.call(BUDGET_TIERS, String(raw)) ? String(raw) : "standard";
+}
+export { BUDGET_TIERS };
 // Memory-v2 audit pass (arXiv:2606.31191 ISM, localized): deterministic scan of
 // card frontmatter + hook fields, at most once per vault per auditIntervalMs.
 const AUDIT_FILE = join(CACHE_DIR, "memory-audit.json");
@@ -2318,13 +2349,13 @@ function templateIndexDigest(root, maxChars) {
  * `context.agent` supplies the current session id so the live conversation is
  * never duplicated into the "past dialogue" index.
  */
-export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs }, currentSessionId, dialogueIndex, auditReport, memoText) {
-  const profile = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "profile.md"), MAX_PROFILE_CHARS);
-  const topics = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "topics", "index.md"), MAX_TOPIC_INDEX_CHARS);
-  const records = recordIndexDigest(vaultRoot, MAX_RECORD_INDEX_CHARS);
-  const templates = templateIndexDigest(vaultRoot, MAX_TEMPLATE_INDEX_CHARS);
-  const episodes = episodeIndexDigest(vaultRoot, MAX_EPISODE_INDEX_CHARS);
-  const memos = memoText ?? memoDigest(vaultRoot, MAX_INBOX_CHARS);
+export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, budgets = BUDGET_TIERS.standard }, currentSessionId, dialogueIndex, auditReport, memoText) {
+  const profile = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "profile.md"), budgets.profile);
+  const topics = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "topics", "index.md"), budgets.topics);
+  const records = recordIndexDigest(vaultRoot, budgets.records);
+  const templates = templateIndexDigest(vaultRoot, budgets.templates);
+  const episodes = episodeIndexDigest(vaultRoot, budgets.episodes);
+  const memos = memoText ?? memoDigest(vaultRoot, budgets.inbox);
 
   const lines = [
     "## 分层长期记忆（由 math-memory 自动注入；导航层在此，证据层在磁盘）",
@@ -2460,7 +2491,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     for (const entry of recent) {
       const text = entry.text.replace(/\n+/g, " ");
       const budget = entry.role === "user" ? Math.min(text.length, 320) : Math.min(text.length, 220);
-      if (used + budget > MAX_DIALOGUE_CHARS) break;
+      if (used + budget > budgets.dialogue) break;
       if (entry.role === "user") {
         if (pairs >= MAX_DIALOGUE_PAIRS) break;
         pairs += 1;
@@ -2538,8 +2569,13 @@ function normalizeConfig(config) {
   const auditIntervalMs = Number.isFinite(config.auditIntervalMs) && config.auditIntervalMs >= 0
     ? config.auditIntervalMs
     : DEFAULT_AUDIT_INTERVAL_MS;
+  // Injection budget tier. An unrecognised value falls back to `standard` rather than
+  // throwing: a typo in a config file must not take the whole preset down, and the
+  // safe direction here is "the behaviour that existed before tiers did".
+  const budgetTier = resolveBudgetTier(config.budget);
+  const budgets = BUDGET_TIERS[budgetTier];
   if (!isAbsolute(sessionsRoot)) throw new TypeError("math-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, autoArchive, sessionCapture, captureSubagents, auditIntervalMs };
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, autoArchive, sessionCapture, captureSubagents, auditIntervalMs, budgetTier, budgets };
 }
 
 function fingerprint(logs) {
@@ -2727,7 +2763,7 @@ class MemoryEngine {
       const dialogueIndex = (ws.dialogueIndex ?? config.dialogueIndexEnabled) ? this.getDialogueIndex(vaultRoot) : { sources: [], entries: [] };
       const auditReport = this.auditReportFor(vaultRoot, ws.audit ?? config.auditEnabled, ws.autoArchive ?? config.autoArchive);
       const query = latestUserText(agent);
-      const memoText = memoDigest(vaultRoot, MAX_INBOX_CHARS, query, this.#helpers, ws.reminders ?? config.remindersEnabled);
+      const memoText = memoDigest(vaultRoot, config.budgets.inbox, query, this.#helpers, ws.reminders ?? config.remindersEnabled);
       return buildMemorySection({ ...config, vaultRoot }, currentSessionId, dialogueIndex, auditReport, memoText);
     } catch (error) {
       return `## 长期记忆（math-memory 暂不可用）\n\n${String(error)}`;
