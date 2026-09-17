@@ -35,8 +35,19 @@ for (const rel of files) {
 
 const rankRecall = (query, limit = 8) => rankRecallDocuments(docs, query, { limit }).matches
   .map((match) => ({ rel: match.path, kind: match.kind, score: match.score, coverage: match.coverage }));
-const rankStrategy = (query, limit = 5) => rankStrategyCards(docs, query, { limit }).matches
-  .map((match) => ({ rel: match.path, kind: "strategy", score: match.score, coverage: null }));
+// Both buckets, merged back into one ranked list, because this probe asks "can the
+// technique be found at all?" — that is a retrieval question, and a `candidate`
+// strategy card is still a legitimate find (it is a lead, not an established
+// technique). Reading only `matches` made this probe report a false regression the
+// moment note_strategy started splitting candidates out, because the seed vault's
+// definition-proof card is itself a candidate. Ranking order is preserved by score
+// so the expected rank still means what it says.
+const rankStrategy = (query, limit = 5) => {
+  const ranked = rankStrategyCards(docs, query, { limit });
+  return [...ranked.matches, ...ranked.candidates]
+    .sort((a, b) => b.score - a.score)
+    .map((match) => ({ rel: match.path, kind: "strategy", score: match.score, coverage: null }));
+};
 
 /** See engine-probe.mjs: navigation indices always show raw coverage for CJK. */
 const isNavigationIndex = (kind) => kind === "episode-index" || kind === "theorem-index";
