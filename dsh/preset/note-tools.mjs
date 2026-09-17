@@ -1,4 +1,4 @@
-/**
+﻿/**
  * note-tools — dedicated Obsidian note tools for the `obsidian` dsh agent
  * preset:
  *   - note_recall    unified BM25-ranked recall over notes + memory layers
@@ -497,13 +497,27 @@ export function rankBm25(queryTokens, tokenizedDocs, stats) {
  * verified level + success_rate + usage frequency, mapped into [0,1].
  * Non-hook documents get the neutral 0.5 baseline; a user-confirmed, high-
  * success, frequently-used card ranks above a single-source, low-success one.
+ *
+ * Robustness: `success_rate` / `uses` / `last_used` are PLUGIN-OWNED fields
+ * (docs/memory/design.md §5 ownership table) — the agent is forbidden to write
+ * them, but they arrive here as text parsed out of a user-editable markdown
+ * file, so they must be treated as untrusted input. Every term is clamped into
+ * range and the result is clamped into [0,1]: a hand-edited `success_rate: 5`
+ * or `uses: -3` must not be able to push a card's prior outside the scale that
+ * the BM25 blend assumes. The clamp is deliberately total — inside the scale
+ * the formula is unchanged, so existing rankings do not move.
  */
 export function hookPrior(hook, updatedDate = null) {
   if (hook === null || hook === undefined) return 0.5;
+  const clamp01 = (value, fallback) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(1, n));
+  };
   const verifiedWeight = { "user-confirmed": 1, "cross-referenced": 0.75, "single-source": 0.5 };
   const verified = verifiedWeight[hook.verified] ?? 0.5;
-  const success = Number.isFinite(Number(hook.success_rate)) ? Number(hook.success_rate) : 0.5;
-  const uses = Math.min((Number.isFinite(Number(hook.uses)) ? Number(hook.uses) : 0) / 10, 1);
+  const success = clamp01(hook.success_rate, 0.5);
+  const uses = clamp01(Number(hook.uses) / 10, 0);
   // Recency (Belief Memory λ^τ, generalized to records): prefer cards that
   // were updated or used recently; 90-day linear decay into [0,1].
   const date = updatedDate || hook.last_used;
@@ -512,7 +526,7 @@ export function hookPrior(hook, updatedDate = null) {
     const t = Date.parse(date);
     if (Number.isFinite(t)) recency = Math.max(0, Math.min(1, 1 - (Date.now() - t) / (90 * 86400000)));
   }
-  return 0.45 * success + 0.25 * uses + 0.20 * verified + 0.10 * recency;
+  return clamp01(0.45 * success + 0.25 * uses + 0.20 * verified + 0.10 * recency, 0.5);
 }
 
 /**

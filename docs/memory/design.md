@@ -90,6 +90,28 @@
 
 执行纪律：同一轮记忆写入合并为最少工具调用；完成后只在回复末尾一行说明（“已记录：N 条”）。
 
+### 5.1 字段所有权（谁有权写哪个字段）
+
+三写协议是**模型执行**的，但并非卡片上的每个字段都归模型。所有权必须显式，否则「模型手改统计数字」与「插件回写」会互相覆盖而无人察觉。**所有权以本表为准**（模板里的措辞是它的面向用户副本）：
+
+| 字段 | 所有者 | 模型可否写 | 说明 |
+|---|---|---|---|
+| 正文、`title`、`type`、`topic`、`related`、`source` | **模型** | 可写 | 内容与溯源，三写协议维护 |
+| `hook.operator` / `pattern` / `heuristics` / `quantity` / `techniques` / `applications` | **模型** | 可写 | 创建时填、reinforce 时追加；**不得编造** |
+| `not_applicable_when`（适用边界） | **模型** | 可写 | 短句/关键词列表，每条 ≤12 字（检索按精确匹配用它做硬门控） |
+| `confidence`、`status`（`active`/`superseded`） | **模型** | 可写 | 调和与置信维护 |
+| `hook.verified` | **受约束** | 只能写 `single-source` | 升级到 `cross-referenced` / `user-confirmed` 必须用户参与 |
+| `hook.uses` / `success_rate` / `last_used` / `harmed` | **插件** | **不可写** | `note_recall` 命中计数 → `cache/retrieval-stats.json` → 每日体检回写 |
+| `hook.verified_by` | **插件（仅 ✅ 反馈路径）** | **不可写** | 升级凭据；**唯一写入者**是用户点 ✅（`memory-admin.mjs` 的 feedback 路径） |
+| `needs_review` | **插件（❌ 反馈路径）** | **不可写** | ❌ 置 `true`、✅ 清 `false` |
+
+**数据流**：`note_recall` 命中 → 写 `cache/retrieval-stats.json`（`note-tools.mjs`）→ 每日体检合并进卡片的 `uses`/`last_used`（`math-memory.mjs`）→ 体检**读回文件校验回写是否落地**，未落地则记入 `structural.usesMismatch`（事后校验，**不自动重试**：静默改写用户的文件比报出来更糟）→ 排序时由 `hookPrior` 消费。
+
+**两条守卫**（都在每日体检里）：
+
+1. **越权升级**：`verified` 高于 `single-source` 却缺 `verified_by: user` ⇒ 记入 `structural.unjustifiedUpgrade`。
+2. **脏值免疫**：插件专有字段尽管「模型不可写」，仍是从**用户可编辑的 markdown** 里解析出来的文本，因此是**不可信输入**。`hookPrior` 对 `success_rate`/`uses`/`last_used` 每项钳制取值、并对最终结果整体钳制到 `[0,1]`——手改 `success_rate: 5` 或 `uses: -3` 不能把先验推出 BM25 混合所假设的量纲（`scripts/test-memory.mjs` 有断言，且做过变异验证）。量纲内的取值行为不变，因此既有排序不会移动。
+
 ## 6. 备忘录生命周期与提醒
 
 - 捕获档位（1c）：以 `.deepseek/capture-policy.md` 为准——`idea` 档 ask（默认）先问、auto 直接写、off 不主动捕捉；事实/偏好同理（`fact`/`preference` 档，默认 auto，即三写协议原节奏）；用户在 Obsidian 插件设置页可直接改档（三个下拉框写回文件），面板编辑与文件直改等效；

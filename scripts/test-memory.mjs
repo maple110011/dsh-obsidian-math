@@ -219,6 +219,25 @@ check('prior: confirmed+strong beats single+weak', priorHigh > priorLow, 'high='
 check('prior: non-hook is neutral 0.5', hookPrior(null) === 0.5);
 check('prior: fresh beats stale (recency)', hookPrior({ verified: 'user-confirmed', success_rate: '0.8', uses: '5' }, '2026-08-20') > hookPrior({ verified: 'user-confirmed', success_rate: '0.8', uses: '5' }, '2020-01-01'));
 
+// The plugin-owned stats fields arrive as text out of a user-editable file, so
+// they are untrusted input: a hand-edit must not be able to push the prior off
+// the [0,1] scale that the BM25 blend assumes. Conditions are constructed here
+// (not read from the vault) so the assertion stays anchored on code behaviour.
+const inScale = (v) => Number.isFinite(v) && v >= 0 && v <= 1;
+check('prior: out-of-range success_rate stays in [0,1]',
+  inScale(hookPrior({ verified: 'user-confirmed', success_rate: '5', uses: '3' }))
+  && inScale(hookPrior({ verified: 'user-confirmed', success_rate: '-2', uses: '3' })),
+  'high=' + hookPrior({ verified: 'user-confirmed', success_rate: '5', uses: '3' })
+  + ' neg=' + hookPrior({ verified: 'user-confirmed', success_rate: '-2', uses: '3' }));
+check('prior: a negative uses count cannot subtract from the prior',
+  hookPrior({ verified: 'user-confirmed', success_rate: '0.9', uses: '-50' })
+  >= hookPrior({ verified: 'user-confirmed', success_rate: '0.9', uses: '0' }),
+  'neg=' + hookPrior({ verified: 'user-confirmed', success_rate: '0.9', uses: '-50' })
+  + ' zero=' + hookPrior({ verified: 'user-confirmed', success_rate: '0.9', uses: '0' }));
+check('prior: malformed plugin-owned values fall back to neutral, not NaN',
+  inScale(hookPrior({ verified: 'user-confirmed', success_rate: 'abc', uses: '', last_used: 'not-a-date' })),
+  String(hookPrior({ verified: 'user-confirmed', success_rate: 'abc', uses: '', last_used: 'not-a-date' })));
+
 // ── 4. audit pass ───────────────────────────────────────────────────────────
 const report = buildAuditReport(root, {
   parseHookFrontmatter,
