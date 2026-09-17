@@ -92,7 +92,7 @@ vault/
 ## Development & quality
 
 ```bash
-npm test          # syntax + 295 zero-token regression checks + 47 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
+npm test          # syntax + 297 zero-token regression checks + 47 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
 npm run qa        # engine probe: 12 ground-truth recall assertions + reachability layering / pooling A/B on the real vault (zero tokens)
 npm run qa:e2e    # real-session end-to-end acceptance (spends real tokens; reports API-level usage)
 node scripts/build-obsidian.mjs   # rebuild main.js (required after shared-file changes)
