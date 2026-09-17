@@ -59,7 +59,7 @@
 | 检索 v3 之独立 LLM 重排（A6） | ⬜ 可选（默认关闭；探针不满意时启用） |
 | 策略层（方法层 + 工作记忆 + iterative retrieval） | ✅ 已实现（`strategy-layer.md`：note_strategy + working.md + strategy 模板 + AGENTS.md 路由） |
 | 基准测试（引擎探针 + 端到端 + 仿真 vault） | ⬜ 提案（`benchmark.md`，待拍板） |
-| 质量保障 | ✅ 297 项零 token 回归 + 47 项路由回归 + 32 项反代回归（含侧栏性能注入）+ `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |
+| 质量保障 | ✅ 311 项零 token 回归 + 47 项路由回归 + 32 项反代回归（含侧栏性能注入）+ `scripts/qa/` 工具链（引擎探针零 token + E2E 真实 usage 计量）；**不做 token 型 benchmark**（决策见 v2-proposal §6） |
 | 记忆纠错与确定性自维护（self-correction） | ✅ 已实现（0.7.2，`self-correction.md`）：P1 纠错进检索三件套 + P2 待重审 + P3 自动归档 + P4 合并去重 + P5 strategy 统一生命周期 |
 | 自动保存对话（obelisk-comparison） | ✅ 引擎已实现（0.7.3，`obelisk-comparison.md`）：整场对话确定性写进 episodes（尾截断 + seq 增量 + vault 过滤 + `sessionCapture` 开关）；双面板 UI 开关/按钮留下一小步 |
 | 宿主适配：dsh 0.1.5 会话格式 V3 | ✅ 已适配（[`../dsh-0.1.5-adaptation.md`](../dsh-0.1.5-adaptation.md)）：解码/蒸馏无需改动；**按会话去重日志**（V3 迁移保留 V2 原件，同一会话会有两份日志）；profile patch / preset / `settings.section` 槽位在 0.1.5 下实测有效 |

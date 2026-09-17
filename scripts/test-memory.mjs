@@ -63,6 +63,7 @@ import {
   sessionLogKey,
   selectAuthoritativeLogs,
   decodeZstdSessionLog,
+  inconsistentWeakCards,
   AUDIT_SCHEMA_VERSION
 } from '../dsh/preset/math-memory.mjs';
 // The shared frontmatter primitives: `frontmatterBlock`/`replaceFrontmatterBlock`
@@ -2318,6 +2319,121 @@ check('archive: a real memory card is still archived',
     return gated.matches.every((m) => m.path !== '.deepseek/memory/records/rec-multiview.md')
       && gated.excluded.some((entry) => entry.path === '.deepseek/memory/records/rec-multiview.md' && entry.boundaryHits.includes('非绝对连续'));
   })());
+}
+
+// ── the audit ledger: a cross-run record, not a second report ───────────────
+// WikiSkill (arXiv:2608.27454 §3.2.4; spec docs/memory/design.md §8.1). The point
+// of the ledger is that "flagged for eleven days" must not read like "new today",
+// so these assertions are about the IDENTITY of a recommendation across runs.
+{
+  const ledgerRoot = mkdtempSync(join(tmpdir(), 'dsh-ledger-'));
+  const ledgerCache = join(ledgerRoot, '.deepseek', 'cache');
+  const ledgerRecords = join(ledgerRoot, '.deepseek', 'memory', 'records');
+  mkdirSync(ledgerRecords, { recursive: true });
+  mkdirSync(ledgerCache, { recursive: true });
+  writeFileSync(join(ledgerRecords, 'weak-card.md'), card([
+    '---',
+    'title: 弱卡',
+    'type: artifact',
+    'status: active',
+    'updated: 2026-01-01',
+    'hook:',
+    '  operator: probability',
+    '  pattern: weak_pattern',
+    '  uses: 4',
+    '  success_rate: 0.2',
+    '  verified: single-source',
+    '---',
+    '',
+    '# 弱卡'
+  ]));
+  const ledgerHelpers = { parseHookFrontmatter, tokenize, maintainHookStats: false };
+  const ledgerPath = join(ledgerCache, 'audit-ledger.jsonl');
+  const readLedger = () => readFileSync(ledgerPath, 'utf8').trim().split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
+
+  const first = buildAuditReport(ledgerRoot, ledgerHelpers);
+  const firstLines = readLedger();
+  check('ledger: the first audit records its recommendations',
+    first.ledger.newCount >= 1 && firstLines.length === first.ledger.written && firstLines.length >= 1,
+    JSON.stringify(first.ledger));
+  check('ledger: a recommendation carries object+action+criterion+firstSeen+count',
+    firstLines.every((entry) => typeof entry.object === 'string' && typeof entry.action === 'string'
+      && typeof entry.criterion === 'string' && typeof entry.firstSeen === 'string' && entry.count >= 1),
+    JSON.stringify(firstLines[0]));
+  // Identity must EXCLUDE the evidence numbers: a changed `uses` count is the SAME
+  // recommendation. This is asserted through observable behaviour, NOT by inspecting
+  // the signature array — an earlier version of this assertion looked at the
+  // signature's first three elements, so a mutation that appended `evidence` to the
+  // signature passed it unchanged (a guard that could not fail, found by mutation
+  // verification). Identity is asserted through OBSERVABLE behaviour in the
+  // "changing only the evidence numbers" case below.
+  // Same day, second audit: still "new today" (nothing has had time to carry over).
+  const again = buildAuditReport(ledgerRoot, ledgerHelpers);
+  check('ledger: a second same-day audit still reports the item as new, not carried over',
+    again.ledger.newCount === first.ledger.newCount && again.ledger.carriedCount === 0,
+    JSON.stringify(again.ledger));
+  check('ledger: a same-day re-run does not grow the file',
+    readLedger().length === firstLines.length,
+    `${readLedger().length} vs ${firstLines.length}`);
+
+  // Simulate an earlier day by backdating the file (the audit stamps `today` from
+  // the local clock; the ledger's own `today` field is what the reader trusts).
+  writeFileSync(ledgerPath, readLedger().map((entry) => JSON.stringify({ ...entry, today: '2026-01-01', firstSeen: '2026-01-01' })).join('\n') + '\n', 'utf8');
+  const nextDay = buildAuditReport(ledgerRoot, ledgerHelpers);
+  check('ledger: a recommendation already on the ledger is reported as carried over, not new',
+    nextDay.ledger.newCount === 0 && nextDay.ledger.carriedCount >= 1,
+    JSON.stringify(nextDay.ledger));
+  check('ledger: the carried-over item keeps its original firstSeen (the point of the ledger)',
+    nextDay.ledger.firstSeenMin === '2026-01-01' && nextDay.report.includes('此前已在账'),
+    `${nextDay.ledger.firstSeenMin}`);
+  check('ledger: the model checklist states it is not a new problem',
+    nextDay.report.includes('不是新问题'), nextDay.report.slice(0, 200));
+
+  // The identity property, through observable behaviour: rewrite the card so the
+  // EVIDENCE numbers change while (object, action, criterion) stay the same. The
+  // recommendation must remain a carry-over — this is what a signature that included
+  // `evidence` would break, which is exactly the mutation the old assertion missed.
+  writeFileSync(join(ledgerRecords, 'weak-card.md'), card([
+    '---', 'title: 弱卡', 'type: artifact', 'status: active', 'updated: 2026-01-01',
+    'hook:', '  operator: probability', '  pattern: weak_pattern',
+    '  uses: 6', '  success_rate: 0.35', '  verified: single-source', '---', '', '# 弱卡'
+  ]), 'utf8');
+  const evidenceChanged = buildAuditReport(ledgerRoot, ledgerHelpers);
+  check('ledger: changing only the evidence numbers keeps the item carried over (a changed uses count is not a new problem)',
+    evidenceChanged.ledger.newCount === 0 && evidenceChanged.ledger.carriedCount >= 1
+    && evidenceChanged.ledger.firstSeenMin === nextDay.ledger.firstSeenMin,
+    `${JSON.stringify(evidenceChanged.ledger)} vs firstSeen ${nextDay.ledger.firstSeenMin}`);
+
+  // The off switch must be a real switch, and it must NOT consume history: with the
+  // ledger disabled the audit still reports the same carried-over facts (they come
+  // from reading the file, not from the write path), writes nothing, and a later
+  // enabled run still sees the item as carried over.
+  const disabled = buildAuditReport(ledgerRoot, { ...ledgerHelpers, maintainLedger: false });
+  check('ledger: maintainLedger:false reports the same judgements but writes nothing',
+    disabled.ledger.disabled === true && disabled.ledger.written === 0
+    && disabled.ledger.carriedCount === nextDay.ledger.carriedCount
+    && disabled.ledger.newCount === nextDay.ledger.newCount,
+    JSON.stringify(disabled.ledger));
+  const afterDisabled = buildAuditReport(ledgerRoot, ledgerHelpers);
+  check('ledger: a disabled run did not consume the history (the next enabled run still sees it carried)',
+    afterDisabled.ledger.carriedCount === nextDay.ledger.carriedCount && afterDisabled.ledger.newCount === 0,
+    JSON.stringify(afterDisabled.ledger));
+  check('ledger: the disabled notice reaches the model checklist',
+    disabled.report.includes('台账已关闭'), disabled.report.slice(0, 160));
+  rmSync(ledgerRoot, { recursive: true, force: true });
+}
+
+// ── the weak-section self-check must be able to FAIL ────────────────────────
+// Extracted so it can be fed the inconsistent shape the audit's own filter cannot
+// produce: `weak` is built from `uses >= 3 && rate <= 0.4`, so an inline check had
+// no reachable failing input.
+{
+  check('audit self-check: a weak card with uses below the threshold is reported as inconsistent',
+    inconsistentWeakCards([{ rel: 'a.md', uses: 0, successRate: 0.1 }]).join(',') === 'a.md');
+  check('audit self-check: a weak card above the rate threshold is reported as inconsistent',
+    inconsistentWeakCards([{ rel: 'b.md', uses: 5, successRate: 0.9 }]).join(',') === 'b.md');
+  check('audit self-check: a genuinely weak card is not flagged (the check does not cry wolf)',
+    inconsistentWeakCards([{ rel: 'c.md', uses: 5, successRate: 0.2 }]).length === 0);
 }
 
 rmSync(root, { recursive: true, force: true });

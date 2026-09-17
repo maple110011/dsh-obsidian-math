@@ -170,6 +170,16 @@ const PROMOTE_RATE = 0.6;
 // (MemForest §3.2 treats semantic similarity plus temporal contiguity as one event).
 const OCCASION_MIN = 2;
 const OCCASION_WINDOW_DAYS = 3;
+// Audit ledger (WikiSkill, arXiv:2608.27454 §3.2.4; spec: docs/memory/design.md
+// §8.1). The audit re-derives the same recommendations from the same files every
+// day; without a cross-run record, "this card has been flagged for eleven days"
+// is indistinguishable from "this is new today". The ledger is APPEND-ONLY, written
+// only by the audit, and stores one line per (object, action, criterion) — NOT the
+// evidence numbers, so a changing `uses` count does not manufacture fake new items.
+const AUDIT_LEDGER_FILE = join(CACHE_DIR, "audit-ledger.jsonl");
+const AUDIT_LEDGER_SCHEMA_VERSION = 1;
+const AUDIT_LEDGER_MAX_WRITES = 200; // per audit run
+const AUDIT_LEDGER_MAX_LINES = 2000; // whole file; oldest lines are dropped first
 
 /**
  * Deterministic net-gain verdict for a card, in [-1, 1], or 0 for "no verdict".
@@ -1296,6 +1306,214 @@ function moveCardsToArchive(root, targets) {
   return moved;
 }
 
+// ── audit ledger: the cross-run record of what was recommended, and when ────
+
+const LEDGER_FIELDS = ["object", "action", "criterion", "firstSeen", "count"];
+
+/**
+ * Structural validation for one ledger line. Returns null instead of throwing:
+ * the ledger is a user-editable text file, so a hand-broken line must degrade to
+ * "ignore it", never crash the audit (a crashed audit is worse than no ledger).
+ */
+function ledgerEntryOf(raw) {
+  if (raw === null || typeof raw !== "object") return null;
+  for (const field of LEDGER_FIELDS) {
+    const value = raw[field];
+    const ok = field === "count" ? Number.isFinite(value) && value >= 1 : typeof value === "string" && value !== "";
+    if (!ok) return null;
+  }
+  return {
+    at: typeof raw.at === "string" ? raw.at : "",
+    today: typeof raw.today === "string" ? raw.today : "",
+    object: raw.object,
+    action: raw.action,
+    criterion: raw.criterion,
+    evidence: typeof raw.evidence === "string" ? raw.evidence : "",
+    firstSeen: raw.firstSeen,
+    count: Math.trunc(raw.count)
+  };
+}
+
+/**
+ * Identity of a ledger event: which object, which action, which criterion.
+ *
+ * `evidence` is deliberately EXCLUDED. Including it would make every change in a
+ * number (uses, a similarity score, days) look like a brand-new recommendation.
+ */
+function ledgerSignature(entry) {
+  return JSON.stringify([entry.object, entry.action, entry.criterion]);
+}
+
+/** Read the whole ledger, newest last. Unreadable/missing file → empty history. */
+function readAuditLedger(root) {
+  let text;
+  try {
+    text = readFileSync(join(root, AUDIT_LEDGER_FILE), "utf8");
+  } catch {
+    return [];
+  }
+  const entries = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim() === "") continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue; // a hand-broken line is skipped, not fatal
+    }
+    const entry = ledgerEntryOf(parsed);
+    if (entry !== null) entries.push(entry);
+  }
+  return entries;
+}
+
+/**
+ * Append this run's recommendations and report what is new versus carried over.
+ *
+ * Mutates nothing outside the ledger file, and verifies the write by reading the
+ * file back (the same "no silent success" contract the rest of the audit uses).
+ */
+function recordAuditLedger(root, entries, today, { enabled = true } = {}) {
+  const history = readAuditLedger(root);
+  // Carry-over state is read from `firstSeen`/`count`, NOT from "rows written on an
+  // earlier day". Same-day rows must be included: a row that carried over today has
+  // `firstSeen` = the day it was first raised and `today` = the day it was rewritten,
+  // so excluding same-day rows would make the SECOND run on a day forget the history
+  // again (found by the "a disabled run did not consume the history" assertion).
+  // `firstSeen` takes the EARLIEST value and `count` the LARGEST, because both a
+  // rewritten carry-over row and a fresh row can exist for the same signature.
+  const priorBySignature = new Map();
+  for (const entry of history) {
+    const key = ledgerSignature(entry);
+    const prior = priorBySignature.get(key);
+    if (prior === undefined) {
+      priorBySignature.set(key, { firstSeen: entry.firstSeen, count: entry.count });
+      continue;
+    }
+    if (entry.firstSeen !== "" && (prior.firstSeen === "" || entry.firstSeen < prior.firstSeen)) prior.firstSeen = entry.firstSeen;
+    if (entry.count > prior.count) prior.count = entry.count;
+  }
+  const fresh = [];
+  const carried = [];
+  const failures = [];
+  const dated = entries.map((entry) => {
+    const prior = priorBySignature.get(ledgerSignature(entry));
+    return {
+      ...entry,
+      firstSeen: prior === undefined || prior.firstSeen === "" ? today : prior.firstSeen,
+      // `prior.count + 1` counts THIS run. Re-running the audit on the same day
+      // therefore inflates the counter — acceptable, because the only thing `count`
+      // is used for is "is this new today?"; it is never read as a precision number.
+      count: (prior?.count ?? 0) + 1
+    };
+  });
+  const unique = [];
+  const seenToday = new Set();
+  for (const entry of dated) {
+    const key = ledgerSignature(entry);
+    if (seenToday.has(key)) continue;
+    seenToday.add(key);
+    unique.push(entry);
+  }
+  const toWrite = unique.slice(0, AUDIT_LEDGER_MAX_WRITES);
+  const truncated = Math.max(0, unique.length - toWrite.length);
+  const writtenIds = new Set();
+  // Disabled: report the same shape (so callers never branch on undefined) but
+  // write nothing. This is the switch that lets a test prove the ledger is what
+  // produces the carried-over lines, rather than an always-on side effect.
+  if (!enabled) {
+    for (const entry of unique) (entry.firstSeen === today ? fresh : carried).push(entry);
+    return { path: AUDIT_LEDGER_FILE, todayNew: fresh.length, carried: carried.length, historyTotal: history.length, truncated, written: 0, failures, disabled: true, fresh, carriedEntries: carried };
+  }
+  if (toWrite.length > 0) {
+    try {
+      const path = join(root, AUDIT_LEDGER_FILE);
+      mkdirSync(join(root, CACHE_DIR), { recursive: true });
+      // One row per (object, action, criterion): rewriting the whole file each run
+      // collapses the run's own row into the existing one, so a same-day re-run does
+      // not append a second copy. Only the newest AUDIT_LEDGER_MAX_LINES rows are
+      // kept — the ledger must not grow into a second unbounded knowledge store
+      // (WikiSkill's self-reported gap is exactly "no pruning mechanism for the wiki").
+      const byRow = new Map();
+      for (const entry of history) byRow.set(ledgerSignature(entry), JSON.stringify({ v: AUDIT_LEDGER_SCHEMA_VERSION, ...entry }));
+      for (const entry of toWrite) {
+        byRow.set(ledgerSignature(entry), JSON.stringify({ v: AUDIT_LEDGER_SCHEMA_VERSION, at: new Date().toISOString(), today, ...entry }));
+      }
+      const lines = [...byRow.values()];
+      writeFileSync(path, lines.slice(Math.max(0, lines.length - AUDIT_LEDGER_MAX_LINES)).join("\n") + "\n", "utf8");
+      const back = readAuditLedger(root);
+      const written = new Set(back.map((entry) => ledgerSignature(entry)));
+      for (const entry of toWrite) {
+        const key = ledgerSignature(entry);
+        if (written.has(key)) writtenIds.add(key);
+        else failures.push(entry.object);
+      }
+    } catch {
+      for (const entry of toWrite) failures.push(entry.object);
+    }
+  }
+  for (const entry of unique) {
+    if (entry.firstSeen === today) fresh.push(entry);
+    else carried.push(entry);
+  }
+  return { path: AUDIT_LEDGER_FILE, todayNew: fresh.length, carried: carried.length, historyTotal: history.length, truncated, written: writtenIds.size, failures, disabled: false, fresh, carriedEntries: carried };
+}
+
+/**
+ * The recommendations the audit wants remembered, in a fixed order.
+ *
+ * Only sections that carry an ACTION belong here: `strong` / `harmed` /
+ * `independentTechniques` describe state, not something to do, and remembering
+ * them would drown the ledger in non-events.
+ */
+function actionableAuditEntries(sections, hintFor) {
+  const out = [];
+  const push = (object, action, criterion, evidence, hint) => {
+    if (hint !== undefined) hintFor.set(`${object}|${action}|${criterion}`, hint);
+    out.push({ object, action, criterion, evidence });
+  };
+  for (const card of sections.weak) push(card.rel, "rewrite-or-archive", "weak-usage", `uses=${card.uses},success_rate=${card.successRate ?? "none"}`, `${card.title}（${card.uses} 次使用、成功率 ${card.successRate ?? "无"}）`);
+  for (const card of sections.unused) push(card.rel, "review-or-archive", "unused-days", `days=${card.days ?? "unknown"}`, `${card.title}（${card.days ?? "?"} 天未用）`);
+  for (const card of sections.unverified) push(card.rel, "seek-corroboration", "unverified-days", `verified=single-source`, `${card.title}（单一来源）`);
+  for (const card of sections.pendingReview) push(card.rel, "re-review", "needs-review", `last_wrong=${card.lastWrong ?? ""}`, `${card.title}（待重审）`);
+  for (const card of sections.archiveCandidates) push(card.rel, "archive-proposal", "low-utility", `utility=${card.utility}`, `${card.title}（低效用）`);
+  for (const card of sections.antipatterns) push(card.rel, "keep-as-counterexample", "antipattern", `gain=${card.gain ?? 0}`, `${card.title}（反模式）`);
+  for (const pair of sections.duplicates) {
+    const object = `${pair.a.rel}|${pair.b.rel}`;
+    push(object, "merge-or-differentiate", "duplicate-similarity", `jaccard=${pair.jaccard.toFixed(2)}`, `${pair.a.title} ↔ ${pair.b.title}`);
+  }
+  for (const card of sections.hubs) push(card.rel, "protect-before-edit", "structural-hub", `backlinks=${card.backlinks}`, `${card.title}（${card.backlinks} 处引用）`);
+  for (const item of sections.downstreamReview) {
+    const object = `${item.rel}|${item.via.rel}`;
+    push(object, "re-verify-dependent", "premise-moved", `reason=${item.reason}`, `${item.title} ← ${item.via.title}`);
+  }
+  return out;
+}
+
+/**
+ * The audit's own two sources of truth for "this card is weak" must agree.
+ *
+ * `weak` is DEFINED as `successRate <= AUDIT_WEAK_RATE && uses >= AUDIT_WEAK_USES`,
+ * so a weak card with `uses === 0` is a contradiction — the shape trap 59
+ * ("documents say 232, reality says 0") is made of. Extracted and exported so the
+ * self-check has a name and can be exercised with an inconsistent input: left
+ * inline, every assertion about it would be vacuous, because the filter that
+ * builds the list cannot produce the case the check exists to catch.
+ */
+export function inconsistentWeakCards(weakCards) {
+  return weakCards
+    .filter((card) => card.uses < AUDIT_WEAK_USES || (card.successRate ?? 1) > AUDIT_WEAK_RATE)
+    .map((card) => card.rel);
+}
+
+/**
+ * Key `object` values are file paths (≤200 chars), so a `|` separator shifts
+ * nothing; the plain fallback keeps any exotic key from silently dropping a row.
+ */
+function ledgerHint(hintFor, object, action, criterion, fallback = "") {
+  return hintFor.get(`${object}|${action}|${criterion}`) ?? fallback;
+}
+
 /**
  * Scan every memory card once, merge the note_recall hit statistics, and
  * classify cards into ISM-style buckets: strong / weak / unused / duplicate
@@ -1404,7 +1622,7 @@ export function buildAuditReport(root, helpers) {
   //
   // Every write here is a CLAIM, so each one is verified by reading the file
   // back (design-intake §1 item 5: "report degraded instead of silent success").
-  const postconditions = { statsWrites: 0, statsFailures: [], unmergeableStats: [], statsResetFailed: false, hookHistoryWritten: true };
+  const postconditions = { statsWrites: 0, statsFailures: [], unmergeableStats: [], statsResetFailed: false, hookHistoryWritten: true, ledgerFailures: [] };
   // The net-gain verdict is an OUTCOME, not a usage counter: it comes from explicit
   // ✅/❌ feedback and must be persisted even when hook-stat maintenance is switched
   // off (`auditMaintainHookStats: false`). Coupling it to that switch would make the
@@ -1871,7 +2089,19 @@ export function buildAuditReport(root, helpers) {
   // `gain` rides along on every card ref: it is the machine-owned verdict on
   // whether using this card helped, and both the panels and the tests need to see
   // it without re-reading the files.
-  const cardRef = (card) => ({ rel: card.rel, title: card.title, gain: card.gain ?? 0 });
+  //
+  // `uses`/`successRate` ride along for the same reason and were added 2026-09-18:
+  // without them the WEAK section's own self-check could not read the numbers its
+  // criterion is defined on (it saw `undefined`, so it fired on every weak card and
+  // the ledger wrote `uses=undefined`). A guard that cannot see its own inputs is
+  // the "assertion passes under mutation" failure mode this repo keeps hitting.
+  const cardRef = (card) => ({
+    rel: card.rel,
+    title: card.title,
+    gain: card.gain ?? 0,
+    uses: card.uses,
+    successRate: card.successRate
+  });
   const liveArchiveCandidates = archiveCandidates.filter(({ card }) => live(card));
   const livePendingReview = pendingReview.filter(live);
   const liveDuplicates = duplicates.filter(({ a, b }) => live(a) && live(b));
@@ -1926,6 +2156,35 @@ export function buildAuditReport(root, helpers) {
     autoArchiveUnusedDays: AUTO_ARCHIVE_UNUSED_DAYS
   };
 
+  // Two sources of truth for the same verdict must be checked against each other
+  // (agent-repo-maintenance.md §3: "verification signals must be trustworthy").
+  // Report it as `degraded` instead of asking a reader to notice the contradiction.
+  const weakInconsistent = inconsistentWeakCards(sections.weak);
+
+  // The cross-run record. Built from the SAME section arrays the report publishes,
+  // so the ledger can never describe a recommendation the reader cannot see.
+  const ledgerHints = new Map();
+  const ledgerResult = recordAuditLedger(
+    root,
+    actionableAuditEntries(sections, ledgerHints),
+    today,
+    { enabled: helpers.maintainLedger !== false }
+  );
+  postconditions.ledgerFailures = ledgerResult.failures;
+  const ledgerSummary = {
+    today: today,
+    newCount: ledgerResult.todayNew,
+    carriedCount: ledgerResult.carried,
+    written: ledgerResult.written,
+    truncated: ledgerResult.truncated,
+    disabled: ledgerResult.disabled === true,
+    path: ledgerResult.path,
+    newHints: (ledgerResult.fresh ?? []).slice(0, 3)
+      .map((entry) => ledgerHint(ledgerHints, entry.object, entry.action, entry.criterion, entry.object)),
+    carriedHints: (ledgerResult.carriedEntries ?? []).slice(0, 3)
+      .map((entry) => `${ledgerHint(ledgerHints, entry.object, entry.action, entry.criterion, entry.object)}（首次 ${entry.firstSeen}，第 ${entry.count} 次）`)
+  };
+
   // What needs a HUMAN decision (the panel's headline number). Downstream review
   // counts as one decision PER DEPENDENT CARD: each is a separate judgement, and
   // collapsing them would hide how far a single wrong premise reached.
@@ -1966,6 +2225,12 @@ export function buildAuditReport(root, helpers) {
     warnings.push(`${postconditions.unmergeableStats.length} 张卡的命中无处可写（既无 hook 块也不是策略卡），这批 hits 会在重置时丢失：${postconditions.unmergeableStats.slice(0, 3).join("、")}`);
   }
   if (!postconditions.hookHistoryWritten) warnings.push("hook 历史快照写入未确认（面板趋势可能停在上一轮）");
+  if (postconditions.ledgerFailures.length > 0) {
+    warnings.push(`体检台账 ${postconditions.ledgerFailures.length} 条未确认写入：${postconditions.ledgerFailures.slice(0, 3).join("、")}`);
+  }
+  if (weakInconsistent.length > 0) {
+    warnings.push(`weak 段自检不一致（weak 判据是 uses ≥ ${AUDIT_WEAK_USES} 且成功率 ≤ ${AUDIT_WEAK_RATE}，这些卡不满足）：${weakInconsistent.slice(0, 3).join("、")}`);
+  }
   if (structural.usesMismatch.length > 0) {
     warnings.push(`${structural.usesMismatch.length} 张卡的声明 uses 与合并值不一致：${structural.usesMismatch.slice(0, 3).join("、")}`);
   }
@@ -1997,6 +2262,20 @@ export function buildAuditReport(root, helpers) {
     if (status === "degraded") checklistLines.push(`- ⚠️ 未确认项：${warnings.join("；")}`);
     if (sections.harmed.length > 0) {
       checklistLines.push(`- 负反馈（用过但结果更差）: ${sections.harmed.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]](${card.harmed}/${card.uses})`).join("、")}`);
+    }
+    // The ledger line states a FACT, never an instruction: a carried-over item is
+    // not a new problem. Without this split, a card flagged for eleven days reads
+    // exactly like a card flagged today.
+    if (ledgerSummary.disabled) {
+      checklistLines.push("- 台账已关闭（auditMaintainLedger: false）：本轮判定不落盘，跨次判定史不可用");
+    } else if (ledgerSummary.newCount > 0 || ledgerSummary.carriedCount > 0) {
+      const parts = [`本次新动作 ${ledgerSummary.newCount} 条`];
+      if (ledgerSummary.carriedCount > 0) parts.push(`此前已在账、今日仍成立 ${ledgerSummary.carriedCount} 条（不是新问题）`);
+      if (ledgerSummary.truncated > 0) parts.push(`另有 ${ledgerSummary.truncated} 条未入账（单次上限 ${AUDIT_LEDGER_MAX_WRITES}）`);
+      checklistLines.push(`- 台账（${ledgerSummary.path}）: ${parts.join("；")}`);
+      if (ledgerSummary.carriedHints.length > 0) {
+        checklistLines.push(`  - 长期未处理（只报事实、不要求动作，除非你判断该升级处置）: ${ledgerSummary.carriedHints.join("；")}`);
+      }
     }
     if (structural.unjustifiedUpgrade.length > 0) {
       checklistLines.push(`- 越权升级（verified 高于 single-source 但不是用户确认写入的）: ${structural.unjustifiedUpgrade.slice(0, 3).join("、")}`);
@@ -2088,6 +2367,11 @@ export function buildAuditReport(root, helpers) {
       const names = sections.harmed.slice(0, 3).map((c) => `「${c.title}」`).join("、");
       humanLines.push(`🧨 ${sections.harmed.length} 张卡"用过但结果更差"：${names}${sections.harmed.length > 3 ? " …" : ""}——它们不是"内容错"，而是"用了反而误导"，值得改写适用边界或归档。`);
     }
+    if (!ledgerSummary.disabled && ledgerSummary.carriedCount > 0) {
+      // Plain language, no identifiers: the fact the user needs is "this is not new".
+      const oldest = (ledgerResult.carriedEntries ?? []).reduce((min, entry) => (min === "" || entry.firstSeen < min ? entry.firstSeen : min), "");
+      humanLines.push(`🗂 有 ${ledgerSummary.carriedCount} 项体检建议此前就已经提出、今天仍然成立${oldest === "" ? "" : `（最早 ${oldest}）`}——助手不会再把它们当新问题报一遍。`);
+    }
     if (structural.unjustifiedUpgrade.length > 0) {
       humanLines.push(`🔓 ${structural.unjustifiedUpgrade.length} 张卡的验证等级高于"单源"，但不是由你的确认写入的——按规则升级只能来自你的 ✅；助手会重判或降回。`);
     }
@@ -2170,6 +2454,18 @@ export function buildAuditReport(root, helpers) {
     autoArchiveTargets: sections.autoArchiveTargets.map((card) => ({ rel: card.rel, filePath: card.filePath, title: card.title })),
     archived: sections.archived.map((item) => item.rel),
     passive,
+    // Cross-run recommendation record (docs/memory/design.md §8.1). Deliberately
+    // carries counts and the path only — the panels render their own text.
+    ledger: {
+      path: ledgerSummary.path,
+      today: ledgerSummary.today,
+      newCount: ledgerSummary.newCount,
+      carriedCount: ledgerSummary.carriedCount,
+      written: ledgerSummary.written,
+      truncated: ledgerSummary.truncated,
+      disabled: ledgerSummary.disabled,
+      firstSeenMin: (ledgerResult.carriedEntries ?? []).reduce((min, entry) => (min === "" || entry.firstSeen < min ? entry.firstSeen : min), "")
+    },
     checklist,
     human,
     checklistChars: checklist.length,

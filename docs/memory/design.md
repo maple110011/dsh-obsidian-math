@@ -167,6 +167,20 @@
 - agent 无删除/移动工具；>90 天 episode 由 Obsidian 插件启动时移入 `episodes/archive/` 并更新 index（可配置关闭/手动触发）；
 - v2 新增：记忆体检报告由 math-memory 插件确定性扫描生成（≤每天一次），见 v2-proposal §3；报告现含 strong/weak/unused/unverified + 结构校验 + **反模式（失败经验）** + **低效用归档候选（0.5×可靠性+0.3×频次+0.2×新近度）** + **检索健康（note_recall 空结果率）**。
 
+### 8.1 体检台账（`cache/audit-ledger.jsonl`，**已实现**）
+
+> **来源与理由**：WikiSkill（arXiv:2608.27454 §3.2.4）把每条技能改动的 **diff + 验证分 + Accept/Reject** 程序化追加成一份**永不回滚**的审计台账 `skill-impact.md`，用途之一是**"被拒过的干预不再重复提出"**。我们的对应缺口是：**同一张卡可以连续几天被体检报出，而"上次为什么决定不动它"没有任何地方记录**——下一天（或下一个 agent）从零重新判断一遍。
+
+- **文件**：`.deepseek/cache/audit-ledger.jsonl`，**append-only**、每行一个 JSON 对象、**只由体检写**（模型不可写、不可删）。与 `cache/memory-audit.json`（会被整份覆盖）的分工：报告是**本次快照**，台账是**跨次的判定史**。
+- **每行的字段**：`{ at（ISO 时间）, today（本地日期）, object（卡或卡对，卡对形如 a|b）, action（建议动作的机器标签）, criterion（哪条判据）, evidence（该判据的可核数字）, firstSeen（首次出现的日期）, count（含本次共出现几次） }`。
+- **身份（identity）= `signature` = `object` + `action` + `criterion` 的稳定序列化**，**不含 `evidence` 的数值**。因此"同一张卡、同一判据、同一条建议"跨天只算**一次事件的延续**（`firstSeen` 不变、`count` 递增），而"同一张卡换了一条判据"是**新事件**。这样做是刻意的：把数值放进身份会让每天的数字波动制造出一堆假新事件。
+- **写入的量**：每次体检对**当前需要动作的条目**各写一行，按 `signature` 去重后**总量上限 200**（超出时按既有顺序截断，并在 `warnings` 里说明被截断）。文件另有 2000 行上限（超出丢弃最旧的行）。两个上限都是**有界性**要求：台账不能长成第二个无界知识库（WikiSkill 的自陈短板正是"wiki 无裁剪机制"）。
+- **反向回执（只报事实）**：体检把**今天首次出现**的条目与**已有历史**的条目分开报，历史条目只带 `firstSeen`/`count` 两个数字，**不要求任何具体动作**。理由是双向的：① 对历史上的条目，"又报一次"与"它长期没被处理"是两种不同的信息，混在一起会让人以为每天都有新问题；② 不做任何"自动关闭/自动视为已处理"——台账**只记录**，判定归用户与模型（插件不调模型是设计红线）。
+- **反馈会改写统计、从而改变身份**：`note_recall` 命中或 ✅/❌ 反馈会改 `uses`/`success_rate`/`status`，一张卡可能因此**离开** weak 段（换判据或不再出现）。这是**期望的行为**：它意味着"这条建议已被数据追认"。若希望某条建议永久留痕，留痕的是**台账那一行**，不是卡的状态。
+- **一致性校验（防"数字与列表互相矛盾"）**：weak 判据是 `successRate ≤ 0.4 且 uses ≥ 3`，因此 weak 段里的卡**不应**出现 `uses === 0` 或 `success_rate` 接近零的形态。体检对 weak 段做一次**确定性自检**，发现不一致就记入 `warnings`（`status: degraded`）——这是"两份真相源必须互相守卫"在本模块的落地，而不是等读者发现。
+  - **配套（2026-09-18，实现时发现）**：`sections` 里的条目由 `cardRef()` 投影，而它原先**只带 `rel`/`title`/`gain`**——于是这条自检读到的 `uses`/`successRate` 是 `undefined`，**在每张 weak 卡上都会触发**，台账里也写出了 `uses=undefined`。这属于本仓库反复出现的形态：**守卫看不见自己的输入**。已让 `cardRef()` 带上 `uses`/`successRate`（多带两个字段，面板与套件都能直接读，不必再回读文件），自检因此变成真判据。
+- **状态**：**已实现**（`dsh/preset/math-memory.mjs`；写入随体检、开关 `auditMaintainLedger` 与 `autoArchive` 同形，默认开）。**未做**（有意）：台账的**渲染**（面板/CLI 目前不显示它）、把"首次出现"接进面板的「⚠️ 待处理」计数、按天数升级提醒强度。
+
 ## 9. 安全边界（fail-closed）
 
 - 工具面：文件读写/搜索 + 五个笔记工具（note_recall / note_strategy / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；
