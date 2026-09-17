@@ -61,13 +61,13 @@
 - `agent.cordis.yml` 是**嵌入生成物**（`main.js` 里的 `EMBEDDED_PRESET`），bootstrap 时按它写入；`dsh/host/preset-sync.mjs` 的 `syncPresetTree` 是幂等字节同步，但**插件侧没有调用它**（grep `syncPreset|presetSync|PRESET_SYNC` 在 `main.template.js` 里无命中）。
 - 所以一个只改 `data.json` 的下拉框会**写进一个没人读的地方**——那种"看起来能用但什么都不做"的控件比没有更糟。
 
-**要落地需要先选一条通道（这是设计决定，不是实现细节）**：
+**当时列出的三条候选通道（用户已选第 2 条，其余两条保留作决策依据）**：
 
-1. **插件写 `$DSH_HOME/<profile>/preset/agent.cordis.yml` 的 `config.budget` 并触发一次 preset 同步**——但这会让插件去改一个当前属于 bootstrap 生成物的文件，需处理"用户手改过怎么办"与字节门禁。
-2. **改由 vault 侧文件承载**（例如 `.deepseek/memory/config.md` 的 frontmatter），与 `capture-policy.md` 同一套路——现有先例是捕获策略：**用户在设置页改，插件把结果写进 vault 内的文件，preset 读那个文件**。这条与既有设计一致，我倾向它。
-3. 也可以先只写文档，让用户改 `agent.cordis.yml`（功能已可用，见上）。
+1. **插件写 `$DSH_HOME/<profile>/preset/agent.cordis.yml` 的 `config.budget` 并触发一次 preset 同步**——但这会让插件去改一个当前属于 bootstrap 生成物的文件，需处理"用户手改过怎么办"与字节门禁。**未采用。**
+2. **✅ 采用：改由库内文件承载**，与 `capture-policy.md` 同一套路——**用户在设置页改，插件把结果写进库内的文件，preset 读那个文件**。（落地时发现 `.deepseek/config.md` **已经存在**且注释就写着"vault overrides preset, field by field"，所以复用它、只加 `budget` 一个字段，而不是新建文件。）
+3. 也可以只写文档让用户改 `agent.cordis.yml`。**未采用**（功能上等价，但对用户不可达）。
 
-**结论**：档位功能**已经可用且已被断言**（改 preset 配置即可生效）；缺的是用户可达的入口，而入口需要先定通道。**登记为待办 + 需要你拍板**，不硬做。
+**结论（已于同日收口，用户选通道 2）**：档位功能当时**已经可用且已被断言**（改 preset 配置即可生效），缺的只是用户可达的入口，而入口需要先定通道。**用户拍板选通道 2**，同日实现并提交（`44ddb47`）——走库内 `.deepseek/config.md` 的 `budget`，设置页下拉框与 `setMemoryBudget` 均已落地，优先级为**显式 preset > 库内 > standard**。**本条已不再是待办。** 实现细节见本文上一节「预算档位的用户入口」。
 
 ## 2026-09-17 · 探针新增 §3 检索成本 Avg-R（第二批之五，第二批收尾）
 
