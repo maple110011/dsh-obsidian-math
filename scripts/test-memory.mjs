@@ -2085,30 +2085,33 @@ check('archive: a real memory card is still archived',
     JSON.stringify([resolveBudgetTier(undefined), resolveBudgetTier('nonsense'), resolveBudgetTier('compact')]));
 
   // The dial must actually turn the section size, or the tiers are just a data
-  // structure. Built on a vault with a fat profile so the cap is what binds.
-  //
-  // ⚠️ NOT ASSERTED YET — and that is deliberate. A first version of this check
-  // compared `compact` vs `rich` and got IDENTICAL section lengths, which is not what
-  // the code reads like: the profile block was only ~354 chars into the section while
-  // the profile file is 6805 chars, so something between `readMemoryFile` and the
-  // rendered block shrinks it in a way I have not pinned down (`clip` is a plain
-  // slice; there is no profile post-processing in `buildMemorySection`). Two of my
-  // guesses were wrong, so the honest move is to record the anomaly rather than tune
-  // the fixture until an assertion goes green — a test shaped to pass proves nothing.
-  // Task: find what bounds the profile block, then assert the tier effect.
+  // structure. The fixture has to be LARGER than the biggest tier's profile budget:
+  // an earlier version of this check used a fixture of ~350 chars, so BOTH `compact`
+  // (2500) and `rich` (6000) could hold it whole and the lengths came out identical.
+  // I first recorded that as "some unknown mechanism shortens the profile" — wrong,
+  // and measuring the profile block against a spread of budgets (100 → 354 chars,
+  // 2500 → 2453, 99999 → 2453) showed the cap working all along. A fixture that does
+  // not exceed the cap cannot test the cap.
   const budgetRoot = mkdtempSync(join(tmpdir(), 'dsh-budget-'));
   mkdirSync(join(budgetRoot, '.deepseek', 'memory'), { recursive: true });
   writeFileSync(join(budgetRoot, '.deepseek', 'memory', 'profile.md'),
-    '# 偏好\n' + '这条偏好很长，用来把注入预算撑满。'.repeat(400), 'utf8');
+    '# 偏好\n' + '这条偏好很长，用来把注入预算撑满，必须长过最大档位的 6000 字。'.repeat(300), 'utf8');
   const sectionFor = (tier) => buildMemorySection(
     { vaultRoot: budgetRoot, sessionsRoot: budgetRoot, maxHistoryEntries: 0, maxHistoryChars: 0, cacheTtlMs: 0, budgets: BUDGET_TIERS[tier] },
     'session-x', null, null, ''
   );
   const compactSection = sectionFor('compact');
+  const standardSection = sectionFor('standard');
   const richSection = sectionFor('rich');
-  check('budget: the tier is threaded into the section builder without throwing',
-    compactSection.length > 0 && richSection.length > 0,
-    JSON.stringify({ compact: compactSection.length, rich: richSection.length }));
+  check('budget: a bigger tier really does inject more when the content exceeds the cap',
+    compactSection.length < standardSection.length && standardSection.length < richSection.length,
+    JSON.stringify({ compact: compactSection.length, standard: standardSection.length, rich: richSection.length }));
+  // And the cap is enforced, not merely approached: rich must stay bounded well below
+  // the raw file size, or "budget" would be a suggestion.
+  const rawProfile = readFileSync(join(budgetRoot, '.deepseek', 'memory', 'profile.md'), 'utf8').length;
+  check('budget: the cap is enforced rather than merely approached',
+    richSection.length < rawProfile,
+    JSON.stringify({ richSection: richSection.length, rawProfile }));
   rmSync(budgetRoot, { recursive: true, force: true });
 }
 
