@@ -18,9 +18,9 @@
 | [`references.md`](references.md) | **参考文献笔记**：每篇论文/系统的核心结论、可借鉴机制、与我们的映射关系 | 读完新论文/系统后追加 |
 | [`changelog.md`](../changelog.md) | **仓库级变更账本**（2026-09-11 从本目录提升为 `docs/changelog.md`）：每次改动"为什么改、改了什么"的细账，比仓库根 `CHANGELOG.md`（发布摘要）更细 | 每次有行为/契约改动后追加 |
 | [`control-panel.md`](control-panel.md) | **控制面交互规格**：验证徽标、反馈闭环、记忆面板、捕获策略分级、侧栏性能模式和注入方案评估 | 控制面变更时同步 |
-| [`sidebar-performance.md`](sidebar-performance.md) | **侧栏卡顿排查**：12 条候选原因的逐条证据与处置（跨帧 backdrop-filter 主因、iframe 隔离/挂起、渲染线程同步 IO、搜索防抖），含已排除项、未量到的项与 A/B 复核办法 | 面板性能相关改动或新证据时更新 |
+| [`sidebar-performance.md`](sidebar-performance.md) | **侧栏卡顿排查**：11 条候选原因的逐条证据与处置（**主因 = 皮肤客户端脚本 `hooks.mjs` 持续改 DOM**；跨帧 `backdrop-filter` 曾被当成主因，**实测已否掉**——见该文 §0.1；另有 iframe 隔离/挂起、渲染线程同步 IO、搜索防抖、上游 grid 轨道重算），含已排除项、未量到的项与 A/B 复核办法 | 面板性能相关改动或新证据时更新 |
 | [`testing.md`](testing.md) | **QA 方法论 + 本地验收手册**：引擎探针/E2E 用法、boot 冒烟、手动 Obsidian 验证、环境变量对照 | 测试流程/验收步骤变化时更新 |
-| [`benchmark.md`](benchmark.md) | **基准测试设计规格**：两套分层（引擎探针 + 端到端）、8 维度、仿真 vault（seed vault）、baseline.json 记录格式 | 拍板后实现；基准结构变化时更新 |
+| [`benchmark.md`](benchmark.md) | **基准测试设计规格**：两套分层（引擎探针 + 端到端）、8 维度、仿真 vault（seed vault）、baseline.json 记录格式 | 引擎探针**已实现并实测**（零 token）；端到端套件需真实 token，结构变化时更新 |
 | [`handoff.md`](../handoff.md) | **交接文档**：现状、坑、决策记录、下一步候选 | 每轮大改收尾时更新 |
 | [`../dsh-0.1.5-adaptation.md`](../dsh-0.1.5-adaptation.md) | **宿主版本适配**：dsh 0.1.5-rc.1 / 会话格式 V3 / `dsh-web-all@0.3.20` 的影响取证、修复清单与「刻意不改」的理由 | 宿主或 web 插件大版本升级时更新 |
 

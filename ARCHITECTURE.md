@@ -52,6 +52,8 @@
 | `scripts/test-panel-present.mjs` | **呈现层**纯净决策回归（从 `main.template.js` 的**源码文本**里提取 `MemoryView` 的四个纯方法 `layerEntries`/`pendingItems`/`cardMeta`/`trendText` 并求值——测的是真源码，不是副本；接缝被改名/挪走会**报错**而不是静默不测） |
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测 |
 | `scripts/check-doc-consistency.mjs` | 文档一致性守卫：断言数等易漂移数字与代码实测值一致（进 `npm test`） |
+| `scripts/lib/gates.mjs` | **门禁清单的唯一来源**：`run-gates.mjs` 执行它，`check-doc-counts.mjs` import 它数条数。抽成模块是为了让"有多少条门禁"可判定——`AGENTS.md` 曾手写「本机当前 34/34」而清单已长到 41 条，且手写数字落在 agent 的首读路径上 |
+| `scripts/check-doc-counts.mjs` | 计数守卫：陷阱条数（真值 = `docs/handoff.md` §4 的编号 + 该节标记行 `> 陷阱条数：N`，并断言编号 1..N 无重无缺）与门禁总数（真值 = `scripts/lib/gates.mjs`），比对每一处引用（进 `npm test`） |
 | `scripts/lit-import.mjs` | 文献库导入器：BibTeX + PDF + MinerU markdown → agent/人类双面文献库（见 `docs/literature.md`） |
 | `scripts/lib/lit-index.mjs` | 文献索引的**状态与陈旧**逻辑（唯一实现）。`lit-import.mjs` 与门禁 `test-lit-import.mjs` **都 import 它**——抽成模块是为了让测试**进程内**运行：本仓库沙箱禁止捕获子进程管道输出（spawn/exec → EPERM），门禁不能 shell 出去跑导入器。背景：索引「状态」列原先取条目的机器默认值（恒为 unread），而 cards/*.md 跨导入保留 ⇒ 全库卡片其实都已蒸馏、索引却全显示「未读」，且没有门禁会因此失败 |
 | `scripts/test-lit-import.mjs` | 文献索引逻辑门禁（10 断言，**进程内**，进 `npm test`） |
