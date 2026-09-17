@@ -1670,6 +1670,106 @@ check('archive: a real memory card is still archived',
   rmSync(intakeRoot, { recursive: true, force: true });
 }
 
+// ── 33b. duplicate ordering + structural hubs (improvement-details item 13) ──
+//
+// Two decisions lifted from MemForest (arXiv:2609.08273):
+//   1. order matters more than the cap — it shows merging the LEAST similar pair
+//      (89.0%) is worse than a random pair (91.7%), while the most similar pair
+//      wins (96.0%), and its Eq. 15 explains why. So the report must lead with the
+//      highest-Jaccard pair, not with whichever pair the scan happened to reach.
+//   2. a high-degree node is a hub and must not be merged early — MemForest
+//      down-weights high-degree nodes in its edge score for exactly this reason.
+// Both are asserted on a vault built here, so the assertions stay anchored on code
+// behaviour instead of on whatever the real vault happens to contain.
+{
+  const dupRoot = mkdtempSync(join(tmpdir(), 'dsh-dup-'));
+  const writeCard = (rel, text) => {
+    const abs = join(dupRoot, ...rel.split('/'));
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, text, 'utf8');
+    return abs;
+  };
+  const cardText = (title, operator, pattern, techniques, related = '[]') => [
+    '---', `title: ${title}`, 'type: fact', 'status: active', 'updated: 2026-09-01',
+    `source: '[[ep-1]]'`, `related: ${related}`, 'hook:',
+    `  operator: ${operator}`, `  pattern: ${pattern}`,
+    `  techniques: [${techniques}]`, '  verified: single-source', '---', '', `# ${title}`, ''
+  ].join('\n');
+
+  // Three DISJOINT pairs in ONE operator bucket. The FILE NAMES are what set the
+  // scan order (cards are collected by directory read), and they are deliberately
+  // assigned so the WEAKER reported pair is scanned FIRST:
+  //   dup-b*.md holds group C (0.75), dup-c*.md holds group B (1.00).
+  // That is what makes the ordering assertion falsifiable — with the sort removed
+  // the report leads with 0.75 and the assertion fails. An earlier version wrote
+  // the strong pair to the earlier filenames, so the scan order was already
+  // descending and the assertion PASSED with the sort removed: it was not testing
+  // the sort at all.
+  //
+  // Crafted scores, each MEASURED against the real tokenizer and the 0.7
+  // `AUDIT_DUP_JACCARD` threshold rather than reasoned about. Five hand-computed
+  // attempts were wrong before measuring — the fixture, never the code, was at
+  // fault each time. Two traps: `pattern` contributes ONE token whatever it says,
+  // and a Jaccard of 0.75 needs three tokens per side (2 shared / 1 distinct), not
+  // two shared tokens:
+  //   B: {patb,va,vb} vs {patb,va,vb}    = 3/3 = 1.000 -> reported
+  //   C: {patc,m,n}   vs {patc,m,n,o}    = 3/4 = 0.750 -> reported
+  //   A: {pata,pa}    vs {pata,pa,pb}    = 2/3 = 0.667 -> BELOW 0.7, not reported
+  // A is kept as a below-threshold control: it proves the list is a threshold
+  // result, not "every pair in the bucket". Distinct patterns keep every
+  // cross-group pair at 0.000.
+  const group = (tag, ta, tb) => ({
+    a: cardText(`${tag}甲`, 'duptest', `pat${tag}`, ta),
+    b: cardText(`${tag}乙`, 'duptest', `pat${tag}`, tb)
+  });
+  const [ga, gb, gc] = [
+    group('A', 'pa', 'pa, pb'),
+    group('B', 'va, vb', 'va, vb'),
+    group('C', 'm, n', 'm, n, o')
+  ];
+  writeCard('.deepseek/memory/records/dup-b1.md', gc.a);
+  writeCard('.deepseek/memory/records/dup-b2.md', gc.b);
+  writeCard('.deepseek/memory/records/dup-c1.md', gb.a);
+  writeCard('.deepseek/memory/records/dup-c2.md', gb.b);
+  writeCard('.deepseek/memory/records/dup-a1.md', ga.a);
+  writeCard('.deepseek/memory/records/dup-a2.md', ga.b);
+
+  // A hub: two other cards hang off it. Own operator bucket so it cannot itself
+  // form a duplicate pair and confound the ordering assertion.
+  writeCard('.deepseek/memory/records/hub-card.md',
+    cardText('枢纽依据', 'hubtest', 'hubpat', 'hubtech'));
+  writeCard('.deepseek/memory/records/dep-one.md',
+    cardText('依赖一', 'depone', 'p1', 't9', '[[hub-card]]'));
+  writeCard('.deepseek/memory/records/dep-two.md',
+    cardText('依赖二', 'deptwo', 'p2', 't8', '[[hub-card]]'));
+
+  const dupReport = buildAuditReport(dupRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const pairs = dupReport.sections.duplicates;
+  check('dup: pairs are ordered by similarity, highest first (and the sub-threshold pair is absent)',
+    pairs.length === 2 && pairs.map((p) => p.jaccard).join(',') === '1,0.75'
+    && !pairs.some((p) => p.a.title === 'A甲' || p.b.title === 'A甲'),
+    JSON.stringify(pairs.map((p) => [p.a.title, p.b.title, p.jaccard])));
+  check('dup: the most similar pair leads even though a weaker one is scanned first',
+    pairs[0].jaccard === 1
+    && [pairs[0].a.title, pairs[0].b.title].sort().join('|') === ['B甲', 'B乙'].sort().join('|'),
+    JSON.stringify(pairs.map((p) => [p.a.title, p.b.title, p.jaccard])));
+  check('dup: the similarity score is carried into the report, not just used for sorting',
+    pairs.every((p) => typeof p.jaccard === 'number'),
+    JSON.stringify(pairs.map((p) => p.jaccard)));
+  check('hub: a card other cards link to is reported as a structural hub with its backlink count',
+    dupReport.structural.hubs === 1
+    && dupReport.sections.hubs[0].title === '枢纽依据'
+    && dupReport.sections.hubs[0].backlinks === 2,
+    JSON.stringify(dupReport.sections.hubs));
+  check('hub: a card with no incoming links is NOT reported as a hub',
+    !dupReport.sections.hubs.some((card) => card.title === 'B甲'),
+    JSON.stringify(dupReport.sections.hubs.map((c) => c.title)));
+  check('hub: the checklist names the hub so a merge of the shared premise is a deliberate act',
+    dupReport.report.includes('结构枢纽') && dupReport.report.includes('枢纽依据'),
+    dupReport.report.split('\n').filter((l) => l.includes('枢纽')).join(' / '));
+  rmSync(dupRoot, { recursive: true, force: true });
+}
+
 // §34 multi-view pooling (GraphMemix intake, docs/memory/retrieval-v3.md §7.2).
 //
 // The product default stays the single bag; the max-pool exists so the QA probe

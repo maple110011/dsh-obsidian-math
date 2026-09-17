@@ -1,4 +1,4 @@
-/**
+﻿/**
  * math-memory — cross-session memory injection for the `obsidian` dsh
  * agent preset. It also applies the sibling note-tools.mjs plugin on the
  * same context, which registers note_recall / note_search / note_create / note_links.
@@ -1421,7 +1421,7 @@ export function buildAuditReport(root, helpers) {
   const duplicates = [];
   const seenPairs = new Set();
   for (const bucket of byOperator.values()) {
-    for (let i = 0; i < bucket.length && duplicates.length < 3; i += 1) {
+    for (let i = 0; i < bucket.length; i += 1) {
       for (let j = i + 1; j < bucket.length; j += 1) {
         const a = bucket[i];
         const b = bucket[j];
@@ -1440,6 +1440,39 @@ export function buildAuditReport(root, helpers) {
       }
     }
   }
+  // Order matters more than the cap (MemForest, arXiv:2609.08273): its ablation
+  // shows merging the LEAST similar pair (89.0%) is worse than merging a random
+  // pair (91.7%), while merging the MOST similar pair wins at 96.0% — and its
+  // Eq. 15 gives the reason (the more similar the two nodes, the higher the
+  // lower bound on the survivor's query similarity). So the report must lead
+  // with the most-similar pair instead of whichever pair bucket order surfaced
+  // first. Sorting AFTER collecting is what makes that true globally: the old
+  // `duplicates.length < 3` guard stopped the scan early, so "top 3" was "first
+  // 3 found".
+  duplicates.sort((x, y) => y.jaccard - x.jaccard);
+
+  // ── structural hubs: never propose a well-referenced card as the redundant side
+  // Count INCOMING references (how many cards link to this one) — zero cost, the
+  // links are already parsed below for the broken-link check. A hub carries the
+  // shared premise that other cards hang off, so rewriting or superseding it has
+  // the widest blast radius. MemForest encodes the same judgement by down-weighting
+  // high-degree nodes in its merge order, "nodes with higher degrees are usually
+  // central ... and therefore should not be merged prematurely". Hubs are reported
+  // separately and shown WITHOUT merge advice rather than silently dropped.
+  const HUB_BACKLINKS = 2;
+  const backlinkCount = new Map();
+  {
+    const stemOf = (card) => String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "");
+    const knownStems = new Set(cards.map(stemOf));
+    for (const card of cards) {
+      for (const target of extractLinks({ source: card.source, related: card.related })) {
+        if (target === stemOf(card)) continue; // a self-link is not a reference
+        if (!knownStems.has(target)) continue;
+        backlinkCount.set(target, (backlinkCount.get(target) ?? 0) + 1);
+      }
+    }
+  }
+  const hubCards = cards.filter((card) => (backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0) >= HUB_BACKLINKS);
 
   // Deterministic duplicate_of marking (self-correction.md P4): the redundant
   // side of a duplicate pair gets a top-level `duplicate_of` link so retrieval
@@ -1551,12 +1584,30 @@ export function buildAuditReport(root, helpers) {
   const liveArchiveCandidates = archiveCandidates.filter(({ card }) => live(card));
   const livePendingReview = pendingReview.filter(live);
   const liveDuplicates = duplicates.filter(({ a, b }) => live(a) && live(b));
+  // A pair touching a hub is still reported (the overlap is real evidence) but it
+  // is flagged so the reader sees WHY it is not an ordinary merge: rewriting the
+  // hub side would ripple through everything that references it.
+  const isHub = (card) => hubCards.some((hub) => hub.rel === card.rel);
+  const hubName = (card) => `${card.title}(${backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0} 处引用)`;
   const sections = {
     strong: strong.filter(live).map(cardRef),
     weak: weak.filter(live).map(cardRef),
     unused: unused.filter(live).map((card) => ({ ...cardRef(card), days: card.days ?? null })),
     unverified: unverified.filter(live).map(cardRef),
-    duplicates: liveDuplicates.map(({ a, b }) => ({ a: cardRef(a), b: cardRef(b) })),
+    // Most-similar pair first (see the sort above); `jaccard` is carried so the
+    // checklist can state WHY this pair is at the top.
+    duplicates: liveDuplicates.slice(0, 3).map(({ a, b, jaccard }) => ({
+      a: cardRef(a),
+      b: cardRef(b),
+      jaccard,
+      hub: isHub(a) ? hubName(a) : (isHub(b) ? hubName(b) : "")
+    })),
+    // Cards other cards hang off. Reported so a merge/rewrite of the shared
+    // premise is a deliberate decision instead of an accident.
+    hubs: hubCards.filter(live).map((card) => ({
+      ...cardRef(card),
+      backlinks: backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0
+    })),
     pendingReview: livePendingReview.map((card) => ({ ...cardRef(card), lastWrong: card.lastWrong ?? "" })),
     archiveCandidates: liveArchiveCandidates.map(({ card, utility }) => ({ ...cardRef(card), utility })),
     antipatterns: antipatterns.filter(live).map(cardRef),
@@ -1653,7 +1704,16 @@ export function buildAuditReport(root, helpers) {
       checklistLines.push(`- ${label}: ${listOf(items, 3, label === "unused")}`);
     }
     if (sections.duplicates.length > 0) {
-      checklistLines.push(`- 疑似重复: ${sections.duplicates.map(({ a, b }) => `[[${a.rel.replace(/\.md$/, "")}|${a.title}]] ↔ [[${b.rel.replace(/\.md$/, "")}|${b.title}]]`).join("；")}`);
+      // Ordered by similarity (highest first) and annotated with the score, so the
+      // reader can tell evidence strength apart instead of seeing an undifferentiated
+      // list. A pair that touches a hub carries that fact inline, because the merge
+      // instruction differs: do NOT overwrite the hub side.
+      const pairs = sections.duplicates.map(({ a, b, jaccard, hub }) =>
+        `[[${a.rel.replace(/\.md$/, "")}|${a.title}]] ↔ [[${b.rel.replace(/\.md$/, "")}|${b.title}]](${jaccard.toFixed(2)}${hub === "" ? "" : `，含枢纽 ${hub}，不要覆盖枢纽那一侧`})`);
+      checklistLines.push(`- 疑似重复（按相似度降序，先处理第一对）: ${pairs.join("；")}`);
+    }
+    if (sections.hubs.length > 0) {
+      checklistLines.push(`- 结构枢纽（被多张卡引用，改动影响面最大——合并/改写前先确认）: ${sections.hubs.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]](${card.backlinks} 处引用)`).join("、")}`);
     }
   } else {
     checklistLines.push("（尚无记忆卡，无可体检内容）");
@@ -1703,7 +1763,13 @@ export function buildAuditReport(root, helpers) {
       humanLines.push(`🕸 ${counts.unused} 张超过 ${thresholds.unusedDays} 天没被用到：${names}${counts.unused > 3 ? " …" : ""}。可以点「归档」把它们移进 archive（移动而非删除，可逆）。`);
     }
     if (counts.duplicates > 0) {
-      humanLines.push(`🔁 ${counts.duplicates} 组疑似重复，助手会合并成一张：${sections.duplicates.slice(0, 2).map(({ a, b }) => `「${a.title}」↔「${b.title}」`).join("；")}`);
+      humanLines.push(`🔁 ${counts.duplicates} 组疑似重复，助手会合并成一张（先处理最像的一对）：${sections.duplicates.slice(0, 2).map(({ a, b, hub }) => `「${a.title}」↔「${b.title}」${hub === "" ? "" : "（含被多张卡引用的枢纽，会保留枢纽那一侧）"}`).join("；")}`);
+    }
+    if (sections.hubs.length > 0) {
+      // Say what a hub IS in user terms, not "degree" — the point is that these
+      // cards are load-bearing, so changing them is a bigger decision.
+      const names = sections.hubs.slice(0, 3).map((card) => `「${card.title}」（${card.backlinks} 张卡引用它）`).join("、");
+      humanLines.push(`🧱 ${sections.hubs.length} 张卡是别的东西的依据：${names}${sections.hubs.length > 3 ? " …" : ""}——改它们之前值得多想一步。`);
     }
     if (counts.unverified > 0) {
       humanLines.push(`❓ ${counts.unverified} 张仍是单一来源、且已超过 ${thresholds.unverifiedDays} 天没有互证——用到它们时请留意。`);
@@ -1744,13 +1810,18 @@ export function buildAuditReport(root, helpers) {
       brokenLinks: structural.brokenLinks.length,
       notInIndex: structural.notInIndex.length,
       unjustifiedUpgrade: structural.unjustifiedUpgrade.length,
-      usesMismatch: structural.usesMismatch.length
+      usesMismatch: structural.usesMismatch.length,
+      hubs: hubCards.length
     },
     // The names behind the structural counts (the checklist quotes a few; the
     // panels/CLI can list them all without re-running the scan).
     structuralDetail: {
       unjustifiedUpgrade: structural.unjustifiedUpgrade.slice(0, 20),
-      usesMismatch: structural.usesMismatch.slice(0, 20)
+      usesMismatch: structural.usesMismatch.slice(0, 20),
+      hubs: hubCards.slice(0, 20).map((card) => ({
+        ...cardRef(card),
+        backlinks: backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0
+      }))
     },
     // Legacy flat fields (audit schema v1 readers: dsh/host/memory-admin.mjs and
     // older panels). Same arrays as `sections`, minus the archived ones.
