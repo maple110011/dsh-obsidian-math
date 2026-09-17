@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-10T15:03:49.527Z",
-  "count": 20,
+  "generatedAt": "2026-09-17T04:34:48.792Z",
+  "count": 25,
   "entries": [
     {
       "citekey": "gaoLeanSearchV2Global2026",
@@ -437,6 +437,122 @@
       "card": "cards/liGraphMemixQueryAwareEvidence2026.md",
       "fullText": ".raw/liGraphMemixQueryAwareEvidence2026/full.md",
       "pdf": ".raw/liGraphMemixQueryAwareEvidence2026/source.pdf"
+    },
+    {
+      "citekey": "wangMemForestEfficientAgent2026",
+      "title": "MemForest: Efficient Agent Memory Management via EventTree Partitioning and Progressive Merging",
+      "shorttitle": "MemForest",
+      "authors": [
+        "Wang, Junxi",
+        "Sun, Te",
+        "Zhu, Jiayi",
+        "Zhang, Chen",
+        "Li, Siyuan",
+        "Liu, Xuyang",
+        "Wen, Zichen",
+        "Tu, Xiaobing",
+        "Ren, Jinkui",
+        "Zhang, Xiantao",
+        "Yuan, Ziqi",
+        "Zhang, Linfeng"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2609.08273",
+      "url": "http://arxiv.org/abs/2609.08273",
+      "card": "cards/wangMemForestEfficientAgent2026.md",
+      "fullText": ".raw/wangMemForestEfficientAgent2026/full.md",
+      "pdf": ".raw/wangMemForestEfficientAgent2026/source.pdf"
+    },
+    {
+      "citekey": "tangMemorySkillsEvidenceGrounded2026",
+      "title": "From Memory to Skills: Evidence-Grounded Co-Evolution Governance for Long-Horizon LLM Agents",
+      "shorttitle": "From Memory to Skills",
+      "authors": [
+        "Tang, Bo",
+        "Zhang, Yang",
+        "Zhuang, Guomian",
+        "Wei, Wenqiang",
+        "Zheng, Gaoyang",
+        "Xie, Lindong",
+        "Tan, Yanchao",
+        "Xiong, Feiyu",
+        "Yang, Qingyu",
+        "Chung, Edward",
+        "li, Zhiyu"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Computation and Language",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2607.16621",
+      "url": "http://arxiv.org/abs/2607.16621",
+      "card": "cards/tangMemorySkillsEvidenceGrounded2026.md",
+      "fullText": ".raw/tangMemorySkillsEvidenceGrounded2026/full.md",
+      "pdf": ".raw/tangMemorySkillsEvidenceGrounded2026/source.pdf"
+    },
+    {
+      "citekey": "danusFactGraphMemory2026",
+      "title": "Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory",
+      "shorttitle": "Danus",
+      "authors": [
+        "Liu, Jihao",
+        "Gao, Guoxiong",
+        "Sun, Zeming",
+        "Wu, Bin",
+        "Liu, Shurui",
+        "Jiang, Jiedong",
+        "Ju, Haocheng",
+        "Chen, Leheng",
+        "Cheng, Ronnie",
+        "Zhang, Xiping",
+        "Dong, Bin"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Computation and Language, Computer Science - Multiagent Systems",
+      "status": "to-process",
+      "doi": "10.48550/arXiv.2607.06447",
+      "url": "http://arxiv.org/abs/2607.06447",
+      "card": "cards/danusFactGraphMemory2026.md",
+      "fullText": null,
+      "pdf": ".raw/danusFactGraphMemory2026/source.pdf"
+    },
+    {
+      "citekey": "yangOptSkillsLearningGeneralizable2026",
+      "title": "OptSkills: Learning Generalizable Optimization Skills from Problem Archetypes via Cluster-Based Distillation",
+      "shorttitle": "OptSkills",
+      "authors": [
+        "Yang, Haochen",
+        "Zhao, Ke",
+        "Ma, Mengyuan",
+        "Lu, Xingyu",
+        "Wang, Xiangfeng",
+        "Qian, Hong"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence",
+      "status": "to-process",
+      "doi": "",
+      "url": "http://arxiv.org/abs/2605.29829",
+      "card": "cards/yangOptSkillsLearningGeneralizable2026.md",
+      "fullText": null,
+      "pdf": ".raw/yangOptSkillsLearningGeneralizable2026/source.pdf"
+    },
+    {
+      "citekey": "verymathCoMathematician2026",
+      "title": "Co-Mathematician: A repository-backed mathematical research workspace for coding agents",
+      "shorttitle": "Co-Mathematician",
+      "authors": [
+        "VeryMath"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence",
+      "status": "to-process",
+      "doi": "",
+      "url": "https://github.com/VeryMath/co-mathematician",
+      "card": "cards/verymathCoMathematician2026.md",
+      "fullText": null,
+      "pdf": ".raw/verymathCoMathematician2026/source.pdf"
     }
   ]
 }

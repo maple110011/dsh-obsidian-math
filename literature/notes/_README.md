@@ -8,3 +8,10 @@
 - todo.md             研读队列与优先级
 
 agent 在仓库里维护本区域：研读后把可复用机制蒸馏进 cards + vault 记忆（records/hook），跨论文结论沉淀到这里。
+
+## 已有产出
+
+- `retrieval-alignment-2026-08.md` —— 检索相关论文的横向对齐（2026-08）。
+- `memory-system-review.md` —— 记忆系统横向评审（前作）。
+- `improvement-intake-2026-09-17.md` —— **可吸取改进的评估**：MSCE（arXiv:2607.16621）× MemForest（arXiv:2609.08273）× VeryMath 组织（Co-Mathematician / Danus / OptSkills）三源交叉后的采纳清单、明确不采纳项与理由、需拍板的悬置项。**这是回答"能否从中改进系统"的结论文档。**
+- `improvement-details-2026-09-17.md` —— **待改进内容详解**：逐项讲清「现在是什么样（附文件与行号）／缺什么／为什么要改／改哪里／怎么算改对了」，**不使用缩写**，并含对前一份文档中一处错误判断的更正。**要动手改代码时读这份。**

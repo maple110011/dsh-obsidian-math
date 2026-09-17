@@ -31,6 +31,11 @@
 | 未读 | [MemSearcher: Iterative Memory Integration for Search Agent via End-to-End Reinforcement Learning](cards/yuanMemSearcherIterativeMemory2026.md) | Yuan, Qianhao 等 | 2026 | — |
 | 未读 | [QueryLink: Leveraging Query-Memory Alignment for Long-Term Reasoning in LLM Agents](cards/huQueryLinkLeveragingQueryMemory2026.md) | Hu, Xuxian 等 | 2026 | — |
 | 未读 | [GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory](cards/liGraphMemixQueryAwareEvidence2026.md) | Li, Geng 等 | 2026 | Computer Science - Computation and Language |
+| 未读 | [MemForest: Efficient Agent Memory Management via EventTree Partitioning and Progressive Merging](cards/wangMemForestEfficientAgent2026.md) | Wang, Junxi 等 | 2026 | Computer Science - Artificial Intelligence |
+| 未读 | [From Memory to Skills: Evidence-Grounded Co-Evolution Governance for Long-Horizon LLM Agents](cards/tangMemorySkillsEvidenceGrounded2026.md) | Tang, Bo 等 | 2026 | Computer Science - Computation and Language |
+| 待转换 | [Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory](cards/danusFactGraphMemory2026.md) | Liu, Jihao 等 | 2026 | Computer Science - Artificial Intelligence |
+| 待转换 | [OptSkills: Learning Generalizable Optimization Skills from Problem Archetypes via Cluster-Based Distillation](cards/yangOptSkillsLearningGeneralizable2026.md) | Yang, Haochen 等 | 2026 | Computer Science - Artificial Intelligence |
+| 待转换 | [Co-Mathematician: A repository-backed mathematical research workspace for coding agents](cards/verymathCoMathematician2026.md) | VeryMath | 2026 | Computer Science - Artificial Intelligence |
 <!-- END AUTO-INDEX -->
 
 ## 使用

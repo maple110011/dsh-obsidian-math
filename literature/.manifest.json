@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-09-10T15:03:49.529Z",
+  "generatedAt": "2026-09-17T04:34:48.794Z",
   "source": "D:\\临时\\agent记忆",
   "out": "literature",
-  "bibPath": "C:\\WINDOWS\\TEMP\\lit-li2026\\combined.bib",
+  "bibPath": "D:\\临时\\agent记忆\\导出的条目.bib",
   "entries": [
     {
       "citekey": "gaoLeanSearchV2Global2026",
@@ -142,6 +142,41 @@
       "pdf": "li et al. - 2026 - graphmemix query-aware evidence forests for long-term multimodal agent memory.pdf",
       "mineruDir": "Li et al. - 2026 - GraphMemix Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory.pdf-71fe44f3-4194-4ffb-a888-3d3e8a4335b3",
       "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "wangMemForestEfficientAgent2026",
+      "pdf": "wang et al. - 2026 - memforest efficient agent memory management via eventtree partitioning and progressive merging.pdf",
+      "mineruDir": "Wang et al. - 2026 - MemForest Efficient Agent Memory Management via EventTree Partitioning and Progressive Merging.pdf-2cba9a01-2500-4933-8b16-08040829a621",
+      "status": "unread",
+      "card": "kept"
+    },
+    {
+      "citekey": "tangMemorySkillsEvidenceGrounded2026",
+      "pdf": "tang et al. - 2026 - from memory to skills evidence-grounded co-evolution governance for long-horizon llm agents.pdf",
+      "mineruDir": "Tang et al. - 2026 - From Memory to Skills Evidence-Grounded Co-Evolution Governance for Long-Horizon LLM Agents.pdf-6887f1da-db3a-44dd-91ef-69125c60e942",
+      "status": "unread",
+      "card": "kept"
+    },
+    {
+      "citekey": "danusFactGraphMemory2026",
+      "pdf": null,
+      "mineruDir": null,
+      "status": "to-process",
+      "card": "created"
+    },
+    {
+      "citekey": "yangOptSkillsLearningGeneralizable2026",
+      "pdf": null,
+      "mineruDir": null,
+      "status": "to-process",
+      "card": "created"
+    },
+    {
+      "citekey": "verymathCoMathematician2026",
+      "pdf": null,
+      "mineruDir": null,
+      "status": "to-process",
       "card": "created"
     }
   ],

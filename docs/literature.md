@@ -108,13 +108,18 @@ node scripts/lit-import.mjs --source <源目录> --out <输出目录>           
 
 ## 7. 施行状态与下一步
 
-**已完成（仓库 `literature/`）**：**20** 条 BibTeX 全部匹配 20 个 PDF，20 篇全部有 MinerU `full.md`；产出 20 张卡、`notes/_README.md`、`notes/retrieval-alignment-2026-08.md`、`index.md`/`.index.json`/`.manifest.json`/`library.bib`，`.raw/` 含 20 份 PDF + full.md + images。20 篇全部已蒸馏（cards + reading 齐全）：前批 14 篇 + `wangMemTrapBenchBenchmarkingCognitive2026` + 第二批 4 篇（`yangRetrievalAugmentedLanguageModels2025`=Dual RAG、`huQueryLinkLeveragingQueryMemory2026`、`vakeBridgingQuestionAnswerGap2025`=HyPE、`yuanMemSearcherIterativeMemory2026`）+ 第三批 1 篇（`liGraphMemixQueryAwareEvidence2026`=GraphMemix，2026-09-10 按 §8 流程导入并蒸馏）。
+**已完成（仓库 `literature/`）**：`.raw/` 下 **25** 条 BibTeX 条目（= `.raw/` 目录数），其中 22 篇为「BibTeX + PDF + MinerU `full.md`」齐全的完整条目，2026-09-17 新增 **3** 条**网页源**条目（无 PDF、故不在 `.raw/` 下，见下）。产出卡片、`notes/_README.md`、`notes/retrieval-alignment-2026-08.md`、`notes/improvement-intake-2026-09-17.md`、`index.md`/`.index.json`/`.manifest.json`/`library.bib`。
+
+- **前 22 篇全部已蒸馏**（cards + reading 齐全）：前批 14 篇 + `wangMemTrapBenchBenchmarkingCognitive2026` + 第二批 4 篇（`yangRetrievalAugmentedLanguageModels2025`=Dual RAG、`huQueryLinkLeveragingQueryMemory2026`、`vakeBridgingQuestionAnswerGap2025`=HyPE、`yuanMemSearcherIterativeMemory2026`）+ 第三批 1 篇（`liGraphMemixQueryAwareEvidence2026`=GraphMemix，2026-09-10 按 §8 流程导入并蒸馏）+ 第四批 2 篇（`tangMemorySkillsEvidenceGrounded2026`=MSCE、`wangMemForestEfficientAgent2026`=MemForest，2026-09-17 按 §8 流程从 `D:\临时\agent记忆` 导入并蒸馏；两篇均有 PDF + MinerU 全文）。
+- **2026-09-17 新增 3 条网页源条目**（`danusFactGraphMemory2026`、`yangOptSkillsLearningGeneralizable2026`、`verymathCoMathematician2026`）：**无 PDF / 无 MinerU**，`status: to-process` 由导入器写出、随后人工蒸馏为 `distilled`（研读记录共用 `reading/verymathOrg2026.md` 这份组织级调研）。**这是「非 PDF 文献」的处理范式**：BibTeX 进 `library.bib` → 导入器建卡（记 `to-process`）→ 直接读网页/仓库一手来源 → 卡片蒸馏 + 在卡内**显式标注"摘要为改写，非原文"**（OptSkills 即如此，因 arXiv 摘要页 fetch 失败）。**注意**：`literature/.raw/` 的目录数因此**小于**文献条目总数——`check-doc-constants.mjs` 锚的是**目录数**，所以它没有把网页源算进"篇数"。
 
 > **源目录缺 BibTeX 条目时的做法**（GraphMemix 的实际情形）：`lit-import.mjs` 只遍历 BibTeX 条目，**源目录里的 PDF 若没有对应条目就是不可见的**（dry-run 里不会出现）。做法是：从 MinerU `full.md` 首页取标题/作者，用网络核对卷期/arXiv 号，**另写一个临时 bib（不改源目录）**并把它与原 bib 合并后 `--bib` 传入：
 > ```bash
 > node scripts/lit-import.mjs --source <源目录> --out literature --bib <临时合并 bib>
 > ```
 > 合并后的 bib 含全部条目，因此已导入的条目只是被幂等刷新（卡片保留），新条目被追加进 `library.bib`。**注意**：`--bib` 是「本次要处理的条目全集」，传一个只含新条目的 bib 不会删除已有条目（index/manifest 按 citekey 合并），但为了让 dry-run 能一次核对全部匹配，仍建议传全集。
+
+> ⚠️ **坑（2026-09-17 实测踩到）：临时 bib 的存放目录不能当作 `--source`。** `--source` 会被**原样写进 `.manifest.json` 的 `source` 字段**。若把临时 bib 和 `--source` 都指向一个临时目录（如 `.lit-tmp/`），manifest 就会记录一个**随即被删掉的路径**，机器侧溯源断掉。正确做法是：**临时 bib 可以放别处（甚至放在源目录里），但 `--source` 必须指向真实的语料目录**。本仓库的实际操作是分两次跑——(`--source "D:\临时\agent记忆" --bib "<临时合并 bib>")` 导入 PDF 类条目，再 (`--source <只含新 bib 的目录> --bib <该 bib>`) 导入网页源条目，**最后再跑一次只含 PDF 类条目、`--source` 指向真实语料目录** 的命令，把 manifest 的 `source` 修正回来（该命令对已导入条目是幂等的，卡片会"保留"而不是重建）。修复后 `git diff literature/.manifest.json` 里不应再有临时路径。
 
 **下一步候选（需拍板后再动）**：
 1. **git 处理**：`.raw/` 是约 42MB 二进制（PDF + 图片），建议加入 `.gitignore`（工作区保留、不进 git 历史），或整体纳入版本库做备份——由你定；
