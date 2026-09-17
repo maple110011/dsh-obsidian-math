@@ -1286,8 +1286,48 @@ function syncTopLevelStatsToCard(filePath, effectiveUses, lastUsed) {
  * `strategy/index.md` was never touched, leaving a dangling link — found in the
  * 2026-09-10 design-iteration audit.
  */
+/**
+ * Write a file so that a failure leaves the previous content in place.
+ *
+ * WHY (WikiSkill, arXiv:2608.27454; its checkpoint/staging design): a destructive
+ * update written in place has no way back if the process dies mid-write, and the
+ * user's vault IS the only copy. This is the small version of that idea: write a
+ * sibling temp file, verify it reads back, keep a `.bak` of the old content, then
+ * replace. On any failure the original file is left untouched and the caller is told.
+ *
+ * `renameSync` gives the atomic swap; `writeFileSync` to `<path>.tmp` means a crash
+ * mid-write costs the temp file, never the original.
+ */
+export function writeFileAtomic(path, content) {
+  const temp = `${path}.tmp`;
+  const backup = `${path}.bak`;
+  try {
+    writeFileSync(temp, content, "utf8");
+    // Read back before touching the original: a full disk or a read-only mount
+    // surfaces here, while the original is still intact.
+    if (readFileSync(temp, "utf8") !== content) throw new Error("temp read-back mismatch");
+    if (existsSync(path)) writeFileSync(backup, readFileSync(path, "utf8"), "utf8");
+    renameSync(temp, path);
+    if (readFileSync(path, "utf8") !== content) throw new Error("post-replace read-back mismatch");
+    return { ok: true, backup };
+  } catch (error) {
+    try { if (existsSync(temp)) rmSync(temp, { force: true }); } catch { /* best effort */ }
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Move stale cards into `archive/<layer>/` and keep each layer's index in step.
+ *
+ * Returns `{ moved, failures }`. `failures` is the point: the old version swallowed
+ * every error (`catch { /* leave in place *\/ }`), so a rename that failed on a
+ * locked file, or an index rewrite that could not land, produced a report that said
+ * "archived N cards" while the vault disagreed. Reporting a degraded run is the
+ * contract this repo already uses for the stats sync (`postconditions`).
+ */
 function moveCardsToArchive(root, targets) {
   const moved = [];
+  const failures = [];
   for (const card of targets) {
     if (typeof card?.filePath !== "string" || !existsSync(card.filePath)) continue;
     const rel = String(card.rel ?? "");
@@ -1304,8 +1344,8 @@ function moveCardsToArchive(root, targets) {
       while (existsSync(dest)) { suffix += 1; dest = join(archiveDir, `${stem}-${suffix}.md`); }
       renameSync(card.filePath, dest);
       moved.push({ rel, layer, stem, archivedStem: suffix === 1 ? stem : `${stem}-${suffix}` });
-    } catch {
-      // leave in place on any maintenance failure
+    } catch (error) {
+      failures.push(`${rel}（移动失败：${error instanceof Error ? error.message : String(error)}）`);
     }
   }
   // Rewrite each affected layer's index once, with only its own moves.
@@ -1320,12 +1360,15 @@ function moveCardsToArchive(root, targets) {
         indexText = indexText.replaceAll(`[[${item.stem}|`, `[[archive/${item.archivedStem}|`);
         indexText = indexText.replaceAll(`[[${item.stem}]]`, `[[archive/${item.archivedStem}]]`);
       }
-      writeFileSync(indexPath, indexText, "utf8");
-    } catch {
-      // index update is best-effort
+      // Atomic + verified: a half-written index is a dangling-link generator, and the
+      // card has already moved by now, so the message matters as much as the rollback.
+      const result = writeFileAtomic(indexPath, indexText);
+      if (!result.ok) failures.push(`${indexPath}（索引改写失败：${result.reason}；卡片已移动，可据 .bak 修复）`);
+    } catch (error) {
+      failures.push(`${indexPath}（索引改写失败：${error instanceof Error ? error.message : String(error)}）`);
     }
   }
-  return moved;
+  return { moved, failures };
 }
 
 // ── audit ledger: the cross-run record of what was recommended, and when ────
@@ -1685,7 +1728,7 @@ export function buildAuditReport(root, helpers) {
   //
   // Every write here is a CLAIM, so each one is verified by reading the file
   // back (design-intake §1 item 5: "report degraded instead of silent success").
-  const postconditions = { statsWrites: 0, statsFailures: [], unmergeableStats: [], statsResetFailed: false, hookHistoryWritten: true, ledgerFailures: [] };
+  const postconditions = { statsWrites: 0, statsFailures: [], unmergeableStats: [], statsResetFailed: false, hookHistoryWritten: true, ledgerFailures: [], archiveFailures: [] };
   // The net-gain verdict is an OUTCOME, not a usage counter: it comes from explicit
   // ✅/❌ feedback and must be persisted even when hook-stat maintenance is switched
   // off (`auditMaintainHookStats: false`). Coupling it to that switch would make the
@@ -2134,8 +2177,11 @@ export function buildAuditReport(root, helpers) {
     card.days !== null && card.days > AUTO_ARCHIVE_UNUSED_DAYS &&
     !keptStems.has(card.rel));
   let archived = [];
+  let archiveFailures = [];
   if (helpers.autoArchive === true && autoArchiveTargets.length > 0) {
-    archived = moveCardsToArchive(root, autoArchiveTargets);
+    const archiveResult = moveCardsToArchive(root, autoArchiveTargets);
+    archived = archiveResult.moved;
+    archiveFailures = archiveResult.failures;
   }
 
   // Deterministic promote (self-correction.md P5b): a candidate strategy card
@@ -2345,6 +2391,10 @@ export function buildAuditReport(root, helpers) {
   if (postconditions.ledgerFailures.length > 0) {
     warnings.push(`体检台账 ${postconditions.ledgerFailures.length} 条未确认写入：${postconditions.ledgerFailures.slice(0, 3).join("、")}`);
   }
+  if (archiveFailures.length > 0) {
+    warnings.push(`自动归档有 ${archiveFailures.length} 项未完成：${archiveFailures.slice(0, 3).join("；")}`);
+  }
+  postconditions.archiveFailures = archiveFailures;
   if (weakInconsistent.length > 0) {
     warnings.push(`weak 段自检不一致（weak 判据是 uses ≥ ${AUDIT_WEAK_USES} 且成功率 ≤ ${AUDIT_WEAK_RATE}，这些卡不满足）：${weakInconsistent.slice(0, 3).join("、")}`);
   }

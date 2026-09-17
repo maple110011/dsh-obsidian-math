@@ -199,6 +199,16 @@
 - **另一条更硬的 finding**：行首不是 `[[` 链接的行（例如写成了 markdown 链接或纯文本）进入 `structural.indexNotAnEntry`——读者与旧解析器都从链接里取 stem，形式不对的卡**按名字找不到**，即便它"在索引里"。
 - **状态**：**已实现**（`dsh/preset/math-memory.mjs` 的 `indexDescriptionIssue` + `buildAuditReport`；模板纪律写在 `records-readme.md` / `strategy-readme.md`）。**未做**（有意）：修好后的自动重排、面板单列一段、把上限也做成可配置。
 
+### 8.3 破坏性写入：原子替换 + 失败要报（**已实现**，2026-09-18）
+
+> **来源**：WikiSkill（arXiv:2608.27454）用 `skills_staging/` + `skills_checkpoint/` + 原子 `rename` 保证"被否决或中断的更新不会毁掉已接受的东西"。它自己有一处实现缺陷值得记下来当反面教材：它每次构造工作区都用**当前磁盘状态**覆盖 known-good 快照，于是崩溃后的中间态会被"追认"成 good——**我们要的是反向语义：只有显式成功才更新可信状态。**
+
+- **`writeFileAtomic(path, content)`**：写 `<path>.tmp` → **读回校验** → 备份旧内容到 `<path>.bak` → `renameSync` 原子替换 → 再读回校验。任一步失败 ⇒ 删掉自己的临时文件、**原文件一字不动**、返回 `{ok:false, reason}`。读回校验是刻意的：满盘或只读挂载会在**原文件还完好时**就暴露出来。
+- **回滚语义**：只有 `rename` 成功才改变用户文件；`.bak` 是**上一步**的内容，不是"第一个版本"。**不设** known-good 快照——我们改的是用户可编辑的 markdown，不是可重建的生成物，多一层快照只会带来"哪份才算数"的歧义。
+- **失败必须进报告**：`moveCardsToArchive` 现在返回 `{moved, failures}`（旧版把每一个错误都吞掉：`catch { /* leave in place */ }`），失败项进 `warnings` 并让 `status: degraded`，同时出现在 `postconditions.archiveFailures`。"自动归档 3 张"是一句**声明**，声明必须能被证伪。
+- **卡片移动与索引改写是两个动作**：卡片先移（`rename`），索引再改（原子 + 校验）。索引失败时**卡片已经在 archive 里**——报告写明"卡片已移动，可据 `.bak` 修复"，而不是假装整件事失败或整件事成功。
+- **状态**：**已实现**（`writeFileAtomic` / `moveCardsToArchive` + `postconditions.archiveFailures`；断言 3 项原子写 + 2 项归档降级）。**未做**（有意）：给用户可编辑的卡片正文也加同样的原子写（正文写入由模型的 `edit`/`write` 走 `ctx.fs`，非本插件职责）；`.bak` 的自动清理与保留策略。
+
 ## 9. 安全边界（fail-closed）
 
 - 工具面：文件读写/搜索 + 五个笔记工具（note_recall / note_strategy / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；

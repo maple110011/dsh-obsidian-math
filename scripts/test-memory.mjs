@@ -66,6 +66,7 @@ import {
   inconsistentWeakCards,
   indexDescriptionIssue,
   clip,
+  writeFileAtomic,
   AUDIT_SCHEMA_VERSION
 } from '../dsh/preset/math-memory.mjs';
 // The shared frontmatter primitives: `frontmatterBlock`/`replaceFrontmatterBlock`
@@ -2518,6 +2519,60 @@ check('archive: a real memory card is still archived',
   check('clip: the assembled memory section announces that a layer was truncated',
     section.includes('截断：全文'), section.slice(-120));
   rmSync(clipRoot, { recursive: true, force: true });
+}
+
+// ── destructive writes: the vault is the only copy ───────────────────────────
+// WikiSkill (arXiv:2608.27454) keeps a checkpoint and stages replacements so a
+// rejected or interrupted update cannot destroy previously accepted work. This is the
+// single-file version of that idea, and the property that matters is observable: after
+// ANY outcome the previous content is still on disk.
+{
+  const wRoot = mkdtempSync(join(tmpdir(), 'dsh-atomic-'));
+  const target = join(wRoot, 'card.md');
+  writeFileSync(target, 'ORIGINAL\n', 'utf8');
+
+  const ok = writeFileAtomic(target, 'UPDATED\n');
+  check('atomic write: a successful replace lands, and the previous content is kept as .bak',
+    ok.ok === true && readFileSync(target, 'utf8') === 'UPDATED\n'
+    && readFileSync(`${target}.bak`, 'utf8') === 'ORIGINAL\n',
+    JSON.stringify({ ok: ok.ok, body: readFileSync(target, 'utf8') }));
+
+  // Force the temp write to fail by occupying its path with a DIRECTORY. The write
+  // must then leave the current file exactly as it was and report the failure —
+  // "degraded, not silent" rather than a half-written card.
+  writeFileSync(target, 'SECOND\n', 'utf8');
+  mkdirSync(`${target}.tmp`, { recursive: true });
+  const failed = writeFileAtomic(target, 'THIRD\n');
+  check('atomic write: a failed write leaves the original untouched and reports why',
+    failed.ok === false && typeof failed.reason === 'string' && failed.reason !== ''
+    && readFileSync(target, 'utf8') === 'SECOND\n',
+    JSON.stringify({ ok: failed.ok, reason: failed.reason, body: readFileSync(target, 'utf8') }));
+  check('atomic write: a foreign object at the temp path is not deleted (only our own temp is cleaned up)',
+    existsSync(`${target}.tmp`) && statSync(`${target}.tmp`).isDirectory(),
+    'the occupied directory belongs to the caller');
+
+  // The archive path must not be able to report success it did not have: a failure
+  // has to reach `warnings`/`status`, because "自动归档 3 张" is a CLAIM.
+  const archiveRoot = mkdtempSync(join(tmpdir(), 'dsh-atomic-archive-'));
+  mkdirSync(join(archiveRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+  writeFileSync(join(archiveRoot, '.deepseek', 'memory', 'records', 'stale.md'), card([
+    '---', 'title: 陈旧卡', 'type: fact', 'status: active', 'updated: 2020-01-01',
+    'hook:', '  uses: 0', '---', '', '# 陈旧卡'
+  ]));
+  // Make the index rewrite impossible by occupying its temp path.
+  mkdirSync(join(archiveRoot, '.deepseek', 'memory', 'records', 'index.md.tmp'), { recursive: true });
+  writeFileSync(join(archiveRoot, '.deepseek', 'memory', 'records', 'index.md'), '# 索引\n\n- [[stale|?]]\n', 'utf8');
+  const archiveAudit = buildAuditReport(archiveRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false, autoArchive: true });
+  check('archive: an index rewrite that cannot land is reported as degraded, not as success',
+    archiveAudit.status === 'degraded'
+    && archiveAudit.postconditions.archiveFailures.length === 1
+    && archiveAudit.warnings.some((w) => w.includes('自动归档')),
+    JSON.stringify({ status: archiveAudit.status, failures: archiveAudit.postconditions.archiveFailures }));
+  check('archive: the card itself still moved (the failure is reported, not silently rolled forward)',
+    existsSync(join(archiveRoot, '.deepseek', 'archive', 'records', 'stale.md')),
+    JSON.stringify(archiveAudit.archived));
+  rmSync(wRoot, { recursive: true, force: true });
+  rmSync(archiveRoot, { recursive: true, force: true });
 }
 
 rmSync(root, { recursive: true, force: true });
