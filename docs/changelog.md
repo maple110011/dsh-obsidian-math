@@ -3,11 +3,21 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-17 · `status: candidate` 变成权限：`note_strategy` 分组返回
+
+**问题**：`strategy-readme.md` 与 `vault-AGENTS.md` 一直写着「策略卡是**候选**不是**指令**」，但代码层面**没有任何东西**阻止一张 `status: candidate` 卡被当成已确立的技巧使用——`rankStrategyCards` 只排除 `superseded`，而且**输出里根本没有 `status` 字段**，模型拿到的 `matches` 里 `active` 与 `candidate` 完全无法区分。这正是「文档承诺的纪律没有落到机制上」。
+
+**改动**（外部依据：VeryMath 的 Co-Mathematician 把门控做成可程序检查的状态机——"草稿目标不可执行，只有 `approved` 才能接收工作流"）：
+
+- `rankStrategyCards` 新增 `candidates` 桶，把**显式** `status: candidate` 的卡从 `matches` 分流出去；`matches` 与 `candidates` 的每一项新增 `status` 字段。
+- `note_strategy` 的输出 schema 同步新增 `candidates`（并给两个数组的 item 加 `status`）；渲染时把候选单列，并写明「可以把 moves 当线索试用，但**不得当作已验证技巧引用**」。
+- 工具描述补一句：`matches` = 现在可依据；`candidates` = 仍是线索。
+
+**一个刻意的边界**：**只有显式声明的 `candidate` 才被分流**。status **缺失**或取值未知的卡**留在 `matches`**，行为与改动前完全一致——因为每日体检读的是 `meta.status ?? "active"`（`math-memory.mjs:1255`），若在这里静默把老卡降级，等于**改变了模型被允许依赖什么**，而"权限只在该库真的声明了的地方收窄"才是可预期的规则。这条差异有专门断言守住。
+
+**验证**：`test-memory` 240 → **246**（新增 3 条状态权限断言，其中一条专测"未声明 status 仍在 matches"）；`test-tool-schemas` 的 fixture 被守卫如实拦下（`missing required property "value.candidates"`）→ 更新 fixture → 26/26；`test-tool-shape` 11/11（它断言"实际返回值没有未声明字段"）。**变异验证**：把 `matches` 的分流表达式改回 `eligible.slice(...)` ⇒ 断言如期报错（候选同时出现在两个桶里，245/246）⇒ 恢复 ⇒ 246/246。
+
 ## 2026-09-17 · 八荣八耻入档 + 字段所有权显式化（第一批改进之一）
-
-### 背景
-
-用户要求把「八荣八耻」列入文档作为开发时的行为约束，并批准按 `literature/notes/improvement-details-2026-09-17.md` 的分批计划改进记忆系统（第一批：写入所有权契约、状态即权限、疑似重复排序+枢纽保护、依赖方向+失效级联、净增益信号）。
 
 ### ① 八荣八耻：放进已有的维护方法文档，不新建文件
 

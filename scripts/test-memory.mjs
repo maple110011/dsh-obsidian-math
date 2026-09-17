@@ -1527,6 +1527,46 @@ check('archive: a real memory card is still archived',
   check('intake1: note_strategy applies the same gate',
     strategyRanked.matches.length === 0 && strategyRanked.excluded.length === 1);
 
+  // ── status is a permission, not a label (improvement-details item 4) ───────
+  // `status: candidate` means the audit has not promoted the card yet (it needs
+  // uses >= 3 and success_rate >= 0.6), so it must not be presented as an
+  // established technique. Both cards below say the SAME thing; only the status
+  // differs, so the assertion isolates the status rule and nothing else.
+  const sameSurface = (status) => [
+    '---', `title: 换元路线(${status})`, 'type: strategy', `status: ${status}`,
+    'difficulty: 换元 结构定理 证明',
+    'strategies:', '  - move: 换元 结构定理 证明 走法', '    retrieve: [theorem]',
+    'abstraction:', '  principle: "换元 结构定理 证明 原则"',
+    '---', '', '# 换元路线', '', '正文。', ''
+  ].join('\n');
+  write('.deepseek/strategy/promoted.md', sameSurface('active'));
+  write('.deepseek/strategy/unpromoted.md', sameSurface('candidate'));
+  const statusDocs = [
+    buildRecallDoc('.deepseek/strategy/promoted.md', readFileSync(join(intakeRoot, '.deepseek', 'strategy', 'promoted.md'), 'utf8')),
+    buildRecallDoc('.deepseek/strategy/unpromoted.md', readFileSync(join(intakeRoot, '.deepseek', 'strategy', 'unpromoted.md'), 'utf8'))
+  ];
+  const statusRanked = rankStrategyCards(statusDocs, '换元 结构定理 证明', {});
+  const inMatches = statusRanked.matches.some((m) => m.path.endsWith('promoted.md'));
+  const candidateInMatches = statusRanked.matches.some((m) => m.path.endsWith('unpromoted.md'));
+  const inCandidates = statusRanked.candidates.some((m) => m.path.endsWith('unpromoted.md'));
+  check('status: a promoted card lands in matches, a candidate does not',
+    inMatches && !candidateInMatches && inCandidates,
+    JSON.stringify({ matches: statusRanked.matches.map((m) => [m.path, m.status]), candidates: statusRanked.candidates.map((m) => [m.path, m.status]) }));
+  // Both buckets must carry `status`, otherwise the model cannot tell WHY a card
+  // is only a lead (the pre-2026-09-17 shape carried no status at all).
+  check('status: matches carry their status for the agent to read',
+    statusRanked.matches.every((m) => typeof m.status === 'string' && m.status !== '')
+    && statusRanked.candidates.every((m) => m.status === 'candidate'));
+  // An UNSPECIFIED status must keep the old behaviour (stays in matches): the
+  // daily audit reads it as `meta.status ?? "active"`, and silently demoting
+  // older hand-written cards would narrow what the model may rely on.
+  write('.deepseek/strategy/unstated.md', sameSurface('active').replace('status: active\n', ''));
+  const unstatedDoc = buildRecallDoc('.deepseek/strategy/unstated.md', readFileSync(join(intakeRoot, '.deepseek', 'strategy', 'unstated.md'), 'utf8'));
+  const unstatedRanked = rankStrategyCards([unstatedDoc], '换元 结构定理 证明', {});
+  check('status: a card with no status field keeps its old place in matches',
+    unstatedRanked.matches.length === 1 && unstatedRanked.candidates.length === 0,
+    JSON.stringify({ matches: unstatedRanked.matches.map((m) => m.status), candidates: unstatedRanked.candidates.length }));
+
   // ── item 2: negative-transfer counter (R1 usage.harmed) ───────────────────
   const harmedCard = write('.deepseek/memory/records/harmed.md', [
     '---', 'title: 会误导的卡', 'type: fact', 'status: active', 'updated: 2026-09-01',

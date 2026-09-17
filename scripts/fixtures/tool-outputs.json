@@ -43,12 +43,27 @@
           "path": ".deepseek/memory/strategy/strat-a.md",
           "title": "定义层证明冗长",
           "difficulty": "定义层证明冗长",
+          "status": "active",
           "moves": ["先换等价刻画", "再回到定义"],
           "retrieve": ["records/subsequence-trick.md"],
           "abstraction": "把定义展开成可操作的不等式",
           "notApplicableWhen": "有限维 / 紧集",
           "verified": "single-source",
           "score": 0.9876
+        }
+      ],
+      "candidates": [
+        {
+          "path": ".deepseek/memory/strategy/strat-c.md",
+          "title": "尚未晋升的换元路线",
+          "difficulty": "定义层证明冗长",
+          "status": "candidate",
+          "moves": ["先试变量替换"],
+          "retrieve": ["records/subsequence-trick.md"],
+          "abstraction": "把难点搬到等价对象上",
+          "notApplicableWhen": "",
+          "verified": "single-source",
+          "score": 0.4321
         }
       ],
       "excluded": [
@@ -63,6 +78,7 @@
     {
       "query": "没有命中",
       "matches": [],
+      "candidates": [],
       "excluded": []
     }
   ],

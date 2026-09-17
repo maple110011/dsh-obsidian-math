@@ -605,15 +605,32 @@ export function rankStrategyCards(cards, query, options = {}) {
     if (hits.length === 0) { eligible.push(entry); continue; }
     excluded.push({ card: entry.card, hits });
   }
+
+  // ── status is a permission, not a label ───────────────────────────────────
+  // `status: candidate` means the card has NOT been promoted yet (the audit
+  // promotes on uses>=PROMOTE_USES and success_rate>=PROMOTE_RATE). A candidate
+  // is a useful LEAD, but it must not be presented as a mandate — so it is
+  // returned in its own bucket instead of mixed into `matches`.
+  //
+  // Only an EXPLICIT `candidate` is diverted: an absent/unknown status stays in
+  // `matches`, because the daily audit already treats `meta.status ?? "active"`
+  // (math-memory.mjs) as active, and silently re-classifying older hand-written
+  // cards here would change what the model is allowed to rely on. Permission
+  // narrows only where the vault actually declares it.
+  const toMatch = ({ card, score }) => ({
+    path: card.rel,
+    title: card.title,
+    difficulty: normalizeOperator(card.difficulty ?? ""),
+    status: String(card.status ?? "").trim().toLowerCase() || "active",
+    verified: card.hook?.verified ?? "single-source",
+    score: Number(score.toFixed(4))
+  });
+  const cap = Math.min(10, Math.max(1, limit));
+  const isCandidate = (entry) => String(entry.card.status ?? "").trim().toLowerCase() === "candidate";
   return {
     difficulty: filter,
-    matches: eligible.slice(0, Math.min(10, Math.max(1, limit))).map(({ card, score }) => ({
-      path: card.rel,
-      title: card.title,
-      difficulty: normalizeOperator(card.difficulty ?? ""),
-      verified: card.hook?.verified ?? "single-source",
-      score: Number(score.toFixed(4))
-    })),
+    matches: eligible.filter((entry) => !isCandidate(entry)).slice(0, cap).map(toMatch),
+    candidates: eligible.filter(isCandidate).slice(0, cap).map(toMatch),
     excluded: excluded.map(({ card, hits }) => ({
       path: card.rel,
       title: card.title,
@@ -1459,7 +1476,7 @@ export async function apply(ctx, config) {
   // ── note_strategy (strategy layer: method retrieval) ──────────────────────
   ctx.tools.register(defineTool({
     name: "note_strategy",
-    description: `Retrieve strategy cards from the method layer (.deepseek/strategy/): given a reasoning challenge / difficulty, find the stored "how to attack this kind of problem" playbook — each card lists candidate strategies (moves) and, for each, where to retrieve supporting content (retrieve targets). Use it BEFORE note_recall on proof/construction problems: it returns the playbook (difficulty → moves → where to look), then execute the moves via note_recall. This is the method-layer navigator; it is a CANDIDATE not a mandate — re-evaluate each move's applicability to the current problem before following it. An empty result = no stored strategy for this difficulty yet; fall back to note_recall directly.`,
+    description: `Retrieve strategy cards from the method layer (.deepseek/strategy/): given a reasoning challenge / difficulty, find the stored "how to attack this kind of problem" playbook — each card lists candidate strategies (moves) and, for each, where to retrieve supporting content (retrieve targets). Use it BEFORE note_recall on proof/construction problems: it returns the playbook (difficulty → moves → where to look), then execute the moves via note_recall. This is the method-layer navigator; it is a CANDIDATE not a mandate — re-evaluate each move's applicability to the current problem before following it. Results are split by card status: \`matches\` are cards eligible to follow now (status active or unspecified), while \`candidates\` are still at status candidate — not yet promoted by usage, so treat them as leads and do NOT cite them as an established technique. An empty result = no stored strategy for this difficulty yet; fall back to note_recall directly.`,
     parameters: {
       query: { type: "string", required: true, description: "The distilled difficulty / challenge description, e.g. '定义层证明冗长' or '证明 a.s. 收敛 子列技巧'." },
       difficulty: { type: "string", description: "Optional exact difficulty token to hard-filter (matches the card's difficulty field); omit to let BM25 score decide." },
@@ -1474,6 +1491,7 @@ export async function apply(ctx, config) {
           matches: {
             type: "array",
             required: true,
+            description: "Strategy cards eligible to be followed now (status active or unspecified).",
             items: {
               type: "object",
               additionalProperties: false,
@@ -1481,6 +1499,28 @@ export async function apply(ctx, config) {
                 path: { type: "string", required: true },
                 title: { type: "string", required: true },
                 difficulty: { type: "string", required: true },
+                status: { type: "string", required: true },
+                moves: { type: "array", required: true, items: { type: "string" } },
+                retrieve: { type: "array", required: true, items: { type: "string" } },
+                abstraction: { type: "string", required: true },
+                notApplicableWhen: { type: "string", required: true },
+                verified: { type: "string", required: true },
+                score: { type: "number", required: true }
+              }
+            }
+          },
+          candidates: {
+            type: "array",
+            required: true,
+            description: "Strategy cards still at status `candidate`: leads, NOT mandates — they have not been promoted by usage yet, so do not cite them as an established technique.",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                path: { type: "string", required: true },
+                title: { type: "string", required: true },
+                difficulty: { type: "string", required: true },
+                status: { type: "string", required: true },
                 moves: { type: "array", required: true, items: { type: "string" } },
                 retrieve: { type: "array", required: true, items: { type: "string" } },
                 abstraction: { type: "string", required: true },
@@ -1513,10 +1553,20 @@ export async function apply(ctx, config) {
           return [{ type: "text", text: `No stored strategy for this difficulty — fall back to note_recall directly (and consider distilling one into .deepseek/strategy/ after this turn).${withheld}` }];
         }
         const badge = (v) => v === "user-confirmed" ? " ✅" : v === "cross-referenced" ? " ⚖️" : " ❓";
-        const lines = value.matches.map((m) =>
-          `- [策略] ${m.difficulty}${badge(m.verified)} (${m.path}) score ${m.score.toFixed(3)}\n  moves: ${m.moves.join(" / ")}\n  retrieve: ${m.retrieve.join(", ")}\n  abstraction: ${m.abstraction}${m.notApplicableWhen !== "" ? "\n  ⚠ 不适用: " + m.notApplicableWhen : ""}`
-        );
-        return [{ type: "text", text: `${value.matches.length} 张策略卡（候选，不是指令——按适用性逐条重判后再用）:\n${lines.join("\n")}${withheld}` }];
+        const renderCard = (m) =>
+          `- [策略] ${m.difficulty}${badge(m.verified)} (${m.path}) score ${m.score.toFixed(3)}\n  moves: ${m.moves.join(" / ")}\n  retrieve: ${m.retrieve.join(", ")}\n  abstraction: ${m.abstraction}${m.notApplicableWhen !== "" ? "\n  ⚠ 不适用: " + m.notApplicableWhen : ""}`;
+        // Candidates get their own block with an explicit permission sentence:
+        // `status: candidate` means the audit has not promoted this card yet, so
+        // following its moves is fine but citing it as an established technique is
+        // not. Mixed into `matches` it was indistinguishable from a promoted card,
+        // because the pre-2026-09-17 shape carried no `status` at all.
+        const candidateBlock = value.candidates.length === 0 ? "" :
+          `\n\n另有 ${value.candidates.length} 张**候选**策略卡（status: candidate，尚未按使用记录晋升——可以把 moves 当线索试用，但**不得当作已验证技巧引用**）:\n${value.candidates.map(renderCard).join("\n")}`;
+        if (value.matches.length === 0) {
+          return [{ type: "text", text: `No stored strategy for this difficulty — fall back to note_recall directly (and consider distilling one into .deepseek/strategy/ after this turn).${withheld}${candidateBlock}` }];
+        }
+        const lines = value.matches.map(renderCard);
+        return [{ type: "text", text: `${value.matches.length} 张策略卡（候选，不是指令——按适用性逐条重判后再用）:\n${lines.join("\n")}${withheld}${candidateBlock}` }];
       }
     },
     isConcurrencySafe: () => true,
@@ -1543,13 +1593,14 @@ export async function apply(ctx, config) {
 
       const ranked = rankStrategyCards(docs, query, { difficulty: difficultyFilter, limit });
       const byPath = new Map(docs.map((doc) => [doc.rel, doc]));
-      const top = ranked.matches.map(({ path, score }) => {
+      const expand = ({ path, score, status }) => {
         const doc = byPath.get(path);
         return {
           card: {
             path,
             title: doc.title,
             difficulty: doc.difficulty,
+            status,
             surface: doc.strategy,
             moves: strategyMoves(doc.rawFrontmatter),
             retrieve: strategyRetrieve(doc.rawFrontmatter),
@@ -1559,28 +1610,36 @@ export async function apply(ctx, config) {
           },
           score
         };
-      });
+      };
+      const top = ranked.matches.map(expand);
+      const candidateTop = ranked.candidates.map(expand);
 
       // Strategy hits feed the same usage stats as records, so the daily audit
       // can promote candidates (self-correction.md P5b).
       recordRetrievalStats(rootPath, top.map((entry) => entry.card.path));
 
+      // Shape one card for the wire. Only keys declared in the output schema may
+      // appear: dsh validates the returned value strictly against a schema with
+      // `additionalProperties: false`, so one extra field fails the whole call
+      // (`card.kind`/`score` used to make note_strategy throw every time —
+      // fixed 2026-09-14).
+      const toWire = ({ card, score }) => ({
+        path: card.path,
+        title: card.title,
+        difficulty: card.difficulty,
+        status: card.status,
+        moves: card.moves,
+        retrieve: card.retrieve,
+        abstraction: card.abstraction,
+        notApplicableWhen: card.notApplicableWhen,
+        verified: card.verified,
+        score: Number(score.toFixed(4))
+      });
+
       return {
         query,
-        matches: top.map(({ card, score }) => ({
-          path: card.path,
-          title: card.title,
-          difficulty: card.difficulty,
-          moves: card.moves,
-          retrieve: card.retrieve,
-          abstraction: card.abstraction,
-          notApplicableWhen: card.notApplicableWhen,
-          verified: card.verified,
-          score: Number(score.toFixed(4))
-        })),
-        // 只带 schema 声明的四个键：dsh 会对返回值做严格校验，多一个字段整次调用就失败
-        // （schema 是 `additionalProperties: false`；`card.kind`/`score` 曾经让
-        // note_strategy 每次都抛 ToolOutputError，2026-09-14 修）。
+        matches: top.map(toWire),
+        candidates: candidateTop.map(toWire),
         excluded: ranked.excluded.map((item) => ({
           path: item.path,
           title: item.title,

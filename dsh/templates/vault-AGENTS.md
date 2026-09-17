@@ -62,7 +62,7 @@
 
 **适用边界（`not_applicable_when`，建议每张卡都写）**：一句话说明「什么情况下**不要**用这张卡」。它不只是注释——`note_recall` / `note_strategy` 把它当**硬门控**：查询里出现边界短语时该卡不进候选，而是在结果里单独列出「因适用边界被排除（命中『…』）」，由你判断边界是否真的成立。因此**写成短句/关键词列表**（顿号或逗号分隔、每条 ≤12 字），不要写整段散文——长句会被拆成碎片，门控就不准。例：`not_applicable_when: 成本非二次、μ 非绝对连续`。
 
-**策略卡纪律**（`strategy/`，方法层）：`difficulty`（困难，主轴）/`domain`（算子，软偏好）/`strategies[].move`+`retrieve`/`abstraction` 三段/`not_applicable_when`/`provenance` 由你维护；`verified` 只能写 `single-source`（升级需用户参与）；`uses/success_rate` 由插件维护。候选卡 `status: candidate`，体检按 uses≥3 且成功率达标 promote 为 `active`。策略卡是「候选」不是「指令」——命中后仍按 §5 记忆适用性逐条重判。候选来源包括**内嵌技巧 callout（`>[!tip]`）与用户备忘 bullet**，不只 hook 字段。
+**策略卡纪律**（`strategy/`，方法层）：`difficulty`（困难，主轴）/`domain`（算子，软偏好）/`strategies[].move`+`retrieve`/`abstraction` 三段/`not_applicable_when`/`provenance` 由你维护；`verified` 只能写 `single-source`（升级需用户参与）；`uses/success_rate` 由插件维护。候选卡 `status: candidate`，体检按 uses≥3 且成功率达标 promote 为 `active`。策略卡是「候选」不是「指令」——命中后仍按 §5 记忆适用性逐条重判。候选来源包括**内嵌技巧 callout（`>[!tip]`）与用户备忘 bullet**，不只 hook 字段。**`status` 是权限不只标签**：`note_strategy` 把 `active`/未声明 status 的卡放进 `matches`，把 `status: candidate` 的卡单独放进 `candidates` 并标明「不得当作已验证技巧引用」——给一张卡写 `candidate` 就等于把它降格为线索，这是有意的。
 
 **记忆体检（插件每日扫描，见系统提示「记忆体检」段）**：体检列出的清单按以下规则处理，且只在相关讨论出现时执行、不要为凑清单而动手：
 - weak（成功率低且被使用过）→ 读卡改写内容或适用边界（`success_rate` 由插件根据后续使用与反馈自动重估，**你不要动它**，避免与 hook 块纪律冲突）；同一张卡被改 3 次仍弱，在回复末尾一行建议归档。

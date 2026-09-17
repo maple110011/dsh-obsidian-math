@@ -52,3 +52,4 @@ source: '[[YYYY-MM-DD-episode-slug]]'
 3. **demote / 反模式**：连续失败 3 次 → 体检 flag「补 `not_applicable_when` 或降级」。
 4. 更新 `strategy/index.md`（按 difficulty 分组一行一条）。
 5. **检索纪律**：策略卡是「候选」不是「指令」——命中后仍要按 AGENTS.md §5 记忆适用性逐条重判（防 Reasoning Fixation）。
+6. **状态即权限（2026-09-17 起由检索强制）**：`note_strategy` 按 `status` **分组返回**——`matches` 是可依据的卡（`active` 或**未声明** status），`candidates` 是 `status: candidate` 的卡。候选卡会以「可以把 moves 当线索试用，但**不得当作已验证技巧引用**」单独列出。**所以 `status` 不只是标签**：写了 `candidate` 就等于声明"这张卡还没被使用记录晋升"，会被自动降格为线索。晋升规则见第 2 条（`uses ≥ 3` 且 `success_rate ≥ 0.6` 由体检确定性改写为 `active`）。
