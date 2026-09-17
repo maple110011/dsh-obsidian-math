@@ -36,7 +36,7 @@
 | `docs/dsh-panel-research.md` | dsh web 面板机制调研（客户端契约 / settings.section 槽位 / profile 装配名单 / 宿主路由） |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
-| `scripts/test-memory.mjs` | 零 token 记忆回归（331 项断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 记忆回归（335 项断言，进 `npm test`） |
 | `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（47 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、四条写入型端点；进 `npm test`） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 项：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写回归） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 项，对真实 dsh；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
@@ -271,7 +271,7 @@
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 331 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
+npm test                        # 335 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile

@@ -2575,6 +2575,54 @@ check('archive: a real memory card is still archived',
   rmSync(archiveRoot, { recursive: true, force: true });
 }
 
+// ── size ceilings: "原子化，不要写小作文" needs a number to be checkable ────────
+// WikiSkill (arXiv:2608.27454 Appendix E.2) caps pattern pages at 10–30 lines. Our
+// advice had no number, so it could not be checked; the corpus that fixed the numbers
+// is the seed vault (records bodies 7–8 lines, strategy cards 2–6, moves ≤ 3), so the
+// ceilings are set to flag hoarding, not normal writing.
+{
+  const sizeRoot = mkdtempSync(join(tmpdir(), 'dsh-size-'));
+  mkdirSync(join(sizeRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+  mkdirSync(join(sizeRoot, '.deepseek', 'strategy'), { recursive: true });
+  const longBody = Array.from({ length: 25 }, (_, i) => `正文第 ${i + 1} 行`).join('\n');
+  writeFileSync(join(sizeRoot, '.deepseek', 'memory', 'records', 'fat.md'), card([
+    '---', 'title: 过长卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'source: "[[2026-01-01-ep]]"', '---', '', longBody
+  ]));
+  const slimBody = Array.from({ length: 8 }, (_, i) => `正文第 ${i + 1} 行`).join('\n');
+  writeFileSync(join(sizeRoot, '.deepseek', 'memory', 'records', 'slim.md'), card([
+    '---', 'title: 正常卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'source: "[[2026-01-01-ep]]"', '---', '', slimBody
+  ]));
+  const manyMoves = Array.from({ length: 6 }, (_, i) => `  - move: 方法${i + 1}\n    retrieve: [theorem]`).join('\n');
+  writeFileSync(join(sizeRoot, '.deepseek', 'strategy', 'many-moves.md'), card([
+    '---', 'title: move 过多的策略卡', 'type: strategy', 'status: candidate',
+    'difficulty: definition-level-proof', 'provenance: agent', 'source: "[[2026-01-01-ep]]"',
+    'verified: single-source', 'strategies:', manyMoves, '---', '', '# 六招'
+  ]));
+  writeFileSync(join(sizeRoot, '.deepseek', 'strategy', 'few-moves.md'), card([
+    '---', 'title: 正常策略卡', 'type: strategy', 'status: candidate',
+    'difficulty: definition-level-proof', 'provenance: agent', 'source: "[[2026-01-01-ep]]"',
+    'verified: single-source', 'strategies:', '  - move: 等价刻画\n    retrieve: [theorem]', '---', '', '# 一招'
+  ]));
+  const sizeReport = buildAuditReport(sizeRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('size: a card body over the ceiling is reported, with its line count',
+    sizeReport.structural.tooLong === 1 && sizeReport.sections.tooLong[0]?.rel === '.deepseek/memory/records/fat.md'
+    && sizeReport.sections.tooLong[0]?.lines === 25,
+    JSON.stringify(sizeReport.structural));
+  check('size: a normal card is not flagged (the ceiling does not cry wolf)',
+    !sizeReport.sections.tooLong.some((card) => card.rel.endsWith('slim.md')));
+  check('size: a strategy card with too many moves is reported separately from body length',
+    sizeReport.structural.tooManyMoves === 1
+    && sizeReport.sections.tooManyMoves[0]?.rel === '.deepseek/strategy/many-moves.md'
+    && sizeReport.sections.tooManyMoves[0]?.moves === 6,
+    JSON.stringify({ moves: sizeReport.sections.tooManyMoves, structural: sizeReport.structural, body: stripFrontmatter(readFileSync(join(sizeRoot, '.deepseek', 'strategy', 'many-moves.md'), 'utf8')).slice(0, 200) }));
+  check('size: the checklist says what to DO about it (split), not just that it is long',
+    sizeReport.report.includes('卡片过长') && sizeReport.report.includes('move 过多')
+    && sizeReport.report.includes('拆'), sizeReport.report.slice(0, 300));
+  rmSync(sizeRoot, { recursive: true, force: true });
+}
+
 rmSync(root, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok).length;
 console.log(`__CHECKS__ ${results.length - failed}/${results.length}`);

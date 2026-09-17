@@ -209,6 +209,16 @@
 - **卡片移动与索引改写是两个动作**：卡片先移（`rename`），索引再改（原子 + 校验）。索引失败时**卡片已经在 archive 里**——报告写明"卡片已移动，可据 `.bak` 修复"，而不是假装整件事失败或整件事成功。
 - **状态**：**已实现**（`writeFileAtomic` / `moveCardsToArchive` + `postconditions.archiveFailures`；断言 3 项原子写 + 2 项归档降级）。**未做**（有意）：给用户可编辑的卡片正文也加同样的原子写（正文写入由模型的 `edit`/`write` 走 `ctx.fs`，非本插件职责）；`.bak` 的自动清理与保留策略。
 
+### 8.4 卡片尺寸上限（**已实现**，2026-09-18）
+
+> **来源**：WikiSkill（arXiv:2608.27454 Appendix E.2）把模式页**硬性限制在 10–30 行**，理由是"知识页一旦长成小作文就不再可用"。我们的模板一直写"原子化、不要整段对话总结"——**没有数字的纪律无法检查**，所以它从来只是建议。
+
+- **上限**：正文（frontmatter 之后的非空行）**≤ `AUDIT_BODY_MAX_LINES = 20`**；策略卡 **move 数 ≤ `AUDIT_MAX_MOVES = 5`**（两个常量都在 `math-memory.mjs`）。
+- **数字从哪来（不凭空定）**：先量了语料——种子 vault 的 records 正文 **7–8 行**、策略卡 **2–6 行**、move **≤ 3**。上限刻意**宽于**实测分布，目的是抓"囤积"，不是给正常写作添堵。
+- **move 计数按原文**，**不是按正文**：`strategies:` 是 **frontmatter 字段**，move 写在头块里，`stripFrontmatter` 会把整块剥掉（第一版实现就是在正文上数，于是恒为 0；这是本轮第三个"由自己的断言/调试抓出来的实现错误"）。这条以前面那条 `cardRef` 缺字段的 bug 是同一族：**判据要能看见自己的输入**。
+- **怎么报**：进 `structural.tooLong` / `structural.tooManyMoves`，清单里**说清该做什么**（拆成一到两张原子卡 / 把过程挪进 episode / 按触发条件排序并移出不触发的 move），**只报告不自动改**——拆卡需要判断，属于模型与用户的活。
+- **状态**：**已实现**（`buildAuditReport` + 体检台账 `split-card` / `split-or-prioritize-moves`；模板纪律写在 `records-readme.md` 第 6 条与 `strategy-readme.md` 第 9 条）。**未做**（有意）：episode 与 topics/theorems 的同类上限（它们的形态不同，需要各自的分布数据）。
+
 ## 9. 安全边界（fail-closed）
 
 - 工具面：文件读写/搜索 + 五个笔记工具（note_recall / note_strategy / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；

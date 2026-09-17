@@ -183,6 +183,14 @@ const AUDIT_LEDGER_MAX_LINES = 2000; // whole file; oldest lines are dropped fir
 // Minimum characters in an index line's one-sentence summary. Deliberately a FLOOR,
 // not a style rule: see `indexDescriptionIssue` (WikiSkill Appendix E.2).
 const AUDIT_INDEX_DESC_MIN = 8;
+// Card-body and move-count ceilings. "原子化、不要整段对话总结" was unenforceable advice
+// until it had a number; these are the numbers, and they are deliberately GENEROUS
+// against the measured corpus (records bodies ran 7–8 non-empty lines, strategy cards
+// 2–6, at most 3 moves) so the check flags hoarding rather than normal writing.
+// Rationale from WikiSkill (arXiv:2608.27454 Appendix E.2): pattern pages are capped
+// at 10–30 lines because a knowledge page that grows into an essay stops being usable.
+const AUDIT_BODY_MAX_LINES = 20;
+const AUDIT_MAX_MOVES = 5;
 
 /**
  * Deterministic net-gain verdict for a card, in [-1, 1], or 0 for "no verdict".
@@ -1550,6 +1558,8 @@ function actionableAuditEntries(sections, hintFor) {
   for (const card of sections.hubs) push(card.rel, "protect-before-edit", "structural-hub", `backlinks=${card.backlinks}`, `${card.title}（${card.backlinks} 处引用）`);
   for (const item of sections.indexWeak) push(item.rel, "improve-index-line", "index-description", `issue=${item.issue}`, `${item.title}（索引行说明过弱）`);
   for (const item of sections.indexNotAnEntry) push(item.rel, "fix-index-line-format", "index-format", `issue=${item.issue}`, `${item.title}（索引行不合契约）`);
+  for (const card of sections.tooLong) push(card.rel, "split-card", "over-length", `lines=${card.lines}`, `${card.title}（${card.lines} 行，超过 ${AUDIT_BODY_MAX_LINES} 行）`);
+  for (const card of sections.tooManyMoves) push(card.rel, "split-or-prioritize-moves", "too-many-moves", `moves=${card.moves}`, `${card.title}（${card.moves} 个 move，超过 ${AUDIT_MAX_MOVES}）`);
   for (const item of sections.downstreamReview) {
     const object = `${item.rel}|${item.via.rel}`;
     push(object, "re-verify-dependent", "premise-moved", `reason=${item.reason}`, `${item.title} ← ${item.via.title}`);
@@ -1830,7 +1840,7 @@ export function buildAuditReport(root, helpers) {
   // The three-write protocol is model-executed; these deterministic checks give
   // the daily audit a structural backstop: records without source, provenance
   // links pointing at nothing, and cards missing from the records index.
-  const structural = { missingSource: [], brokenLinks: [], notInIndex: [], unjustifiedUpgrade: [], usesMismatch: [] };
+  const structural = { missingSource: [], brokenLinks: [], notInIndex: [], unjustifiedUpgrade: [], usesMismatch: [], tooLong: [], tooLongRels: new Map(), tooManyMoves: [], tooManyMovesRels: new Map() };
   const extractLinks = (raw) => {
     const links = [];
     const expression = /\[\[([^\[\]|#]+)(?:#[^\]\[]*)?(?:\|[^\]\[]*)?\]\]/g;
@@ -1899,6 +1909,31 @@ export function buildAuditReport(root, helpers) {
       structural.unjustifiedUpgrade.push(`${card.title}(${card.verified})`);
     }
     const stem = card.rel.split("/").at(-1).replace(/\.md$/, "");
+    // Size ceilings (see AUDIT_BODY_MAX_LINES / AUDIT_MAX_MOVES). Counted from the
+    // file rather than from the card object because the card object carries parsed
+    // fields, not the prose — and the prose is what grows.
+    try {
+      const rawText = readFileSync(card.filePath, "utf8");
+      const body = stripFrontmatter(rawText);
+      const bodyLines = body.split(/\r?\n/).filter((line) => line.trim() !== "").length;
+      if (bodyLines > AUDIT_BODY_MAX_LINES) {
+        structural.tooLong.push(`${card.title}(${bodyLines} 行 > ${AUDIT_BODY_MAX_LINES})`);
+        structural.tooLongRels.set(card.rel, bodyLines);
+      }
+      if (card.type === "strategy") {
+        // Counted from the RAW file, not the stripped body: `strategies:` sits in the
+        // frontmatter, so the moves live in the block `stripFrontmatter` removes.
+        // (First implementation counted from the body and therefore never fired.)
+        const moves = (rawText.match(/^\s*-\s*move:/gm) ?? []).length;
+        if (moves > AUDIT_MAX_MOVES) {
+          structural.tooManyMoves.push(`${card.title}(${moves} 个 move > ${AUDIT_MAX_MOVES})`);
+          structural.tooManyMovesRels.set(card.rel, moves);
+        }
+      }
+    } catch {
+      // An unreadable card is already reported by the uses-mismatch pass; do not
+      // turn a size lint into a second, louder failure.
+    }
     // `layer`/`stem` are only needed for the index lookup below; the index findings
     // themselves are derived once, after this loop, into `indexIssueByRel`.
     if (!card.rel.includes("/records/")) continue; // source discipline applies to record cards
@@ -2298,6 +2333,12 @@ export function buildAuditReport(root, helpers) {
       .map((card) => ({ ...cardRef(card), issue: indexIssueByRel.get(card.rel) })),
     indexNotAnEntry: cards.filter((card) => live(card) && indexNotAnEntryRels.has(card.rel))
       .map((card) => ({ ...cardRef(card), issue: indexIssueByRel.get(card.rel) })),
+    // Size ceilings (WikiSkill Appendix E.2): a card that grew into an essay is a
+    // card nobody re-reads. Advisory — reported, never auto-split.
+    tooLong: cards.filter((card) => live(card) && structural.tooLongRels.has(card.rel))
+      .map((card) => ({ ...cardRef(card), lines: structural.tooLongRels.get(card.rel) })),
+    tooManyMoves: cards.filter((card) => live(card) && structural.tooManyMovesRels.has(card.rel))
+      .map((card) => ({ ...cardRef(card), moves: structural.tooManyMovesRels.get(card.rel) })),
     autoArchiveTargets: autoArchiveTargets.map((card) => ({ ...cardRef(card), filePath: card.filePath })),
     // Cards standing on a premise that has moved. Each entry names BOTH ends so the
     // reader can judge whether the dependent still holds.
@@ -2462,6 +2503,14 @@ export function buildAuditReport(root, helpers) {
       const rows = sections.indexWeak.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]（${card.issue}）`);
       checklistLines.push(`- 索引行说明过弱（读者靠这一行决定要不要打开卡片；写清「什么困难 + 为什么有效 + 具体怎么做」，见本层 _README）: ${rows.join("、")}`);
     }
+    if (sections.tooLong.length > 0) {
+      const rows = sections.tooLong.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]](${card.lines} 行)`);
+      checklistLines.push(`- 卡片过长（正文超过 ${AUDIT_BODY_MAX_LINES} 行；拆成一到两张可复用的原子卡，或把过程挪进 episode）: ${rows.join("、")}`);
+    }
+    if (sections.tooManyMoves.length > 0) {
+      const rows = sections.tooManyMoves.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]](${card.moves} 个 move)`);
+      checklistLines.push(`- 策略卡 move 过多（超过 ${AUDIT_MAX_MOVES} 个：先按触发条件排序，把总是同时出现、或从不触发的移出/另立一张）: ${rows.join("、")}`);
+    }
     if (passive.calls > 0) {
       const emptyPct = Math.round((passive.empty / passive.calls) * 100);
       checklistLines.push(`- 检索健康：上次体检以来 ${passive.calls} 次检索，空结果 ${passive.empty} 次（${emptyPct}%）`);
@@ -2615,6 +2664,8 @@ export function buildAuditReport(root, helpers) {
       notInIndex: structural.notInIndex.length,
       indexWeak: indexWeakRels.size,
       indexNotAnEntry: indexNotAnEntryRels.size,
+      tooLong: structural.tooLong.length,
+      tooManyMoves: structural.tooManyMoves.length,
       unjustifiedUpgrade: structural.unjustifiedUpgrade.length,
       usesMismatch: structural.usesMismatch.length,
       hubs: hubCards.length,
