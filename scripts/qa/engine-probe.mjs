@@ -178,5 +178,34 @@ const bagMean = mean(both.map((r) => [r, r.bagRank]));
 const maxMean = mean(both.map((r) => [r, r.maxRank]));
 console.log(`  target rank (${both.length} cases): bag mean ${bagMean.toFixed(2)} → max mean ${maxMean.toFixed(2)}；improved ${better} / worsened ${worse}`);
 console.log("  决策口径：Δ>0 且 Direct 数不降才考虑把 viewPool 默认改为 max；Δ<=0 就保持 bag（见 docs/memory/retrieval-v3.md §7）。");
+
+// ── §3 检索成本：一条答案要翻几个位置（MemForest 的 Avg-R 口径，零 token）────
+//
+// WHY: 「目标是否进 top-k」与「目标排在第几」是两件事。命中率把「第一个结果就是对
+// 的」和「翻到第 7 个才找到」记成同一个分数，而后者意味着用户/模型要连读多条才拿到
+// 答案——MemForest（arXiv:2609.08273 §5.3.2）正是用平均检索轮数（Avg-R）证明它的
+// 压缩把轮数从 3.10 压到 2.6，而不是只报准确率。这里用同一口径量我们自己的真实库：
+//
+//   Avg-R = Σ(未找到 ? ROUND_CAP : 目标排名) / 可排名用例数
+//
+// 未命中按 ROUND_CAP 计入，而不是从分母里剔除：把找不到的用例丢掉会让平均看起来很好
+// ——那正是 MSCE 提醒过的"低成本可能来自提前终止"。所以这个数字**只报告、不做断言**，
+// 它的用途是给后续改动一个可比基线（改检索前后各跑一次）。
+const ROUND_CAP = 10;
+const rankableCount = rankable.length;
+const ranks = rows.map((r) => (r.bagRank > 0 ? r.bagRank : ROUND_CAP));
+const avgR = rankableCount === 0 ? 0 : ranks.reduce((sum, n) => sum + n, 0) / rankableCount;
+const sortedRanks = [...ranks].sort((a, b) => a - b);
+const medianR = sortedRanks.length === 0 ? 0 : sortedRanks[Math.floor((sortedRanks.length - 1) / 2)];
+const buckets = [[1, 1], [2, 3], [4, 8], [9, Infinity]];
+const bucketLabel = ([lo, hi]) => (hi === Infinity ? `>${lo - 1}` : lo === hi ? String(lo) : `${lo}-${hi}`);
+console.log(`\n§3 retrieval cost, Avg-R (top-${K}; 未命中按 ${ROUND_CAP} 计)`);
+console.log(`  Avg-R ${avgR.toFixed(2)} · median ${medianR} · worst ${sortedRanks[sortedRanks.length - 1] ?? 0} · ${rankableCount} cases`);
+console.log("  " + buckets.map((b) => `${bucketLabel(b)} 位: ${ranks.filter((n) => n >= b[0] && n <= b[1]).length} 例`).join(" · "));
+const worst = rows.filter((r) => r.bagRank === 0).map((r) => r.label);
+if (worst.length > 0) console.log(`  未进 top-${K}（按 ${ROUND_CAP} 计）: ${worst.join("、")}`);
+console.log(`  对照：直接命中率 ${(rows.filter((r) => r.bagRank === 1).length)}/${rankableCount} 排在首位；` +
+  `只读前 3 条可覆盖 ${ranks.filter((n) => n <= 3).length}/${rankableCount}`);
+console.log("  决策口径：这是基线，不是阈值。改检索前后各跑一次，Avg-R 下降且命中数不降才算改进（同 §2 的口径）。");
 process.exit(fail === 0 ? 0 : 1);
 
