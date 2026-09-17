@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // lit-import.mjs — 把「Zotero BibTeX + PDF + MinerU markdown」整理成 agent 可读、人类可看的文献库。
 // 非破坏性：只读源目录、只写 --out；重复运行不覆盖用户已编辑的卡片（cards/*.md 已存在即保留）。
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, existsSync, rmSync, mkdtempSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { cardProgress, renderIndexBlock } from './lib/lit-index.mjs';
 
 const log = (...a) => console.log(...a);
 const warn = (...a) => console.error('WARN', ...a);
@@ -26,6 +28,13 @@ function parseArgs(argv) {
     else if (k === '--bib') a.bib = argv[++i];
     else if (k === '--dry-run') a.dryRun = true;
     else if (k === '--no-images') a.copyImages = false;
+    else if (k === '--self-test') {
+      // The index logic now lives in scripts/lib/lit-index.mjs so it can be tested
+      // IN-PROCESS: this repo's sandbox forbids capturing a child process's output
+      // (piped stdio → EPERM), so a gate must not need to shell out.
+      console.error('--self-test 已移出本脚本：请运行 node scripts/test-lit-import.mjs（进程内，无子进程）');
+      process.exit(2);
+    }
     else if (k === '--help') { console.log(USAGE); process.exit(0); }
     else { console.error('未知参数: ' + k); console.error(USAGE); process.exit(2); }
   }
@@ -220,26 +229,11 @@ function renderCard(e, meta) {
   return L.join('\n');
 }
 
-function statusLabel(status) {
-  const map = { 'to-process': '待转换', 'unread': '未读', 'reading': '研读中', 'distilled': '已蒸馏', 'archived': '已归档' };
-  return map[status] || status;
-}
+
 
 const AUTO_START = '<!-- BEGIN AUTO-INDEX (lit-import.mjs 生成，勿手改本块) -->';
 const AUTO_END = '<!-- END AUTO-INDEX -->';
 
-function renderIndexBlock(rows) {
-  const L = [];
-  L.push('| 状态 | 文献 | 作者 | 年份 | 关键词 |');
-  L.push('|---|---|---|---|---|');
-  for (const r of rows) {
-    const t = r.title;
-    const a = (r.authors[0] || '') + (r.authors.length > 1 ? ' 等' : '');
-    const tags = (r.keywords ? r.keywords.split(/[,;]/)[0] : '') || '—';
-    L.push('| ' + statusLabel(r.status) + ' | [' + t + '](cards/' + r.citekey + '.md) | ' + a + ' | ' + r.year + ' | ' + tags + ' |');
-  }
-  return L.join('\n');
-}
 
 function indexHeader() {
   return [
@@ -495,7 +489,18 @@ function main() {
   const mergedBib = mergeBib(existingBib, readFileSync(bibPath, 'utf8'));
   writeFileSync(join(out, 'library.bib'), mergedBib, 'utf8');
 
-  const rows = mergedIndexEntries.map((x) => ({ citekey: x.citekey, title: x.title, authors: x.authors, year: x.year, keywords: x.keywords, status: x.status }));
+  const rows = mergedIndexEntries.map((x) => {
+    // Prefer what the card DECLARES: cards/*.md survive re-import, so the entry's
+    // machine default (`unread`, set when the card was first created) is stale for
+    // anything the user has since worked on.
+    let progress = { status: null, days: null };
+    try { progress = cardProgress(readFileSync(join(out, 'cards', x.citekey + '.md'), 'utf8')); } catch { /* fresh import: keep the machine default */ }
+    return {
+      citekey: x.citekey, title: x.title, authors: x.authors, year: x.year, keywords: x.keywords,
+      status: progress.status ?? x.status,
+      days: progress.days
+    };
+  });
   const autoBlock = AUTO_START + '\n' + renderIndexBlock(rows) + '\n' + AUTO_END;
   const indexPath = join(out, 'index.md');
   if (existsSync(indexPath)) {
