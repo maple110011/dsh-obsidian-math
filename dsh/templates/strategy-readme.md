@@ -23,6 +23,9 @@ abstraction:             # 抽象阶梯（三段，跨层级检索面）
   principle: "定义难证时，先找等价/更易验证的刻画"
   generalize: "任何『逐点/逐字展开太繁琐』的证明场景"
 not_applicable_when: "等价刻画不存在或更繁时"   # 防固定护栏（MemTrapBench）
+decision_guidance:        # 成对的对比指导（可选）：同场景下该做 / 该避免什么，各带证据
+  prefer: []              # 建议：'先试等价刻画（证据：[[rec-xxx]]）'
+  avoid: []               # 避免：'不要直接展开定义（证据：[[rec-yyy]]，曾因此绕远）'
 provenance: agent        # user / agent / both（来源）
 verified: single-source  # single-source / cross-referenced / user-confirmed
 # uses / success_rate 由插件维护，不要手写
@@ -52,4 +55,6 @@ source: '[[YYYY-MM-DD-episode-slug]]'
 3. **demote / 反模式**：连续失败 3 次 → 体检 flag「补 `not_applicable_when` 或降级」。
 4. 更新 `strategy/index.md`（按 difficulty 分组一行一条）。
 5. **检索纪律**：策略卡是「候选」不是「指令」——命中后仍要按 AGENTS.md §5 记忆适用性逐条重判（防 Reasoning Fixation）。
-6. **状态即权限（2026-09-17 起由检索强制）**：`note_strategy` 按 `status` **分组返回**——`matches` 是可依据的卡（`active` 或**未声明** status），`candidates` 是 `status: candidate` 的卡。候选卡会以「可以把 moves 当线索试用，但**不得当作已验证技巧引用**」单独列出。**所以 `status` 不只是标签**：写了 `candidate` 就等于声明"这张卡还没被使用记录晋升"，会被自动降格为线索。晋升规则见第 2 条（`uses ≥ 3` 且 `success_rate ≥ 0.6` 由体检确定性改写为 `active`）。
+6. **状态即权限（2026-09-17 起由检索强制）**：`note_strategy` 按 `status` **分组返回**——`matches` 是可依据的卡（`active` 或**未声明** status），`candidates` 是 `status: candidate` 的卡。候选卡会以「可以把 moves 当线索试用，但**不得当作已验证技巧引用**」单独列出。**所以 `status` 不只是标签**：写了 `candidate` 就等于声明"这张卡还没被使用记录晋升"，会被自动降格为线索。晋升规则见第 2 条（`uses ≥ 3` 且 `success_rate ≥ 0.6` 由体检确定性改写为 `active`），**另有一道接地门**：候选卡若没有 `source`，即使达标也不晋升，体检会点名并说明"补上 source 后会自行晋升"。
+7. **成对的对比指导 `decision_guidance`（可选，但强烈建议在有失败经验时写）**：`prefer` 写"同场景下建议怎么做"，`avoid` 写"避免怎么做"，**每条都带证据链接**。理由：只写"该怎么做"记不住教训；成对写出"该做 / 该避免"才能把一次失败固化成可迁移的判断。这也与体检的「反模式」呼应——反模式是一条散句，`avoid` 是**挂在具体策略上、带证据**的那一条。
+8. **`not_applicable_when` 会被反馈自动收窄**：用户点「🔁 本次场景不适用」时，插件会把**本次检索用到的、且确实出现在本卡里的关键词**追加进边界（最多 2 条，每条 ≤12 字——必须符合边界语法，否则门控切不准）。所以边界可能在你没改它的情况下变长，这是有意的：**否决应当收窄适用面，而不只是降低成功率**。注意用户点「❌ 这张卡有错」**不会**动边界——那是内容判定，不是适用范围判定。

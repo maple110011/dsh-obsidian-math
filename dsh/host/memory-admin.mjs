@@ -8,7 +8,7 @@ import {
   existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync,
   openSync, readSync, closeSync
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 
 // Receipts shown AFTER a feedback action. They state the object ("this card")
@@ -54,12 +54,59 @@ function joinFrontmatterLines(lines, useCrlf) {
 }
 
 /**
+ * The `not_applicable_when` boundary phrases a rejected query justifies appending.
+ *
+ * WHY (MSCE, arXiv:2607.16621 §4.3 lifecycle): a user rejection should SHRINK the
+ * applicability boundary, not merely halve a success rate. Today a card the user
+ * just rejected is still retrievable next time, only ranked lower — recording the
+ * context makes the existing boundary gate exclude it outright and *say why*.
+ *
+ * The context comes from `cache/retrieval-stats.json`'s `last_query`, written by
+ * `note_recall`. The link the user clicks carries only a path and an action, so the
+ * query has to have been remembered at hit time.
+ *
+ * Only fragments that are ALREADY IN THE CARD are proposed: those are the words
+ * that matched it, which is precisely the context the card is being told it does
+ * not cover. Fragments must obey the boundary grammar (`boundarySegments`: 2–12
+ * chars, no punctuation) or the gate cannot parse them back — a boundary written as
+ * prose gets shredded into fragments and stops working (records/_README.md warns
+ * about exactly this). Returns `[]` when there is nothing defensible to add.
+ */
+function boundaryPhrasesFromQuery(root, filePath) {
+  if (typeof root !== 'string' || root === '') return [];
+  let query = '';
+  try {
+    const rel = relative(root, filePath).replace(/\\/g, '/');
+    const stats = JSON.parse(readFileSync(join(root, '.deepseek', 'cache', 'retrieval-stats.json'), 'utf8')) ?? {};
+    query = String(stats?.[rel]?.last_query ?? '');
+  } catch {
+    return []; // no cache, no query: there is no context to name
+  }
+  if (query === '') return [];
+  let cardText = '';
+  try {
+    cardText = readFileSync(filePath, 'utf8').toLowerCase();
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const chunk of query.split(/[\s、，,；;。()（）\[\]【】/]+/)) {
+    const phrase = chunk.trim();
+    if (phrase.length < 2 || phrase.length > 12) continue;
+    if (!cardText.includes(phrase.toLowerCase())) continue;
+    if (out.includes(phrase)) continue;
+    out.push(phrase);
+    if (out.length >= 2) break; // keep the boundary short and decidable
+  }
+  return out;
+}
+
+/**
  * Set `field: value` inside a block-style hook block (appends the line when
  * absent). Returns the new frontmatter text, or null when there is no
  * block-style hook (flow-style `hook: { ... }` is left untouched).
  */
-export function setHookField(frontmatterText, field, value) {
-  const lines = frontmatterText.split(/\r?\n/);
+export function setHookField(frontmatterText, field, value) {  const lines = frontmatterText.split(/\r?\n/);
   const hookIdx = lines.findIndex((line) => /^hook:\s*$/.test(line));
   if (hookIdx === -1) return null;
   let endIdx = hookIdx + 1;
@@ -183,7 +230,7 @@ function ensureHookBlock(frontmatterText) {
  * @returns `{ ok, message, action, changed }` — `message` is the receipt the UI
  *   shows, built from what the write actually did.
  */
-export function applyFeedback(filePath, action) {
+export function applyFeedback(filePath, action, root = '') {
   const text = readFileSync(filePath, 'utf8');
   const span = frontmatterSpan(text);
   if (span === null) return { ok: false, message: '该文件没有 frontmatter' };
@@ -270,6 +317,24 @@ export function applyFeedback(filePath, action) {
     // leave success_rate/verified/status untouched so a correct technique is
     // not degraded by a single misapplication (MemTrapBench "Trauma" trap).
     frontmatter = setTopField(frontmatter, 'last_not_applicable', today);
+    // …but it IS evidence about the BOUNDARY, so narrow it (MSCE `shrink`). The
+    // narrowing hangs off `inapplicable` and NOT off `wrong`: `wrong` says the
+    // content is bad (demote it), while `inapplicable` says the content is fine but
+    // this situation is outside its scope — which is exactly what the boundary
+    // records. Narrowing on `wrong` would silently rewrite the scope of a card
+    // whose scope was never the complaint.
+    const phrases = boundaryPhrasesFromQuery(root, filePath);
+    if (phrases.length > 0) {
+      const declared = /^\s*not_applicable_when:\s*(.*)$/m.exec(frontmatter)?.[1] ?? '';
+      const segments = declared.split(/[、，,；;]/).map((part) => part.trim()).filter(Boolean);
+      const added = phrases.filter((phrase) => !segments.includes(phrase));
+      if (added.length > 0) {
+        const next = [...segments, ...added].join('、');
+        const inHook = setHookField(frontmatter, 'not_applicable_when', next);
+        frontmatter = inHook ?? setTopField(frontmatter, 'not_applicable_when', next);
+        notes.push(`适用边界已收窄：+${added.join('、')}（下次这类查询会直接排除这张卡并说明原因）`);
+      }
+    }
     notes.push(FEEDBACK_MESSAGES.inapplicable);
   } else if (action === 'stale') {
     frontmatter = setTopField(frontmatter, 'status', 'superseded');

@@ -48,6 +48,8 @@
           "retrieve": ["records/subsequence-trick.md"],
           "abstraction": "把定义展开成可操作的不等式",
           "notApplicableWhen": "有限维 / 紧集",
+          "prefer": "先换等价刻画",
+          "avoid": "直接展开定义",
           "verified": "single-source",
           "score": 0.9876
         }
@@ -62,6 +64,8 @@
           "retrieve": ["records/subsequence-trick.md"],
           "abstraction": "把难点搬到等价对象上",
           "notApplicableWhen": "",
+          "prefer": "",
+          "avoid": "",
           "verified": "single-source",
           "score": 0.4321
         }

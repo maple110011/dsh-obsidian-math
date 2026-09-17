@@ -218,7 +218,7 @@ export function apply(ctx) {
         if (typeof body.rel !== "string" || typeof body.action !== "string") return json(res, fail("rel/action required"), 400);
         const target = join(root, body.rel);
         if (!pathInside(root, target)) return json(res, fail("outside root"), 403);
-        return json(res, ok(applyFeedback(target, body.action)));
+        return json(res, ok(applyFeedback(target, body.action, root)));
       }
       if (req.method === "POST" && pathname === "/memory-panel/archive") {
         if (typeof body.rel !== "string") return json(res, fail("rel required"), 400);

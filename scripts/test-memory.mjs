@@ -25,6 +25,8 @@ import {
   cjkCharOverlap,
   queryCoverage,
   hookPrior,
+  recordRetrievalStats,
+  strategyGuidance,
   resolveWorkspaceRoot,
   strategySurface,
   strategyMoves,
@@ -32,8 +34,7 @@ import {
   strategyAbstraction,
   isRecallEligible,
   buildRecallDoc,
-  rankRecallDocuments,
-  rankStrategyCards,
+  rankRecallDocuments,  rankStrategyCards,
   boundarySegments,
   boundaryHits
 } from '../dsh/preset/note-tools.mjs';
@@ -563,6 +564,84 @@ const fbResult = applyFeedback(fbCard, 'inapplicable');
 const fbAfter = readFileSync(fbCard, 'utf8');
 check('feedback: inapplicable marks context but keeps success_rate/verified',
   fbResult.ok === true && /success_rate:\s*0.8/.test(fbAfter) && /verified:\s*user-confirmed/.test(fbAfter) && fbAfter.includes('last_not_applicable'));
+
+// ── 21b. boundary narrowing: a rejection must SHRINK the scope (item 8) ──────
+//
+// MSCE's `shrink`: a user rejection narrows the applicability boundary rather than
+// only lowering a success rate. Hanging it off `inapplicable` (not `wrong`) is the
+// semantic line: `wrong` means the content is bad, `inapplicable` means the content
+// is fine but this context is outside its scope — which is what a boundary records.
+{
+  const narrowRoot = mkdtempSync(join(tmpdir(), 'dsh-shrink-'));
+  const relPath = '.deepseek/memory/records/shrink-me.md';
+  const abs = join(narrowRoot, ...relPath.split('/'));
+  mkdirSync(join(abs, '..'), { recursive: true });
+  mkdirSync(join(narrowRoot, '.deepseek', 'cache'), { recursive: true });
+  writeFileSync(abs, [
+    '---', 'title: 可收窄卡', 'type: fact', 'status: active', 'updated: 2026-09-01',
+    "source: '[[ep-1]]'", 'hook:', '  operator: analysis', '  verified: single-source',
+    '---', '', '# 可收窄卡', '', '正文讨论 谱半径 与 紧算子 的关系。', ''
+  ].join('\n'), 'utf8');
+  // A recent retrieval told us which query surfaced this card. Fragments are taken
+  // from it only when they already appear in the card.
+  writeFileSync(join(narrowRoot, '.deepseek', 'cache', 'retrieval-stats.json'), JSON.stringify({
+    [relPath]: { uses: 1, last_used: '2026-09-10', last_query: '谱半径 与 无关词' }
+  }), 'utf8');
+
+  const beforeNarrow = readFileSync(abs, 'utf8');
+  const narrowed = applyFeedback(abs, 'inapplicable', narrowRoot);
+  const afterNarrow = readFileSync(abs, 'utf8');
+  check('shrink: an inapplicable verdict appends the rejected context to not_applicable_when',
+    afterNarrow.includes('谱半径') && /not_applicable_when:/.test(afterNarrow) && !/not_applicable_when:/.test(beforeNarrow),
+    JSON.stringify(afterNarrow.split('\n').filter((l) => l.includes('not_applicable_when'))));
+  check('shrink: words absent from the card are NOT invented into its boundary',
+    !afterNarrow.includes('无关词'),
+    JSON.stringify(afterNarrow.split('\n').filter((l) => l.includes('not_applicable_when'))));
+  check('shrink: the receipt names what was added, so the user sees the scope change',
+    narrowed.ok === true && String(narrowed.message ?? '').includes('收窄'),
+    JSON.stringify(narrowed));
+
+  // And the narrowed boundary must actually gate: the very query that was rejected
+  // now withholds the card and says why (that is the point of narrowing at all).
+  const shrinkDoc = buildRecallDoc(relPath, readFileSync(abs, 'utf8'));
+  const gatedByBoundary = rankRecallDocuments([shrinkDoc], '谱半径 的问题', {});
+  check('shrink: the rejected query is now WITHHELD by the boundary, with the matched phrase',
+    gatedByBoundary.matches.length === 0
+    && gatedByBoundary.excluded.length === 1
+    && gatedByBoundary.excluded[0].boundaryHits.includes('谱半径'),
+    JSON.stringify({ matches: gatedByBoundary.matches.length, excluded: gatedByBoundary.excluded }));
+
+  // `wrong` must NOT move the boundary: it is a verdict about content, not scope.
+  // Probed on a CLEAN card (no prior narrowing), because re-running it on the card
+  // that `inapplicable` already narrowed proves nothing: the phrase is already in
+  // the boundary, so "do not duplicate" would hide a wrongly-placed shrink. An
+  // earlier version of this assertion did exactly that and survived the mutation.
+  const wrongOnlyPath = '.deepseek/memory/records/shrink-wrong-only.md';
+  const wrongOnlyAbs = join(narrowRoot, ...wrongOnlyPath.split('/'));
+  writeFileSync(wrongOnlyAbs, [
+    '---', 'title: 只判错卡', 'type: fact', 'status: active', 'updated: 2026-09-01',
+    "source: '[[ep-1]]'", 'hook:', '  operator: analysis', '  verified: single-source',
+    '---', '', '# 只判错卡', '', '正文也谈 谱半径。', ''
+  ].join('\n'), 'utf8');
+  writeFileSync(join(narrowRoot, '.deepseek', 'cache', 'retrieval-stats.json'), JSON.stringify({
+    [wrongOnlyPath]: { uses: 1, last_used: '2026-09-10', last_query: '谱半径 与 无关词' }
+  }), 'utf8');
+  applyFeedback(wrongOnlyAbs, 'wrong', narrowRoot);
+  check('shrink: a `wrong` verdict on a CLEAN card leaves the boundary untouched',
+    !/not_applicable_when:/.test(readFileSync(wrongOnlyAbs, 'utf8')),
+    JSON.stringify(readFileSync(wrongOnlyAbs, 'utf8').split('\n').filter((l) => l.includes('not_applicable_when'))));
+
+  // The recording side, asserted directly. Without this the write could be deleted
+  // and every other assertion would still pass (it did — that is why the function
+  // is exported).
+  recordRetrievalStats(narrowRoot, [relPath], '谱半径 上下文查询');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const recorded = JSON.parse(readFileSync(join(narrowRoot, '.deepseek', 'cache', 'retrieval-stats.json'), 'utf8'));
+  check('shrink: a retrieval records the query as last_query, so a later rejection can name the context',
+    recorded[relPath]?.last_query === '谱半径 上下文查询',
+    JSON.stringify(recorded[relPath]));
+  rmSync(narrowRoot, { recursive: true, force: true });
+}
 
 // ── 22. self-correction (P1a/P1b/P2/P3/P4/P5) ───────────────────────────────
 // P1a/P4: superseded and duplicate_of cards are evidence only, not candidates.
@@ -1971,6 +2050,32 @@ check('archive: a real memory card is still archived',
     occReport.report.includes('跨场合验证过的技巧') && occReport.report.includes('widely'),
     occReport.report.split('\n').filter((l) => l.includes('跨场合')).join(' / '));
   rmSync(occRoot, { recursive: true, force: true });
+}
+
+// ── 33d-2. paired decision guidance (item 8, second half) ───────────────────
+//
+// MSCE keeps `D = (context, a⁺, a⁻, evidence, reliability)`: "what to do" alone does
+// not carry the lesson, so a strategy card records the pair. Asserted on the real
+// extractor only — no vault needed, and the wire shape is already covered by
+// test-tool-shape (which fails on any declared-but-missing field).
+{
+  const guidanceFm = [
+    'title: 有对比指导的策略卡', 'type: strategy', 'status: active',
+    'difficulty: 换元 结构定理 证明',
+    'strategies:', '  - move: 换元 结构定理 证明 走法', '    retrieve: [theorem]',
+    'abstraction:', '  principle: "换元原则"',
+    'decision_guidance:',
+    '  prefer: "先试等价刻画；必要时换元"',
+    '  avoid: "别直接展开定义"',
+    '---', '', '# 有对比指导的策略卡', ''
+  ].join('\n');
+  const guidance = strategyGuidance(guidanceFm);
+  check('guidance: prefer/avoid are read from the card as a pair',
+    guidance.prefer === '先试等价刻画；必要时换元' && guidance.avoid === '别直接展开定义',
+    JSON.stringify(guidance));
+  check('guidance: a card with no decision_guidance yields empty strings, not undefined',
+    JSON.stringify(strategyGuidance('title: x\ntype: strategy\n')) === JSON.stringify({ prefer: '', avoid: '' }),
+    JSON.stringify(strategyGuidance('title: x\ntype: strategy\n')));
 }
 
 // ── 33e. the grounding gate on promotion (improvement-details item 7, part 1) ──

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * note-tools — dedicated Obsidian note tools for the `obsidian` dsh agent
  * preset:
  *   - note_recall    unified BM25-ranked recall over notes + memory layers
@@ -1049,6 +1049,29 @@ export function strategyAbstraction(frontmatter) {
   return parts.join(" → ");
 }
 
+/**
+ * Paired decision guidance from a strategy card, as `{ prefer, avoid }` strings.
+ *
+ * WHY a pair rather than one list (MSCE `D = (context, a⁺, a⁻, evidence, reliability)`,
+ * arXiv:2607.16621 §B.10): "what to do" alone does not carry the lesson. Recording
+ * "do X / avoid Y" together is what turns one failure into a transferable judgement;
+ * the audit's `反模式` section is only a loose sentence by comparison.
+ *
+ * Read from `decision_guidance:` with ONE line each for `prefer` / `avoid`. A
+ * single-line string is deliberate: it stays readable as prose in the card and avoids
+ * the inline-flow-list trap this repo keeps hitting (a `[a b]` flow list parses as ONE
+ * token). Multiple items are separated by `;` or `；`.
+ */
+export function strategyGuidance(frontmatter) {
+  if (typeof frontmatter !== "string") return { prefer: "", avoid: "" };
+  const pick = (key) => {
+    const m = new RegExp("^\\s*" + key + ":\\s*[\"']?(.*?)[\"']?\\s*$", "m").exec(frontmatter);
+    if (m === null) return "";
+    return m[1].split(/[;；]/).map((part) => part.trim()).filter(Boolean).join("；");
+  };
+  return { prefer: pick("prefer"), avoid: pick("avoid") };
+}
+
 /** Extract a scalar from YAML-ish frontmatter text (no dependency on the memory module). */
 function metaScalar(frontmatter, key) {
   if (frontmatter === null) return undefined;
@@ -1096,7 +1119,7 @@ function localDateString() {
 // lose a count. A module-level promise queue makes the update atomic.
 let statsWriteQueue = Promise.resolve();
 
-function recordRetrievalStatsNow(vaultPath, cardPaths) {
+function recordRetrievalStatsNow(vaultPath, cardPaths, query = "") {
   const statsPath = join(vaultPath, ".deepseek", "cache", "retrieval-stats.json");
   let stats = {};
   try {
@@ -1109,10 +1132,15 @@ function recordRetrievalStatsNow(vaultPath, cardPaths) {
   meta.calls = (Number.isFinite(meta.calls) ? meta.calls : 0) + 1;
   if (cardPaths.length === 0) meta.empty = (Number.isFinite(meta.empty) ? meta.empty : 0) + 1;
   stats["__meta__"] = meta;
+  const trimmedQuery = String(query ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   for (const rel of cardPaths) {
     const entry = stats[rel] ?? {};
     entry.uses = (Number.isFinite(entry.uses) ? entry.uses : 0) + 1;
     entry.last_used = today;
+    // Kept as `last_query`, never merged into the card. The audit's stats reset runs
+    // over these entries and preserves only `last_used`, so this field is cleared
+    // with the rest — which is intended: it is context for the NEXT ❌, not history.
+    if (trimmedQuery !== "") entry.last_query = trimmedQuery;
     stats[rel] = entry;
   }
   try {
@@ -1129,11 +1157,22 @@ function recordRetrievalStatsNow(vaultPath, cardPaths) {
  * math-memory.mjs merges this into the cards' hook.uses / last_used and
  * then zeroes the entries (no double counting). Never throws: a stats write
  * failure must not fail the retrieval itself.
+ *
+ * `query` is recorded per card as `last_query`. It is NOT a usage statistic and is
+ * not merged into the card: it exists so that a later rejection can name the context
+ * it rejected (`applyFeedback` → boundary narrowing, improvement-details item 8). The
+ * user's rejection arrives through a link that carries only a path and an action,
+ * so the query has to be remembered at hit time or it is gone.
+ *
+ * Exported so the regression suite can exercise the write directly: the callers live
+ * inside the tool handlers and the write runs on a serialized promise queue, so there
+ * is no public pure function that reaches it. Testing only the read side left the
+ * recording uncovered — a mutation that dropped `last_query` passed every assertion.
  */
-function recordRetrievalStats(vaultPath, cardPaths) {
+export function recordRetrievalStats(vaultPath, cardPaths, query = "") {
   if (typeof vaultPath !== "string" || vaultPath === "") return;
   statsWriteQueue = statsWriteQueue
-    .then(() => recordRetrievalStatsNow(vaultPath, cardPaths))
+    .then(() => recordRetrievalStatsNow(vaultPath, cardPaths, query))
     .catch(() => {});
 }
 
@@ -1479,7 +1518,7 @@ export async function apply(ctx, config) {
 
       // Hook stats migration (memory v3): the unified entry records hits for
       // hook cards; the daily audit merges them back into uses/last_used.
-      recordRetrievalStats(rootPath, ranked.matches.filter((match) => match.hook !== null).map((match) => match.path));
+      recordRetrievalStats(rootPath, ranked.matches.filter((match) => match.hook !== null).map((match) => match.path), query);
 
       return { query, mode: ranked.mode, operator: ranked.operator, matches: ranked.matches, excluded: ranked.excluded };
     },
@@ -1517,6 +1556,8 @@ export async function apply(ctx, config) {
                 retrieve: { type: "array", required: true, items: { type: "string" } },
                 abstraction: { type: "string", required: true },
                 notApplicableWhen: { type: "string", required: true },
+                prefer: { type: "string", required: true },
+                avoid: { type: "string", required: true },
                 verified: { type: "string", required: true },
                 score: { type: "number", required: true }
               }
@@ -1538,6 +1579,8 @@ export async function apply(ctx, config) {
                 retrieve: { type: "array", required: true, items: { type: "string" } },
                 abstraction: { type: "string", required: true },
                 notApplicableWhen: { type: "string", required: true },
+                prefer: { type: "string", required: true },
+                avoid: { type: "string", required: true },
                 verified: { type: "string", required: true },
                 score: { type: "number", required: true }
               }
@@ -1567,7 +1610,7 @@ export async function apply(ctx, config) {
         }
         const badge = (v) => v === "user-confirmed" ? " ✅" : v === "cross-referenced" ? " ⚖️" : " ❓";
         const renderCard = (m) =>
-          `- [策略] ${m.difficulty}${badge(m.verified)} (${m.path}) score ${m.score.toFixed(3)}\n  moves: ${m.moves.join(" / ")}\n  retrieve: ${m.retrieve.join(", ")}\n  abstraction: ${m.abstraction}${m.notApplicableWhen !== "" ? "\n  ⚠ 不适用: " + m.notApplicableWhen : ""}`;
+          `- [策略] ${m.difficulty}${badge(m.verified)} (${m.path}) score ${m.score.toFixed(3)}\n  moves: ${m.moves.join(" / ")}\n  retrieve: ${m.retrieve.join(", ")}\n  abstraction: ${m.abstraction}${m.notApplicableWhen !== "" ? "\n  ⚠ 不适用: " + m.notApplicableWhen : ""}${m.prefer !== "" ? "\n  ✔ 建议: " + m.prefer : ""}${m.avoid !== "" ? "\n  ✘ 避免: " + m.avoid : ""}`;
         // Candidates get their own block with an explicit permission sentence:
         // `status: candidate` means the audit has not promoted this card yet, so
         // following its moves is fine but citing it as an established technique is
@@ -1619,6 +1662,7 @@ export async function apply(ctx, config) {
             retrieve: strategyRetrieve(doc.rawFrontmatter),
             abstraction: strategyAbstraction(doc.rawFrontmatter),
             notApplicableWhen: metaScalar(doc.rawFrontmatter, "not_applicable_when") ?? "",
+            guidance: strategyGuidance(doc.rawFrontmatter),
             verified: doc.hook?.verified ?? "single-source"
           },
           score
@@ -1629,7 +1673,7 @@ export async function apply(ctx, config) {
 
       // Strategy hits feed the same usage stats as records, so the daily audit
       // can promote candidates (self-correction.md P5b).
-      recordRetrievalStats(rootPath, top.map((entry) => entry.card.path));
+      recordRetrievalStats(rootPath, top.map((entry) => entry.card.path), query);
 
       // Shape one card for the wire. Only keys declared in the output schema may
       // appear: dsh validates the returned value strictly against a schema with
@@ -1645,6 +1689,8 @@ export async function apply(ctx, config) {
         retrieve: card.retrieve,
         abstraction: card.abstraction,
         notApplicableWhen: card.notApplicableWhen,
+        prefer: card.guidance?.prefer ?? "",
+        avoid: card.guidance?.avoid ?? "",
         verified: card.verified,
         score: Number(score.toFixed(4))
       });
