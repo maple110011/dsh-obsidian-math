@@ -64,6 +64,7 @@ import {
   selectAuthoritativeLogs,
   decodeZstdSessionLog,
   inconsistentWeakCards,
+  indexDescriptionIssue,
   AUDIT_SCHEMA_VERSION
 } from '../dsh/preset/math-memory.mjs';
 // The shared frontmatter primitives: `frontmatterBlock`/`replaceFrontmatterBlock`
@@ -2434,6 +2435,57 @@ check('archive: a real memory card is still archived',
     inconsistentWeakCards([{ rel: 'b.md', uses: 5, successRate: 0.9 }]).join(',') === 'b.md');
   check('audit self-check: a genuinely weak card is not flagged (the check does not cry wolf)',
     inconsistentWeakCards([{ rel: 'c.md', uses: 5, successRate: 0.2 }]).length === 0);
+}
+
+// ── index-line descriptions: "in the index" is not enough ───────────────────
+// WikiSkill (arXiv:2608.27454 Appendix E.2) calls the index line the most important
+// part of the knowledge base: it is what decides whether a reader opens the card.
+// The floor is about LENGTH (a machine cannot judge whether a sentence explains WHY).
+{
+  check('index lint: a bare link with no description is an empty description',
+    indexDescriptionIssue('- [[rec-a]]') === 'empty-description');
+  check('index lint: a link with an empty piped summary is an empty description',
+    indexDescriptionIssue('- [[rec-a|]] · topic · updated: 2026-01-01') === 'empty-description');
+  check('index lint: a one-character summary is too short to judge relevance by',
+    indexDescriptionIssue('- [[rec-a|?]] · topic') === 'short-description');
+  check('index lint: a summary that states the method passes',
+    indexDescriptionIssue('- [[rec-a|用 Borel-Cantelli 子列法证 a.s. 收敛]] · probability') === null);
+  check('index lint: the README line that documents the format is not itself an entry',
+    indexDescriptionIssue('> 格式：`- [[rec-slug|一句话]] · topic · updated: YYYY-MM-DD`') === 'not-an-entry');
+  check('index lint: prose and headings are not entries',
+    indexDescriptionIssue('## fact（事实）') === 'not-an-entry' && indexDescriptionIssue('- 暂无') === 'not-an-entry');
+
+  // End to end: a card listed with a useless one-liner must be reported as a weak
+  // index line — and NOT also as "missing from the index" (one finding per card).
+  const idxRoot = mkdtempSync(join(tmpdir(), 'dsh-indexlint-'));
+  mkdirSync(join(idxRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+  writeFileSync(join(idxRoot, '.deepseek', 'memory', 'records', 'rec-thin.md'), card([
+    '---', 'title: 说明过短的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'source: "[[2026-01-01-ep]]"', '---', '', '# 说明过短的卡'
+  ]));
+  writeFileSync(join(idxRoot, '.deepseek', 'memory', 'records', 'index.md'), card([
+    '# 记忆记录索引（按类型分组）',
+    '',
+    '> AI 维护：每条记录一行；格式：`- [[rec-slug|一句话]] · topic · updated: YYYY-MM-DD`',
+    '',
+    '## fact（事实）',
+    '',
+    '- [[rec-thin|?]] · 数论 · updated: 2026-01-01',
+    ''
+  ]));
+  const idxReport = buildAuditReport(idxRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('index lint: the audit reports a card whose index line says nothing',
+    idxReport.structural.indexWeak === 1 && idxReport.sections.indexWeak[0]?.rel === '.deepseek/memory/records/rec-thin.md',
+    JSON.stringify(idxReport.structural));
+  check('index lint: that card is NOT also reported as missing from the index',
+    idxReport.structural.notInIndex === 0, JSON.stringify(idxReport.structural));
+  check('index lint: the model checklist names the problem and how to fix it',
+    idxReport.report.includes('索引行说明过弱') && idxReport.report.includes('什么困难'), idxReport.report.slice(0, 240));
+  check('index lint: the finding enters the audit ledger like any other recommendation',
+    idxReport.ledger.newCount >= 1
+    && readFileSync(join(idxRoot, '.deepseek', 'cache', 'audit-ledger.jsonl'), 'utf8').includes('improve-index-line'),
+    JSON.stringify(idxReport.ledger));
+  rmSync(idxRoot, { recursive: true, force: true });
 }
 
 rmSync(root, { recursive: true, force: true });

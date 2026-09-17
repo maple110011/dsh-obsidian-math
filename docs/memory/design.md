@@ -181,6 +181,17 @@
   - **配套（2026-09-18，实现时发现）**：`sections` 里的条目由 `cardRef()` 投影，而它原先**只带 `rel`/`title`/`gain`**——于是这条自检读到的 `uses`/`successRate` 是 `undefined`，**在每张 weak 卡上都会触发**，台账里也写出了 `uses=undefined`。这属于本仓库反复出现的形态：**守卫看不见自己的输入**。已让 `cardRef()` 带上 `uses`/`successRate`（多带两个字段，面板与套件都能直接读，不必再回读文件），自检因此变成真判据。
 - **状态**：**已实现**（`dsh/preset/math-memory.mjs`；写入随体检、开关 `auditMaintainLedger` 与 `autoArchive` 同形，默认开）。**未做**（有意）：台账的**渲染**（面板/CLI 目前不显示它）、把"首次出现"接进面板的「⚠️ 待处理」计数、按天数升级提醒强度。
 
+### 8.2 索引行说明下限（**已实现**）
+
+> **来源与理由**：WikiSkill（arXiv:2608.27454 Appendix E.2）把「每条模式一行」的索引称为**全库最重要的一处**，因为它**决定读者要不要打开整页**，并要求每行写全 **PROBLEM + ROOT CAUSE + FIX**。我们的索引行本来就是 `- [[stem|一句话]] · topic · updated: YYYY-MM-DD`，但**没有任何东西检查那句"一句话"说了什么**——`- [[x]]` 与 `- [[x|?]]` 都能满足"这张卡在索引里"，却对读者毫无信息。
+
+- **检查什么**：体检对 `records/`、`templates/`、`strategy/` 三层的 `index.md` 逐行判定，描述**下限 `AUDIT_INDEX_DESC_MIN = 8` 字符**；不达标的卡进入 `structural.indexWeak`，清单里点名并写明该写什么（什么困难 + 为什么有效 + 具体怎么做）。
+- **只查什么**：**只查长度，不查语义**。机器判不了"这句话有没有解释为什么"，但判得了"描述是空的/只有一个字"，本检查**只声明后者**。措辞质量归模型（因此：只报告、不自动改写）。
+- **描述的边界（易错处，2026-09-18 由自己的断言抓出两处实现 bug）**：描述**只取链接的显示文本**（`[[stem|这里]]`）。两个反例：① 把链接之后的 `· topic · updated: …` 也算作描述 ⇒ 元数据把长度凑够，`- [[rec-thin|?]] · 数论 · updated: 2026-01-01` 因此漏检；② 把 `]]` 计入长度 ⇒ 一个字符的描述被算成三个字符。两处都已修，并各有一条断言。
+- **不重复报**：一张卡**不会**同时被列为"未入索引"与"索引行过弱"——后者已经说明它**在**索引里（一条发现只报一次）。
+- **另一条更硬的 finding**：行首不是 `[[` 链接的行（例如写成了 markdown 链接或纯文本）进入 `structural.indexNotAnEntry`——读者与旧解析器都从链接里取 stem，形式不对的卡**按名字找不到**，即便它"在索引里"。
+- **状态**：**已实现**（`dsh/preset/math-memory.mjs` 的 `indexDescriptionIssue` + `buildAuditReport`；模板纪律写在 `records-readme.md` / `strategy-readme.md`）。**未做**（有意）：修好后的自动重排、面板单列一段、把上限也做成可配置。
+
 ## 9. 安全边界（fail-closed）
 
 - 工具面：文件读写/搜索 + 五个笔记工具（note_recall / note_strategy / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；

@@ -53,7 +53,7 @@ source: '[[YYYY-MM-DD-episode-slug]]'
 1. **候选产生**：三写时把「本轮用到的困难→策略」写进 candidate 卡（`status: candidate`、`verified: single-source`）；候选来源包括**内嵌技巧 callout（`>[!tip]`）+ 用户备忘 bullet**，不只 hook 字段。
 2. **promote**：每日体检统计「difficulty + move」的 uses/success_rate，`uses ≥ 3` 且 `success_rate ≥ 0.6` → `status: active`；未达标留在 candidate。
 3. **demote / 反模式**：连续失败 3 次 → 体检 flag「补 `not_applicable_when` 或降级」。
-4. 更新 `strategy/index.md`（按 difficulty 分组一行一条）。
+4. 更新 `strategy/index.md`（按 difficulty 分组一行一条）。**这一行要写全三段**：什么困难 + **为什么有效** + 具体怎么做（如 `- [[strat-eq-characterization|定义难证时先找等价刻画，绕开逐字展开]] · definition-level-proof · updated: …`）。理由：读者（人和 agent）**靠这一行决定要不要打开整张卡**；只写卡名或一个字（`- [[x|?]]`）等于让索引失去作用。体检会确定性检查**描述是否为空白/过短**（下限 8 字符）并点名，但**只报告不代写**——措辞是你的活。
 5. **检索纪律**：策略卡是「候选」不是「指令」——命中后仍要按 AGENTS.md §5 记忆适用性逐条重判（防 Reasoning Fixation）。
 6. **状态即权限（2026-09-17 起由检索强制）**：`note_strategy` 按 `status` **分组返回**——`matches` 是可依据的卡（`active` 或**未声明** status），`candidates` 是 `status: candidate` 的卡。候选卡会以「可以把 moves 当线索试用，但**不得当作已验证技巧引用**」单独列出。**所以 `status` 不只是标签**：写了 `candidate` 就等于声明"这张卡还没被使用记录晋升"，会被自动降格为线索。晋升规则见第 2 条（`uses ≥ 3` 且 `success_rate ≥ 0.6` 由体检确定性改写为 `active`），**另有一道接地门**：候选卡若没有 `source`，即使达标也不晋升，体检会点名并说明"补上 source 后会自行晋升"。
 7. **成对的对比指导 `decision_guidance`（可选，但强烈建议在有失败经验时写）**：`prefer` 写"同场景下建议怎么做"，`avoid` 写"避免怎么做"，**每条都带证据链接**。理由：只写"该怎么做"记不住教训；成对写出"该做 / 该避免"才能把一次失败固化成可迁移的判断。这也与体检的「反模式」呼应——反模式是一条散句，`avoid` 是**挂在具体策略上、带证据**的那一条。

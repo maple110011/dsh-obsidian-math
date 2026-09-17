@@ -180,6 +180,9 @@ const AUDIT_LEDGER_FILE = join(CACHE_DIR, "audit-ledger.jsonl");
 const AUDIT_LEDGER_SCHEMA_VERSION = 1;
 const AUDIT_LEDGER_MAX_WRITES = 200; // per audit run
 const AUDIT_LEDGER_MAX_LINES = 2000; // whole file; oldest lines are dropped first
+// Minimum characters in an index line's one-sentence summary. Deliberately a FLOOR,
+// not a style rule: see `indexDescriptionIssue` (WikiSkill Appendix E.2).
+const AUDIT_INDEX_DESC_MIN = 8;
 
 /**
  * Deterministic net-gain verdict for a card, in [-1, 1], or 0 for "no verdict".
@@ -1483,6 +1486,8 @@ function actionableAuditEntries(sections, hintFor) {
     push(object, "merge-or-differentiate", "duplicate-similarity", `jaccard=${pair.jaccard.toFixed(2)}`, `${pair.a.title} ↔ ${pair.b.title}`);
   }
   for (const card of sections.hubs) push(card.rel, "protect-before-edit", "structural-hub", `backlinks=${card.backlinks}`, `${card.title}（${card.backlinks} 处引用）`);
+  for (const item of sections.indexWeak) push(item.rel, "improve-index-line", "index-description", `issue=${item.issue}`, `${item.title}（索引行说明过弱）`);
+  for (const item of sections.indexNotAnEntry) push(item.rel, "fix-index-line-format", "index-format", `issue=${item.issue}`, `${item.title}（索引行不合契约）`);
   for (const item of sections.downstreamReview) {
     const object = `${item.rel}|${item.via.rel}`;
     push(object, "re-verify-dependent", "premise-moved", `reason=${item.reason}`, `${item.title} ← ${item.via.title}`);
@@ -1504,6 +1509,45 @@ export function inconsistentWeakCards(weakCards) {
   return weakCards
     .filter((card) => card.uses < AUDIT_WEAK_USES || (card.successRate ?? 1) > AUDIT_WEAK_RATE)
     .map((card) => card.rel);
+}
+
+/**
+ * Index-line description floor (WikiSkill, arXiv:2608.27454 Appendix E.2).
+ *
+ * WikiSkill calls its per-pattern index line "the MOST IMPORTANT part of the wiki"
+ * because it is what decides whether a reader opens the full page — and it requires
+ * each line to carry PROBLEM + ROOT CAUSE + FIX. Our index lines already embed a
+ * one-line summary (`- [[stem|一句话]] · difficulty · updated: …`), but nothing checks
+ * that the summary says anything: `- [[x]]` and `- [[x|]]` satisfy the "card is in
+ * the index" check while telling a reader nothing.
+ *
+ * The floor is deliberately about LENGTH, not semantics. A machine cannot judge
+ * whether a sentence explains WHY; it can judge that a description is empty or a few
+ * characters long, and that is the only claim this lint makes. Judging the wording
+ * is the model's job (hence: report, never auto-rewrite).
+ */
+export function indexDescriptionIssue(line, minChars = 8) {
+  const text = String(line ?? "").trim();
+  // Blockquotes are README prose by convention (`> 格式：- [[stem|一句话]] · …`),
+  // not entries — without this, the README that documents the format would fail it.
+  if (text === "" || text.startsWith(">")) return "not-an-entry";
+  const link = /\[\[([^\[\]|#]+)(?:[#|][^\]\[]*)?\]\]/.exec(text);
+  if (link === null) return "not-an-entry";
+  // The description is the link's display text ONLY. Counting what follows the link
+  // would let the trailing metadata (`· topic · updated: 2026-01-01`) satisfy the
+  // floor, which is exactly how `- [[rec-thin|?]] · 数论 · updated: …` first slipped
+  // through. A link with no `|` has no description at all.
+  const inner = link[0].replace(/^\[\[|\]\]$/g, "");
+  const pipe = inner.indexOf("|");
+  const summary = pipe === -1 ? "" : inner.slice(pipe + 1);
+  const cleaned = summary
+    .replace(/\[\[[^\]\[]*\]\]/g, "") // nested links are not a description
+    .replace(/[\]\|]/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+  if (cleaned === "") return "empty-description";
+  if (cleaned.length < minChars) return "short-description";
+  return null;
 }
 
 /**
@@ -1747,13 +1791,44 @@ export function buildAuditReport(root, helpers) {
     ];
     return candidates.some((candidate) => existsSync(join(root, candidate)));
   };
-  const recordsIndexText = (() => {
+  // Index descriptions (WikiSkill Appendix E.2): the index line is what decides
+  // whether a reader opens the card, so an empty or one-word summary is a real
+  // defect, not cosmetics. Checked per layer, matching the `- [[stem|一句话]]` form
+  // the READMEs prescribe. A card whose description is WEAK must not be reported as
+  // "not in the index" — one finding per card, not a cascade.
+  const indexTextFor = (layer) => {
     try {
-      return readFileSync(join(root, MEMORY_DIR, "memory", "records", "index.md"), "utf8");
+      return readFileSync(join(root, MEMORY_DIR, "memory", layer, "index.md"), "utf8");
+    } catch {
+      return "";
+    }
+  };
+  const strategyIndexText = (() => {
+    try {
+      return readFileSync(join(root, MEMORY_DIR, "strategy", "index.md"), "utf8");
     } catch {
       return "";
     }
   })();
+  const recordsIndexText = indexTextFor("records");
+  // One derivation, two consumers: the per-layer index issue map feeds BOTH the
+  // card loop's findings and the published `sections`. Splitting them is how the
+  // checklist and the report drift apart.
+  const indexKeyOfCard = (rel) => {
+    const layer = rel.includes("/strategy/") ? "strategy" : (rel.includes("/records/") ? "records" : "templates");
+    return `${layer}/${String(rel).split("/").at(-1).replace(/\.md$/, "")}`;
+  };
+  const indexIssues = new Map();
+  for (const [text, layer] of [[recordsIndexText, "records"], [indexTextFor("templates"), "templates"], [strategyIndexText, "strategy"]]) {
+    if (text === "") continue;
+    for (const line of text.split(/\r?\n/)) {
+      const stem = /\[\[([^\[\]|#]+)/.exec(line)?.[1]?.trim().replace(/\.md$/i, "");
+      if (stem === undefined || stem === "") continue;
+      const issue = indexDescriptionIssue(line, AUDIT_INDEX_DESC_MIN);
+      if (issue === null) continue;
+      indexIssues.set(`${layer}/${stem}`, issue);
+    }
+  }
   for (const card of cards) {
     // Provenance ladder (machine-checkable, design-intake §1 item 3): AGENTS.md
     // says the agent may only write `single-source`; every higher level needs a
@@ -1761,14 +1836,28 @@ export function buildAuditReport(root, helpers) {
     if (card.verified !== null && card.verified !== "single-source" && card.verifiedBy !== "user") {
       structural.unjustifiedUpgrade.push(`${card.title}(${card.verified})`);
     }
+    const stem = card.rel.split("/").at(-1).replace(/\.md$/, "");
+    // `layer`/`stem` are only needed for the index lookup below; the index findings
+    // themselves are derived once, after this loop, into `indexIssueByRel`.
     if (!card.rel.includes("/records/")) continue; // source discipline applies to record cards
     if (card.source.trim() === "") structural.missingSource.push(card.title);
     for (const target of extractLinks(card)) {
       if (!linkExists(target)) structural.brokenLinks.push(`${card.title}→[[${target}]]`);
     }
-    const stem = card.rel.split("/").at(-1).replace(/\.md$/, "");
+    // Only a card with NO index line at all counts as missing; a card that IS listed
+    // with a weak description is reported once, as a description problem.
     if (recordsIndexText !== "" && !recordsIndexText.includes(`[[${stem}`)) structural.notInIndex.push(card.title);
   }
+
+  // Rel-level views of the index findings, so the published `sections` are built
+  // from the same derivation the checklist uses (one source of truth per finding).
+  const indexIssueByRel = new Map();
+  for (const card of cards) {
+    const issue = indexIssues.get(indexKeyOfCard(card.rel));
+    if (issue !== undefined) indexIssueByRel.set(card.rel, issue);
+  }
+  const indexWeakRels = new Set([...indexIssueByRel].filter(([, issue]) => issue !== "not-an-entry").map(([rel]) => rel));
+  const indexNotAnEntryRels = new Set([...indexIssueByRel].filter(([, issue]) => issue === "not-an-entry").map(([rel]) => rel));
 
   // Post-condition on the stats sync: a card we claimed to update must now
   // DECLARE the merged value. A leftover mismatch means the write did not land
@@ -2135,6 +2224,15 @@ export function buildAuditReport(root, helpers) {
     // Negative-transfer accounting: cards that were used and made things worse.
     harmed: cards.filter((card) => live(card) && card.harmed > 0)
       .map((card) => ({ ...cardRef(card), harmed: card.harmed, uses: card.uses })),
+    // Index-line quality (WikiSkill Appendix E.2). Two distinct findings: a
+    // description too weak to judge relevance by, and a line that is not the
+    // `- [[stem|一句话]]` form the layer READMEs prescribe (readers and older parsers
+    // resolve the stem from the link, so a malformed line makes the card unfindable
+    // by name even though it is "in the index").
+    indexWeak: cards.filter((card) => live(card) && indexWeakRels.has(card.rel))
+      .map((card) => ({ ...cardRef(card), issue: indexIssueByRel.get(card.rel) })),
+    indexNotAnEntry: cards.filter((card) => live(card) && indexNotAnEntryRels.has(card.rel))
+      .map((card) => ({ ...cardRef(card), issue: indexIssueByRel.get(card.rel) })),
     autoArchiveTargets: autoArchiveTargets.map((card) => ({ ...cardRef(card), filePath: card.filePath })),
     // Cards standing on a premise that has moved. Each entry names BOTH ends so the
     // reader can judge whether the dependent still holds.
@@ -2287,6 +2385,14 @@ export function buildAuditReport(root, helpers) {
       if (structural.notInIndex.length > 0) structuralParts.push(`未入索引: ${structural.notInIndex.length} 张（${structural.notInIndex.slice(0, 3).join("、")}）`);
       checklistLines.push(`- 结构校验：${structuralParts.join("；")}`);
     }
+    if (sections.indexNotAnEntry.length > 0) {
+      const rows = sections.indexNotAnEntry.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]（${card.issue}）`);
+      checklistLines.push(`- 索引行不合契约（不是 \`- [[stem|一句话]]\` 形式，读者与旧解析器认不出）: ${rows.join("、")}`);
+    }
+    if (sections.indexWeak.length > 0) {
+      const rows = sections.indexWeak.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]（${card.issue}）`);
+      checklistLines.push(`- 索引行说明过弱（读者靠这一行决定要不要打开卡片；写清「什么困难 + 为什么有效 + 具体怎么做」，见本层 _README）: ${rows.join("、")}`);
+    }
     if (passive.calls > 0) {
       const emptyPct = Math.round((passive.empty / passive.calls) * 100);
       checklistLines.push(`- 检索健康：上次体检以来 ${passive.calls} 次检索，空结果 ${passive.empty} 次（${emptyPct}%）`);
@@ -2438,6 +2544,8 @@ export function buildAuditReport(root, helpers) {
       missingSource: structural.missingSource.length,
       brokenLinks: structural.brokenLinks.length,
       notInIndex: structural.notInIndex.length,
+      indexWeak: indexWeakRels.size,
+      indexNotAnEntry: indexNotAnEntryRels.size,
       unjustifiedUpgrade: structural.unjustifiedUpgrade.length,
       usesMismatch: structural.usesMismatch.length,
       hubs: hubCards.length,
