@@ -1770,6 +1770,76 @@ check('archive: a real memory card is still archived',
   rmSync(dupRoot, { recursive: true, force: true });
 }
 
+// ── 33c. dependency direction + cascade (improvement-details item 2) ─────────
+//
+// `related` is undirected, so it cannot answer "what is standing on this card?".
+// `depends_on` records the direction. The audit must then name the dependents of a
+// premise that moved (superseded, or flagged needs_review) — and must NOT invent a
+// cascade from undirected `related`, or the list fills with noise.
+{
+  const depRoot = mkdtempSync(join(tmpdir(), 'dsh-dep-'));
+  const writeDep = (rel, text) => {
+    const abs = join(depRoot, ...rel.split('/'));
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, text, 'utf8');
+    return abs;
+  };
+  const depCard = (title, extra = []) => [
+    '---', `title: ${title}`, 'type: fact', 'status: active', 'updated: 2026-09-01',
+    `source: '[[ep-1]]'`, ...extra, '---', '', `# ${title}`, ''
+  ].join('\n');
+
+  // A ← B ← C : B says it is built on A, C says it is built on B.
+  writeDep('.deepseek/memory/records/chain-a.md', depCard('链条甲'));
+  writeDep('.deepseek/memory/records/chain-b.md', depCard('链条乙', ["depends_on: ['[[chain-a]]']"]));
+  writeDep('.deepseek/memory/records/chain-c.md', depCard('链条丙', ["depends_on: ['[[chain-b]]']"]));
+  // Control: D merely "sees also" A. An undirected link must not cascade.
+  writeDep('.deepseek/memory/records/chain-d.md', depCard('仅相关丁', ["related: ['[[chain-a]]']"]));
+
+  const before = buildAuditReport(depRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('dep: nothing is reported for review while every premise is still active',
+    before.sections.downstreamReview.length === 0,
+    JSON.stringify(before.sections.downstreamReview));
+
+  // The premise moves. Rewrite A as superseded: B (and only B) now stands on
+  // something that changed. C is two hops away and stays quiet — we deliberately
+  // do not chase transitive chains (that would need a confidence propagation
+  // model, and reporting every descendant is noise for a human to act on).
+  writeDep('.deepseek/memory/records/chain-a.md', depCard('链条甲').replace('status: active', 'status: superseded'));
+  const after = buildAuditReport(depRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const rows = after.sections.downstreamReview;
+  check('dep: superseding a premise names its direct dependent',
+    rows.length === 1 && rows[0].title === '链条乙' && rows[0].via.title === '链条甲',
+    JSON.stringify(rows.map((r) => [r.title, r.via.title, r.reason])));
+  check('dep: the reason is stated, so the reader knows what moved',
+    rows.length === 1 && String(rows[0].reason).includes('取代'),
+    JSON.stringify(rows.map((r) => r.reason)));
+  check('dep: an undirected `related` link is NOT treated as a dependency',
+    !rows.some((r) => r.title === '仅相关丁'),
+    JSON.stringify(rows.map((r) => r.title)));
+  check('dep: a superseded card is not reported as depending on itself',
+    !rows.some((r) => r.title === '链条甲'),
+    JSON.stringify(rows.map((r) => r.title)));
+  check('dep: the cascade counts as a decision for the panel headline',
+    after.decisions.downstreamCards === 1 && after.decisions.total >= 1,
+    JSON.stringify(after.decisions));
+  check('dep: the checklist names both ends of the dependency',
+    after.report.includes('下游待复查') && after.report.includes('链条乙') && after.report.includes('链条甲'),
+    after.report.split('\n').filter((l) => l.includes('下游待复查')).join(' / '));
+
+  // The other way a premise moves: the user marked it wrong. Same cascade, and the
+  // reason must reflect it (a reader acts differently on "wrong" vs "replaced").
+  writeDep('.deepseek/memory/records/chain-a.md', depCard('链条甲'));
+  writeDep('.deepseek/memory/records/chain-b.md', depCard('链条乙', ["depends_on: ['[[chain-a]]']", 'needs_review: true']));
+  const flagged = buildAuditReport(depRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('dep: a needs_review premise also cascades, with its own reason',
+    flagged.sections.downstreamReview.length === 1
+    && flagged.sections.downstreamReview[0].title === '链条丙'
+    && String(flagged.sections.downstreamReview[0].reason).includes('重审'),
+    JSON.stringify(flagged.sections.downstreamReview.map((r) => [r.title, r.reason])));
+  rmSync(depRoot, { recursive: true, force: true });
+}
+
 // §34 multi-view pooling (GraphMemix intake, docs/memory/retrieval-v3.md §7.2).
 //
 // The product default stays the single bag; the max-pool exists so the QA probe

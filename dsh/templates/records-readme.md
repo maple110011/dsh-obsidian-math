@@ -25,6 +25,7 @@ updated: YYYY-MM-DD
 source: '[[YYYY-MM-DD-episode-slug]]'
 topic: <相关主题或“未归类”>
 related: []
+depends_on: []         # 可选：本卡**建立在这些卡之上**（有方向！见下）；与 related 不同
 confidence: 1.0        # 可选：0–1，可修订事实/偏好的置信度（被质疑时下调；模型维护）
 hook:                 # 可选：检索特征块（记忆 v2，供 note_recall 统一检索加权）
   operator: probability      # 算子类型：algebra/number-theory/geometry/combinatorics/probability/analysis/statistics/calculus/linear-algebra/topology/logic
@@ -60,6 +61,15 @@ not_applicable_when: 成本非二次、μ 非绝对连续   # 适用边界：短
 - **验证等级与凭据**：新建只能写 `single-source`；与 vault 内笔记互证后可升级 `cross-referenced`；`user-confirmed` 只能在用户明确确认后写。`verified_by` 是升级的凭据，**只有用户点 ✅ 时由插件写入**——你不要写；体检会把「等级高于 single-source 却没有凭据」的卡列为越权升级。
 - **适用边界 `not_applicable_when`（强烈建议写）**：一句话说明「什么情况下别用这张卡」。它不只是注释：`note_recall` / `note_strategy` 会拿它当**硬门控**——查询里出现边界短语时该卡不进候选，而是在结果里单独列出「因适用边界被排除」。所以**写成短句/关键词列表**（顿号分隔、每条 ≤12 字），例如 `not_applicable_when: 成本非二次、μ 非绝对连续`；写成整段散文会被拆成碎片，门控就不准。
 - **为什么要有 hook**：统一检索（`note_recall`）用 hook 字段加权打分与算子过滤；没有 hook 的卡只能靠全文匹配被找到，检索质量明显更低。artifact 与 solution 类卡片**建议必有**，fact/preference 类可省略。
+
+## `depends_on` 说明（有方向的依据链）
+
+`related` 是**无方向**的「另见」；`depends_on` 是**有方向**的「本卡建立在这些卡之上」。差别不是格式，而是**能不能回答一个具体问题**：当某张卡被标 `superseded`、或被用户标 ❌（`needs_review`）时，**哪些卡是踩在它上面的、需要重读？** 无方向的 `related` 回答不了。
+
+- **写什么**：`depends_on: ['[[rec-xxx]]', '[[thm-yyy]]']`——只写你**真的用到**的那几张（那张卡的结论是你这张卡成立的前提），不要写"主题相近"的卡（那属于 `related`）。
+- **写反了的代价**：体检会顺着它列「下游待复查」清单；写宽了会产出噪音，写漏了就漏报。**宁可漏写也不要乱写**：漏写只是没提醒，乱写会让清单失去可信度。
+- **本字段是建议性的**：体检只**报告**，不会自动改动下游卡——依据被改写后下游是否仍成立，只有读原文才能判断（与 `uses` 回写不一致时「报出来、绝不自动重试」同一条纪律）。
+- **谁维护**：由你在写卡/改卡时维护。它属于内容字段，不是插件统计字段。
 
 ## 维护规则（AI 执行）
 

@@ -14,6 +14,7 @@ status: active         # active / superseded
 related_theorems:
   - '[[theorems/index#定理名|定理名]]'
 related_notes: []
+depends_on: []         # 可选：本卡**建立在这些卡之上**（有方向，与 related 不同；见 records/_README.md）
 source: '[[YYYY-MM-DD-episode-slug]]'
 hook:                 # 可选：检索特征块（供 note_recall 统一检索加权）
   operator: probability

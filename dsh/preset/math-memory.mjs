@@ -1268,7 +1268,11 @@ export function buildAuditReport(root, helpers) {
         related: meta.related ?? "",
         needsReview: String(meta.needs_review ?? "").toLowerCase() === "true",
         lastWrong: meta.last_wrong ?? "",
-        duplicateOf: meta.duplicate_of ?? ""
+        duplicateOf: meta.duplicate_of ?? "",
+        // Directional provenance (`[[card]]` list): what this card is BUILT ON.
+        // Distinct from `related`, which is an undirected "see also" — the audit
+        // needs the direction to know which cards break when this one does.
+        dependsOn: meta.depends_on ?? ""
       });
     }
   }
@@ -1474,6 +1478,45 @@ export function buildAuditReport(root, helpers) {
   }
   const hubCards = cards.filter((card) => (backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0) >= HUB_BACKLINKS);
 
+  // ── dependency cascade: when a card stops being true, say what hung off it ───
+  // `depends_on` records the DIRECTION of provenance (this card is built on that
+  // one). That direction is the whole point: `related` is undirected, so it cannot
+  // answer "which of my cards are now standing on something that moved?" — the
+  // question you actually have when a card is superseded, marked wrong, or demoted.
+  //
+  // Three independent sources point at this gap: Danus stores every verified fact
+  // WITH its incoming dependency edges and makes the fact graph cascade-revocable;
+  // MSCE requires each skill to keep evidence anchors so a claim can be traced back;
+  // MemForest refuses to merge high-degree nodes early for the same reason (blast
+  // radius). See literature/notes/improvement-details-2026-09-17.md item 2.
+  //
+  // Reported, never auto-repaired: a downstream card may well survive its premise
+  // being reworded, and only a reader can decide that. This mirrors the
+  // `usesMismatch` stance ("reported, never auto-retried").
+  const changedReason = (card) => {
+    if (String(card.status ?? "").toLowerCase() === "superseded") return "已被取代(superseded)";
+    if (card.needsReview === true) return "被标为待重审(needs_review)";
+    return "";
+  };
+  const dependents = new Map();
+  for (const card of cards) {
+    for (const target of extractLinks({ source: "", related: card.dependsOn })) {
+      const list = dependents.get(target) ?? [];
+      list.push(card);
+      dependents.set(target, list);
+    }
+  }
+  const downstreamReview = [];
+  for (const card of cards) {
+    const reason = changedReason(card);
+    if (reason === "") continue;
+    const stem = String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "");
+    for (const dependent of dependents.get(stem) ?? []) {
+      if (dependent.rel === card.rel) continue; // a self-dependency is not a cascade
+      downstreamReview.push({ card: dependent, via: card, reason });
+    }
+  }
+
   // Deterministic duplicate_of marking (self-correction.md P4): the redundant
   // side of a duplicate pair gets a top-level `duplicate_of` link so retrieval
   // can de-duplicate. Content merge stays the model's job (keep the richer
@@ -1615,6 +1658,11 @@ export function buildAuditReport(root, helpers) {
     harmed: cards.filter((card) => live(card) && card.harmed > 0)
       .map((card) => ({ ...cardRef(card), harmed: card.harmed, uses: card.uses })),
     autoArchiveTargets: autoArchiveTargets.map((card) => ({ ...cardRef(card), filePath: card.filePath })),
+    // Cards standing on a premise that has moved. Each entry names BOTH ends so the
+    // reader can judge whether the dependent still holds.
+    downstreamReview: downstreamReview
+      .filter(({ card, via }) => live(card) && live(via))
+      .map(({ card, via, reason }) => ({ ...cardRef(card), via: cardRef(via), reason })),
     archived: archived.map((item) => ({ rel: item.rel, stem: item.stem }))
   };
   const thresholds = {
@@ -1627,11 +1675,15 @@ export function buildAuditReport(root, helpers) {
     autoArchiveUnusedDays: AUTO_ARCHIVE_UNUSED_DAYS
   };
 
-  // What needs a HUMAN decision (the panel's headline number).
+  // What needs a HUMAN decision (the panel's headline number). Downstream review
+  // counts as one decision PER DEPENDENT CARD: each is a separate judgement, and
+  // collapsing them would hide how far a single wrong premise reached.
+  const liveDownstreamReview = sections.downstreamReview;
   const decisions = {
     reviewCards: livePendingReview.length,
     cleanupCards: liveArchiveCandidates.length + liveDuplicates.length,
-    total: livePendingReview.length + liveArchiveCandidates.length + liveDuplicates.length
+    downstreamCards: liveDownstreamReview.length,
+    total: livePendingReview.length + liveArchiveCandidates.length + liveDuplicates.length + liveDownstreamReview.length
   };
 
   // `counts` keeps its v1 key set (readers written against 0.7.x must not break)
@@ -1715,6 +1767,13 @@ export function buildAuditReport(root, helpers) {
     if (sections.hubs.length > 0) {
       checklistLines.push(`- 结构枢纽（被多张卡引用，改动影响面最大——合并/改写前先确认）: ${sections.hubs.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]](${card.backlinks} 处引用)`).join("、")}`);
     }
+    if (sections.downstreamReview.length > 0) {
+      // Name both ends: the reader has to judge whether the DEPENDENT still holds
+      // once its premise moved, and that needs the reason the premise moved.
+      const rows = sections.downstreamReview.slice(0, 3).map((item) =>
+        `[[${item.rel.replace(/\.md$/, "")}|${item.title}]] ← 依赖 [[${item.via.rel.replace(/\.md$/, "")}|${item.via.title}]]（${item.reason}）`);
+      checklistLines.push(`- 下游待复查（依据已变动，逐条读后判断是否仍成立）: ${rows.join("；")}${sections.downstreamReview.length > 3 ? ` … 共 ${sections.downstreamReview.length} 张` : ""}`);
+    }
   } else {
     checklistLines.push("（尚无记忆卡，无可体检内容）");
   }
@@ -1771,6 +1830,12 @@ export function buildAuditReport(root, helpers) {
       const names = sections.hubs.slice(0, 3).map((card) => `「${card.title}」（${card.backlinks} 张卡引用它）`).join("、");
       humanLines.push(`🧱 ${sections.hubs.length} 张卡是别的东西的依据：${names}${sections.hubs.length > 3 ? " …" : ""}——改它们之前值得多想一步。`);
     }
+    if (sections.downstreamReview.length > 0) {
+      // User-facing phrasing: the point is "the ground moved under these", not the
+      // mechanism. Naming the premise tells them what to re-read.
+      const names = sections.downstreamReview.slice(0, 3).map((item) => `「${item.title}」（依据是「${item.via.title}」）`).join("、");
+      humanLines.push(`⛓ ${sections.downstreamReview.length} 张卡建立在一张已经变动的卡上：${names}${sections.downstreamReview.length > 3 ? " …" : ""}——助手会逐条读后告诉你它们是否还成立。`);
+    }
     if (counts.unverified > 0) {
       humanLines.push(`❓ ${counts.unverified} 张仍是单一来源、且已超过 ${thresholds.unverifiedDays} 天没有互证——用到它们时请留意。`);
     }
@@ -1811,7 +1876,8 @@ export function buildAuditReport(root, helpers) {
       notInIndex: structural.notInIndex.length,
       unjustifiedUpgrade: structural.unjustifiedUpgrade.length,
       usesMismatch: structural.usesMismatch.length,
-      hubs: hubCards.length
+      hubs: hubCards.length,
+      downstream: sections.downstreamReview.length
     },
     // The names behind the structural counts (the checklist quotes a few; the
     // panels/CLI can list them all without re-running the scan).
