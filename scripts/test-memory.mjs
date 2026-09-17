@@ -1667,6 +1667,72 @@ check('archive: a real memory card is still archived',
     harmedCount === 2 && synced.sections.harmed.some((card) => card.title === '会误导的卡' && card.harmed === 2),
     JSON.stringify(synced.sections.harmed));
 
+  // ── net gain: the audit must decide it from EXPLICIT outcomes only, and write
+  // it back into the machine-owned `gain` line (improvement-details item 1).
+  // The assertion is on the audit's own output, so it cannot pass by the ranking
+  // and the verdict drifting apart.
+  {
+    const gainRoot = mkdtempSync(join(tmpdir(), 'dsh-gain-'));
+    const gainWrite = (rel, text) => {
+      const abs = join(gainRoot, ...rel.split('/'));
+      mkdirSync(join(abs, '..'), { recursive: true });
+      writeFileSync(abs, text, 'utf8');
+      return abs;
+    };
+    mkdirSync(join(gainRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+    writeFileSync(join(gainRoot, '.deepseek', 'memory', 'records', 'index.md'), '# 索引\n', 'utf8');
+    const hookCard = (title) => [
+      '---', `title: ${title}`, 'type: fact', 'status: active', 'updated: 2026-09-01',
+      `source: '[[ep-1]]'`, 'hook:', '  operator: analysis', '  verified: single-source', '---', '', `# ${title}`, ''
+    ].join('\n');
+    const wrongAbs = gainWrite('.deepseek/memory/records/gain-wrong.md', hookCard('被否定的卡'));
+    const okAbs = gainWrite('.deepseek/memory/records/gain-ok.md', hookCard('被确认的卡'));
+    const plainAbs = gainWrite('.deepseek/memory/records/gain-plain.md', hookCard('没有反馈的卡'));
+
+    applyFeedback(wrongAbs, 'wrong');
+    applyFeedback(okAbs, 'confirm');
+    const gainReport = buildAuditReport(gainRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+    // Read the verdicts off the audit's own output. `structuralDetail.gains` is the
+    // authoritative per-card list (it includes the zeros), so the assertion cannot
+    // pass while the file and the verdict drift apart.
+    const verdictOf = (rel) => gainReport.structuralDetail.gains.find((entry) => entry.rel === rel)?.gain;
+    const WRONG = '.deepseek/memory/records/gain-wrong.md';
+    const OK = '.deepseek/memory/records/gain-ok.md';
+    const PLAIN = '.deepseek/memory/records/gain-plain.md';
+    check('gain: ❌ ⇒ −1, ✅ ⇒ +1, and a card with no feedback stays at the neutral 0',
+      verdictOf(WRONG) === -1 && verdictOf(OK) === 1 && verdictOf(PLAIN) === 0,
+      JSON.stringify({ wrong: verdictOf(WRONG), ok: verdictOf(OK), plain: verdictOf(PLAIN) }));
+    const wrongText = readFileSync(wrongAbs, 'utf8');
+    const okText = readFileSync(okAbs, 'utf8');
+    const plainText = readFileSync(plainAbs, 'utf8');
+    check('gain: the audit writes the machine-owned verdict into the hook block',
+      /gain:\s*-1/.test(wrongText) && /gain:\s*1/.test(okText),
+      JSON.stringify({ wrong: wrongText.split('\n').filter((l) => l.includes('gain')), ok: okText.split('\n').filter((l) => l.includes('gain')) }));
+    check('gain: a card with no outcome feedback carries no gain line at all',
+      !/gain:/.test(plainText),
+      JSON.stringify(plainText.split('\n').filter((l) => l.includes('gain'))));
+    // A ✅ resolving a earlier ❌ must clear the verdict again, not leave a stale one.
+    applyFeedback(okAbs, 'wrong');
+    applyFeedback(okAbs, 'confirm');
+    const resolved = readFileSync(okAbs, 'utf8');
+    check('gain: a later ✅ clears a stale negative verdict instead of leaving it behind',
+      !/gain:\s*-1/.test(resolved),
+      JSON.stringify(resolved.split('\n').filter((l) => l.includes('gain'))));
+    // Ranking must actually consume it, and a negative verdict must fall BELOW an
+    // unrated card — otherwise the field is decoration.
+    const negative = hookPrior({ verified: 'single-source', gain: '-1' });
+    const neutral = hookPrior({ verified: 'single-source' });
+    const positive = hookPrior({ verified: 'single-source', gain: '1' });
+    check('gain: ranking consumes it, and a rejected card ranks below an unrated one',
+      negative < neutral && positive > neutral && inScale(negative) && inScale(positive),
+      JSON.stringify({ negative, neutral, positive }));
+    check('gain: an out-of-range hand-edited gain cannot escape the [0,1] scale',
+      inScale(hookPrior({ verified: 'single-source', gain: '99' }))
+      && inScale(hookPrior({ verified: 'single-source', gain: '-99' })),
+      'clamped');
+    rmSync(gainRoot, { recursive: true, force: true });
+  }
+
   rmSync(intakeRoot, { recursive: true, force: true });
 }
 

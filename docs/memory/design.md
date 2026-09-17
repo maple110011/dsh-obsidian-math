@@ -102,6 +102,7 @@
 | `confidence`、`status`（`active`/`superseded`） | **模型** | 可写 | 调和与置信维护 |
 | `hook.verified` | **受约束** | 只能写 `single-source` | 升级到 `cross-referenced` / `user-confirmed` 必须用户参与 |
 | `hook.uses` / `success_rate` / `last_used` / `harmed` | **插件** | **不可写** | `note_recall` 命中计数 → `cache/retrieval-stats.json` → 每日体检回写 |
+| `hook.gain` | **插件** | **不可写** | **结果裁决**（−1/0/+1），只由显式 ✅/❌ 推出；**不受 `maintainHookStats` 开关影响**（它是结果不是使用统计）。缺席＝0＝「尚无裁决」 |
 | `hook.verified_by` | **插件（仅 ✅ 反馈路径）** | **不可写** | 升级凭据；**唯一写入者**是用户点 ✅（`memory-admin.mjs` 的 feedback 路径） |
 | `needs_review` | **插件（❌ 反馈路径）** | **不可写** | ❌ 置 `true`、✅ 清 `false` |
 
@@ -110,7 +111,9 @@
 **两条守卫**（都在每日体检里）：
 
 1. **越权升级**：`verified` 高于 `single-source` 却缺 `verified_by: user` ⇒ 记入 `structural.unjustifiedUpgrade`。
-2. **脏值免疫**：插件专有字段尽管「模型不可写」，仍是从**用户可编辑的 markdown** 里解析出来的文本，因此是**不可信输入**。`hookPrior` 对 `success_rate`/`uses`/`last_used` 每项钳制取值、并对最终结果整体钳制到 `[0,1]`——手改 `success_rate: 5` 或 `uses: -3` 不能把先验推出 BM25 混合所假设的量纲（`scripts/test-memory.mjs` 有断言，且做过变异验证）。量纲内的取值行为不变，因此既有排序不会移动。
+2. **脏值免疫**：插件专有字段尽管「模型不可写」，仍是从**用户可编辑的 markdown** 里解析出来的文本，因此是**不可信输入**。`hookPrior` 对 `success_rate`/`uses`/`gain`/`last_used` 每项钳制取值、并对最终结果整体钳制到 `[0,1]`——手改 `success_rate: 5`、`uses: -3` 或 `gain: 99` 不能把先验推出 BM25 混合所假设的量纲（`scripts/test-memory.mjs` 有断言，且做过变异验证）。量纲内的取值行为不变，因此既有排序不会移动。
+
+**为什么需要 `gain`（而 `uses` 不够）**：`uses` 数的是**被检索出来**的次数，不是**帮上忙**的次数——被检索 20 次、其中 18 次读了就弃用的卡，和一个真解决了 20 个问题的卡，在 `uses` 上完全一样。`harmed` 只进体检报告、**不参与排序**，且是单侧计数（表达不了净收益）。`gain` 补上这一格：**带符号**的裁决，且**负值会把卡压到未评级卡之下**。它只由用户显式反馈推出（❌ ⇒ −1、✅ ⇒ +1、无反馈或缺席 ⇒ 0 中性），**刻意不把「用户继续追问」当负分**（追问可能只是好奇，噪音负分比没有负分更糟）。权重从「使用次数」里划出（`0.25 → 0.15 + 0.10`），总量不变、可回退。
 
 ## 6. 备忘录生命周期与提醒
 

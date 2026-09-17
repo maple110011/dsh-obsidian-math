@@ -118,6 +118,40 @@ const AUDIT_CARD_SCAFFOLD = new Set(["index.md", "_README.md"]);
 const AUTO_ARCHIVE_UNUSED_DAYS = 90;
 const PROMOTE_USES = 3;
 const PROMOTE_RATE = 0.6;
+
+/**
+ * Deterministic net-gain verdict for a card, in [-1, 1], or 0 for "no verdict".
+ *
+ * WHY this exists (MSCE, arXiv:2607.16621 §4.2 Eq. 1): `uses` counts how often a
+ * card was RETRIEVED, not whether it HELPED. A card retrieved 20 times and
+ * discarded 18 times looked identical to a card that solved 20 problems, so the
+ * ranking rewarded being mentioned. MSCE's answer is a signed gain, and it also
+ * anchors the negative side when evidence is thin (its `N_0`/`b` shrinkage) rather
+ * than letting a single case swing the value.
+ *
+ * We cannot ask a model for a value (this plugin calls none), so the verdict is
+ * built ONLY from explicit outcomes the user produced. Deliberately two signals,
+ * both unambiguous:
+ *   - the user marked the card wrong (❌ ⇒ `harmed` / `needs_review`), and
+ *   - the user confirmed it (✅ ⇒ `verified_by: user`).
+ *
+ * NOT used: "the user asked a follow-up question". That can mean curiosity rather
+ * than failure, and a noisy negative would be worse than no negative at all.
+ * "Card was superseded" is also excluded: that says the card became obsolete, which
+ * is not the same as "using it made things worse".
+ *
+ * Absent (0) is the neutral verdict and must stay the majority case — most cards
+ * never receive explicit feedback, and inventing a value for them would be exactly
+ * the "looks measured" trap that `success_rate` already warns about.
+ */
+function cardGain({ harmed, needsReview, verifiedBy }) {
+  const wrong = harmed > 0 || needsReview === true;
+  const confirmed = verifiedBy === "user";
+  if (wrong && confirmed) return 0;   // conflicting verdicts: stay neutral
+  if (wrong) return -1;
+  if (confirmed) return 1;
+  return 0;
+}
 // Dialogue capture (obelisk-comparison.md): deterministically persist the full
 // conversation (user + assistant text, no reasoning) into the episodes layer.
 const CAPTURE_FILE = join(CACHE_DIR, "captured-sessions.json");
@@ -989,7 +1023,7 @@ function readRetrievalStats(root) {
  * text; returns the new frontmatter or null when there is no block-style hook
  * (flow-style `hook: { ... }` is deliberately left untouched).
  */
-function rewriteHookStats(frontmatterText, uses, lastUsed) {
+function rewriteHookStats(frontmatterText, uses, lastUsed, gain = 0) {
   const lines = frontmatterText.split(/\r?\n/);
   const hookIdx = lines.findIndex((line) => /^hook:\s*$/.test(line));
   if (hookIdx === -1) return null;
@@ -998,16 +1032,37 @@ function rewriteHookStats(frontmatterText, uses, lastUsed) {
   const block = lines.slice(hookIdx + 1, endIdx);
   let usesSeen = false;
   let lastUsedSeen = false;
-  const updated = block.map((line) => {
-    const match = /^(\s*)(uses|last_used):\s*(.*)$/.exec(line);
-    if (match !== null && match[2] === "uses") { usesSeen = true; return `${match[1]}uses: ${uses}`; }
+  let gainSeen = false;
+  // `null` means "leave that line exactly as it is" — used when only the gain
+  // verdict is being persisted and usage statistics are not being maintained.
+  const touchUses = uses !== null && uses !== undefined;
+  const touchLastUsed = lastUsed !== null && lastUsed !== undefined;
+  const updated = [];
+  for (const line of block) {
+    const match = /^(\s*)(uses|last_used|gain):\s*(.*)$/.exec(line);
+    if (match !== null && match[2] === "uses") {
+      if (!touchUses) { usesSeen = true; updated.push(line); continue; }
+      usesSeen = true; updated.push(`${match[1]}uses: ${uses}`); continue;
+    }
     // An empty lastUsed means "never used": leave any existing value as the
     // user/model wrote it and never invent a date.
-    if (match !== null && match[2] === "last_used" && lastUsed !== "") { lastUsedSeen = true; return `${match[1]}last_used: ${lastUsed}`; }
-    return line;
-  });
-  if (!usesSeen) updated.push(`  uses: ${uses}`);
-  if (!lastUsedSeen && lastUsed !== "") updated.push(`  last_used: ${lastUsed}`);
+    if (match !== null && match[2] === "last_used") {
+      if (touchLastUsed && lastUsed !== "") { lastUsedSeen = true; updated.push(`${match[1]}last_used: ${lastUsed}`); continue; }
+      lastUsedSeen = true; updated.push(line); continue;
+    }
+    if (match !== null && match[2] === "gain") {
+      // `gain` is machine-owned, so it is rewritten when it has a value and
+      // REMOVED when it falls back to zero: leaving a stale `gain: 0` (or a
+      // `gain: -1` that a later ✅ has resolved) would be a claim the system no
+      // longer stands behind. Absent means "no verdict yet" — the neutral case.
+      if (gain !== 0) { gainSeen = true; updated.push(`${match[1]}gain: ${gain}`); }
+      continue;
+    }
+    updated.push(line);
+  }
+  if (!usesSeen && touchUses) updated.push(`  uses: ${uses}`);
+  if (!lastUsedSeen && touchLastUsed && lastUsed !== "") updated.push(`  last_used: ${lastUsed}`);
+  if (!gainSeen && gain !== 0) updated.push(`  gain: ${gain}`);
   return [...lines.slice(0, hookIdx + 1), ...updated, ...lines.slice(endIdx)].join(frontmatterText.includes("\r\n") ? "\r\n" : "\n");
 }
 
@@ -1021,7 +1076,7 @@ function rewriteHookStats(frontmatterText, uses, lastUsed) {
  *   audit counts the `false`s: a silently failed sync used to look identical to
  *   a successful one (design-intake §1 item 5).
  */
-function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
+function syncHookStatsToCard(filePath, effectiveUses, lastUsed, gain = 0) {
   let text;
   try {
     text = readFileSync(filePath, "utf8");
@@ -1030,7 +1085,7 @@ function syncHookStatsToCard(filePath, effectiveUses, lastUsed) {
   }
   const block = frontmatterBlock(text);
   if (block === null) return false;
-  const rewritten = rewriteHookStats(block, effectiveUses, lastUsed);
+  const rewritten = rewriteHookStats(block, effectiveUses, lastUsed, gain);
   if (rewritten === null) return false;
   if (rewritten === block) return verifyUsesWritten(text, effectiveUses, true);
   try {
@@ -1272,7 +1327,12 @@ export function buildAuditReport(root, helpers) {
         // Directional provenance (`[[card]]` list): what this card is BUILT ON.
         // Distinct from `related`, which is an undirected "see also" — the audit
         // needs the direction to know which cards break when this one does.
-        dependsOn: meta.depends_on ?? ""
+        dependsOn: meta.depends_on ?? "",
+        gain: cardGain({
+          harmed,
+          needsReview: String(meta.needs_review ?? "").toLowerCase() === "true",
+          verifiedBy: verifiedBy
+        })
       });
     }
   }
@@ -1285,6 +1345,42 @@ export function buildAuditReport(root, helpers) {
   // Every write here is a CLAIM, so each one is verified by reading the file
   // back (design-intake §1 item 5: "report degraded instead of silent success").
   const postconditions = { statsWrites: 0, statsFailures: [], unmergeableStats: [], statsResetFailed: false, hookHistoryWritten: true };
+  // The net-gain verdict is an OUTCOME, not a usage counter: it comes from explicit
+  // ✅/❌ feedback and must be persisted even when hook-stat maintenance is switched
+  // off (`auditMaintainHookStats: false`). Coupling it to that switch would make the
+  // ranking depend on whether usage statistics happen to be maintained, and would
+  // silently drop the verdict of a user who just rejected a card.
+  //
+  // Runs AFTER the stats pass so it writes the post-merge `uses`/`last_used`; when
+  // that pass is off it only touches the `gain` line (passing `null` leaves the
+  // other two exactly as the file already has them).
+  const writeGain = (withStats) => {
+    for (const card of cards) {
+      if (card.hook === null) continue;
+      try {
+        const text = readFileSync(card.filePath, "utf8");
+        const block = frontmatterBlock(text);
+        if (block === null) continue;
+        // Declared gain, read the same way the structural checks read `uses`:
+        // `frontmatterBlock` has already stripped the `---` fences, so this must
+        // NOT be handed to the frontmatter parser (which expects them).
+        const declaredGain = /^\s*gain:\s*(-?\d+)\s*$/m.exec(block);
+        const hasGain = declaredGain !== null && Number(declaredGain[1]) !== 0;
+        const wantsGain = card.gain !== 0;
+        if (!withStats && !wantsGain && !hasGain) continue; // nothing to add or drop
+        const rewritten = rewriteHookStats(
+          block,
+          withStats ? card.uses : null,
+          withStats ? card.lastUsed : null,
+          card.gain
+        );
+        if (rewritten !== null && rewritten !== block) writeFileSync(card.filePath, replaceFrontmatterBlock(text, rewritten), "utf8");
+      } catch {
+        // best-effort: the audit reports usage sync failures; a missed verdict is
+        // retried on the next run because `gain` is recomputed from the card itself.
+      }
+    }
+  };
   if (helpers.maintainHookStats !== false) {
     let mergedAny = false;
     for (const card of cards) {
@@ -1307,6 +1403,10 @@ export function buildAuditReport(root, helpers) {
       }
       if (hasStat) mergedAny = true;
       postconditions.statsWrites += 1;
+      // `gain` is deliberately NOT passed here: the verdict has its own write pass
+      // (see `writeGain` below) so that persisting it never depends on whether
+      // usage statistics are being maintained. Passing it here too would rewrite
+      // the same file twice per run.
       if (!syncHookStatsToCard(card.filePath, card.uses, card.lastUsed)) postconditions.statsFailures.push(card.rel);
     }
     // Reset the per-period counters (card hits AND the passive "__meta__"
@@ -1328,6 +1428,14 @@ export function buildAuditReport(root, helpers) {
         postconditions.statsResetFailed = true;
       }
     }
+    // Persist the verdicts last, so they are written against the POST-merge
+    // `uses`/`last_used` rather than the pre-merge values.
+    writeGain(true);
+  } else {
+    // Statistics are not being maintained, but an explicit user verdict still has
+    // to reach the card — otherwise a ❌ would be invisible to ranking until
+    // someone switches stats back on.
+    writeGain(false);
   }
 
   // Hook usage history (panel trend): one snapshot per day per hook card, with
@@ -1623,7 +1731,10 @@ export function buildAuditReport(root, helpers) {
   // would be dead). One set, applied to all sections and to `decisions`.
   const archivedRels = new Set(archived.map((item) => item.rel));
   const live = (card) => !archivedRels.has(card.rel);
-  const cardRef = (card) => ({ rel: card.rel, title: card.title });
+  // `gain` rides along on every card ref: it is the machine-owned verdict on
+  // whether using this card helped, and both the panels and the tests need to see
+  // it without re-reading the files.
+  const cardRef = (card) => ({ rel: card.rel, title: card.title, gain: card.gain ?? 0 });
   const liveArchiveCandidates = archiveCandidates.filter(({ card }) => live(card));
   const livePendingReview = pendingReview.filter(live);
   const liveDuplicates = duplicates.filter(({ a, b }) => live(a) && live(b));
@@ -1887,7 +1998,11 @@ export function buildAuditReport(root, helpers) {
       hubs: hubCards.slice(0, 20).map((card) => ({
         ...cardRef(card),
         backlinks: backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0
-      }))
+      })),
+      // The authoritative gain verdict per card, including the zeros. Kept flat and
+      // separate from the sections because a card with a verdict may appear in no
+      // section at all (a healthy, unused card), and the panels need the full list.
+      gains: cards.filter(live).map((card) => ({ rel: card.rel, gain: card.gain ?? 0 }))
     },
     // Legacy flat fields (audit schema v1 readers: dsh/host/memory-admin.mjs and
     // older panels). Same arrays as `sections`, minus the archived ones.

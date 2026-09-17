@@ -498,14 +498,24 @@ export function rankBm25(queryTokens, tokenizedDocs, stats) {
  * Non-hook documents get the neutral 0.5 baseline; a user-confirmed, high-
  * success, frequently-used card ranks above a single-source, low-success one.
  *
- * Robustness: `success_rate` / `uses` / `last_used` are PLUGIN-OWNED fields
- * (docs/memory/design.md §5 ownership table) — the agent is forbidden to write
- * them, but they arrive here as text parsed out of a user-editable markdown
+ * `gain` enters with the weight taken OUT of `uses` (0.25 -> 0.15 + 0.10), so the
+ * total is unchanged and the change is reversible: `uses` counts how often a card
+ * was RETRIEVED, which is not the same as whether it helped (a card retrieved 20
+ * times and discarded 18 times looked identical to one that solved 20 problems).
+ * `gain` is the signed verdict from explicit user feedback — see `cardGain` in
+ * math-memory.mjs for why it is built only from ✅/❌ and why absent means neutral.
+ * A negative gain therefore demotes a card BELOW an unrated one, which is the
+ * point: `harmed` used to be a one-sided counter that only ever showed up in the
+ * audit report and never affected ranking.
+ *
+ * Robustness: `success_rate` / `uses` / `last_used` / `gain` are PLUGIN-OWNED
+ * fields (docs/memory/design.md §5.1 ownership table) — the agent is forbidden to
+ * write them, but they arrive here as text parsed out of a user-editable markdown
  * file, so they must be treated as untrusted input. Every term is clamped into
- * range and the result is clamped into [0,1]: a hand-edited `success_rate: 5`
- * or `uses: -3` must not be able to push a card's prior outside the scale that
- * the BM25 blend assumes. The clamp is deliberately total — inside the scale
- * the formula is unchanged, so existing rankings do not move.
+ * range and the result is clamped into [0,1]: a hand-edited `success_rate: 5`,
+ * `uses: -3` or `gain: 99` must not be able to push a card's prior outside the
+ * scale that the BM25 blend assumes. Inside the scale the formula is unchanged,
+ * so existing rankings do not move.
  */
 export function hookPrior(hook, updatedDate = null) {
   if (hook === null || hook === undefined) return 0.5;
@@ -518,6 +528,9 @@ export function hookPrior(hook, updatedDate = null) {
   const verified = verifiedWeight[hook.verified] ?? 0.5;
   const success = clamp01(hook.success_rate, 0.5);
   const uses = clamp01(Number(hook.uses) / 10, 0);
+  // Gain is signed; a missing value must stay neutral, not count as "good".
+  const rawGain = Number(hook.gain);
+  const gain = Number.isFinite(rawGain) ? Math.max(-1, Math.min(1, rawGain)) : 0;
   // Recency (Belief Memory λ^τ, generalized to records): prefer cards that
   // were updated or used recently; 90-day linear decay into [0,1].
   const date = updatedDate || hook.last_used;
@@ -526,7 +539,7 @@ export function hookPrior(hook, updatedDate = null) {
     const t = Date.parse(date);
     if (Number.isFinite(t)) recency = Math.max(0, Math.min(1, 1 - (Date.now() - t) / (90 * 86400000)));
   }
-  return clamp01(0.45 * success + 0.25 * uses + 0.20 * verified + 0.10 * recency, 0.5);
+  return clamp01(0.45 * success + 0.15 * uses + 0.10 * ((gain + 1) / 2) + 0.20 * verified + 0.10 * recency, 0.5);
 }
 
 /**
