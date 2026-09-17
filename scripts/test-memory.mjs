@@ -43,6 +43,7 @@ import {
   buildAuditReport,
   resolveBudgetTier,
   BUDGET_TIERS,
+  budgetsFor,
   memoDigest,
   latestUserText,
   pairMessages,
@@ -69,7 +70,7 @@ import {
 // "identical to the host's copy" property is asserted in
 // scripts/check-frontmatter-source.mjs.
 import { frontmatterBlock, replaceFrontmatterBlock, stripFrontmatter, readFrontmatter } from '../dsh/preset/hook-frontmatter.mjs';
-import { applyFeedback, setSessionCapture, readSessionCaptureEnabled, countUncapturedSessions, archiveMemoryFile, setCapturePolicyMode, frontmatterSpan, replaceFrontmatter, collectMemoryState, parseEpisodeIndex, readAuditReport, auditSchemaVersionOf, AUDIT_SCHEMA_VERSION_MIN, AUDIT_SCHEMA_VERSION_MAX, summaryOf } from '../dsh/host/memory-admin.mjs';
+import { applyFeedback, setSessionCapture, readSessionCaptureEnabled, countUncapturedSessions, archiveMemoryFile, setCapturePolicyMode, setMemoryBudget, frontmatterSpan, replaceFrontmatter, collectMemoryState, parseEpisodeIndex, readAuditReport, auditSchemaVersionOf, AUDIT_SCHEMA_VERSION_MIN, AUDIT_SCHEMA_VERSION_MAX, summaryOf } from '../dsh/host/memory-admin.mjs';
 const results = [];
 function check(name, condition, detail = '') {
   results.push({ name, ok: Boolean(condition), detail });
@@ -2113,6 +2114,36 @@ check('archive: a real memory card is still archived',
     richSection.length < rawProfile,
     JSON.stringify({ richSection: richSection.length, rawProfile }));
   rmSync(budgetRoot, { recursive: true, force: true });
+
+  // ── the vault-side channel for the tier (settings page → .deepseek/config.md) ──
+  // Precedence is the property here that is invisible at a glance and easy to break by
+  // "simplifying": explicit preset config > vault config.md > standard.
+  const budgetCfgRoot = mkdtempSync(join(tmpdir(), 'dsh-budgetcfg-'));
+  const cfgText = (value) => ['---', `budget: ${value}`, '---', '', '# config', ''].join('\n');
+  check('budget: the tier written into .deepseek/config.md is read back',
+    parseMemoryConfig(cfgText('rich'))?.budget === 'rich',
+    JSON.stringify(parseMemoryConfig(cfgText('rich'))));
+  check('budget: the vault tier decides the budgets when the preset says nothing',
+    JSON.stringify(budgetsFor({}, { budget: 'rich' })) === JSON.stringify(BUDGET_TIERS.rich)
+    && JSON.stringify(budgetsFor({}, {})) === JSON.stringify(BUDGET_TIERS.standard),
+    JSON.stringify({ vault: budgetsFor({}, { budget: 'rich' }).profile, none: budgetsFor({}, {}).profile }));
+  check('budget: an EXPLICIT preset setting beats the vault choice',
+    JSON.stringify(budgetsFor({ budgetExplicit: true, budgetTier: 'compact' }, { budget: 'rich' })) === JSON.stringify(BUDGET_TIERS.compact),
+    JSON.stringify(budgetsFor({ budgetExplicit: true, budgetTier: 'compact' }, { budget: 'rich' }).profile));
+  check('budget: an unknown tier in config.md is ignored rather than pinned to standard',
+    parseMemoryConfig(['---', 'budget: enormous', '---', ''].join('\n')) === null,
+    JSON.stringify(parseMemoryConfig(['---', 'budget: enormous', '---', ''].join('\n'))));
+  // The settings page writes through this; it must create the file when absent and
+  // leave unrelated fields alone when present.
+  const budgetWriteRoot = mkdtempSync(join(tmpdir(), 'dsh-budgetwrite-'));
+  mkdirSync(join(budgetWriteRoot, '.deepseek'), { recursive: true });
+  setMemoryBudget(budgetWriteRoot, 'compact', ['---', 'sessionCapture: true', '---', '', '# config', ''].join('\n'));
+  const writtenCfg = readFileSync(join(budgetWriteRoot, '.deepseek', 'config.md'), 'utf8');
+  check('budget: the writer adds `budget` and preserves the fields already there',
+    /budget:\s*compact/.test(writtenCfg) && /sessionCapture:\s*true/.test(writtenCfg),
+    JSON.stringify(writtenCfg.split('\n').slice(0, 6)));
+  rmSync(budgetCfgRoot, { recursive: true, force: true });
+  rmSync(budgetWriteRoot, { recursive: true, force: true });
 }
 
 // ── 33d-2. paired decision guidance (item 8, second half) ───────────────────

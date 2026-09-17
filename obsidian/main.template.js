@@ -120,7 +120,7 @@ function probeService(port, timeoutMs = 1500) {
   });
 }
 `
-    + '\nreturn { probeService, pathInside, frontmatterSpan, replaceFrontmatter, setHookField, setTopField, setCapturePolicyMode, applyFeedback, archiveMemoryFile, archiveOldEpisodes, parseMemoryFrontmatter, titleOf, daysSinceText, collectMemoryState, readAuditText, FEEDBACK_MESSAGES, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled };';
+    + '\nreturn { probeService, pathInside, frontmatterSpan, replaceFrontmatter, setHookField, setTopField, setCapturePolicyMode, applyFeedback, archiveMemoryFile, archiveOldEpisodes, parseMemoryFrontmatter, titleOf, daysSinceText, collectMemoryState, readAuditText, FEEDBACK_MESSAGES, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled, setMemoryBudget };';
   return new Function('existsSync', 'mkdirSync', 'writeFileSync', 'readFileSync', 'readdirSync', 'statSync', 'renameSync', 'join', 'dirname', 'zstdDecompressSync', 'openSync', 'readSync', 'closeSync', 'http', body)(
     existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, join, dirname, zstdDecompressSync, openSync, readSync, closeSync, http
   );
@@ -224,6 +224,7 @@ const setTopField = MEMORY_ADMIN.setTopField;
  */
 const setCapturePolicyMode = (vault, field, mode) => MEMORY_ADMIN.setCapturePolicyMode(vault, field, mode, typeof EMBEDDED_TEMPLATES['capture-policy.md'] === 'string' ? EMBEDDED_TEMPLATES['capture-policy.md'] : '');
 const setSessionCaptureMode = (vault, enabled) => MEMORY_ADMIN.setSessionCapture(vault, enabled, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
+const setMemoryBudgetMode = (vault, tier) => MEMORY_ADMIN.setMemoryBudget(vault, tier, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
 const runSessionCapture = (vault, sessionsRoot) => MEMORY_ADMIN.runSessionCapture(vault, sessionsRoot, MEMORY_ADMIN.readCaptureState(vault));
 const countUncapturedSessions = (vault, sessionsRoot) => MEMORY_ADMIN.countUncapturedSessions(vault, sessionsRoot);
 
@@ -3057,6 +3058,34 @@ class DshObsidianSettingTab extends PluginSettingTab {
             new Notice(`自动保存对话已${value ? '开启' : '关闭'}`);
           } catch (error) {
             new Notice('更新自动保存对话失败：' + String(error));
+          }
+        }));
+
+    containerEl.createEl('h3', { text: '注入预算' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制每次开机往提示里注入多少「导航」（有哪些主题 / 记录 / 模板 / 事件索引）。它不限制正文：答案内容仍由 note_recall 按需检索，检索不受这个预算影响。写入 .deepseek/config.md 的 budget 字段。' });
+    const budgetOn = (() => {
+      try {
+        const raw = readFileSync(join(captureVaultRoot, '.deepseek', 'config.md'), 'utf8');
+        const { meta } = parseMemoryFrontmatter(raw);
+        return ['compact', 'standard', 'rich'].includes(meta.budget) ? meta.budget : 'standard';
+      } catch {
+        return 'standard';
+      }
+    })();
+    new Setting(containerEl)
+      .setName('注入预算档位（budget）')
+      .setDesc('compact = 省上下文（适合小窗口 / 侧栏卡）；standard = 默认；rich = 注入更多导航（适合大窗口）。只有在内容超过上限时档位才有差别；改完下次启动生效。')
+      .addDropdown((dropdown) => dropdown
+        .addOption('compact', 'compact — 精简')
+        .addOption('standard', 'standard — 标准（默认）')
+        .addOption('rich', 'rich — 富上下文')
+        .setValue(budgetOn)
+        .onChange(async (value) => {
+          try {
+            setMemoryBudgetMode(captureVaultRoot, value);
+            new Notice(`注入预算已设为 ${value}（下次启动生效）`);
+          } catch (error) {
+            new Notice('更新注入预算失败：' + String(error));
           }
         }));
 

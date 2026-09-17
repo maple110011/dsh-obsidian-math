@@ -1562,6 +1562,37 @@ export function setSessionCapture(root, enabled, fallbackTemplate = '') {
   writeFileSync(configPath, updated, 'utf8');
 }
 
+/**
+ * Write `.deepseek/config.md` `budget` (injection-budget tier), applied by the preset.
+ *
+ * WHY the VAULT file rather than the plugin's own settings (changelog 2026-09-17,
+ * 「注入预算档位」): the budget is PRESET-layer configuration and `agent.cordis.yml` is a
+ * bootstrap-time build artifact with no channel from the plugin, so a settings toggle
+ * that only wrote `data.json` would write somewhere nothing reads. This file already
+ * carries per-vault overrides of preset settings (`sessionCapture`, `audit`, …) and
+ * already establishes the "vault overrides preset, field by field" convention — so the
+ * tier goes here and the settings page becomes a thin writer over it.
+ *
+ * Mirrors `setSessionCapture`: minimal frontmatter diff, creates the file from the
+ * template when absent, and refuses to guess when there is no frontmatter to edit.
+ */
+export function setMemoryBudget(root, tier, fallbackTemplate = '') {
+  const configPath = join(root, MEMORY_DIR, 'config.md');
+  let text;
+  if (existsSync(configPath)) {
+    text = readFileSync(configPath, 'utf8');
+  } else {
+    text = fallbackTemplate;
+    if (text === '') throw new Error('config template missing');
+  }
+  const span = frontmatterSpan(text);
+  if (span === null) throw new Error('config.md 没有 frontmatter');
+  const frontmatter = setTopField(span.text, 'budget', String(tier));
+  const updated = replaceFrontmatter(text, frontmatter);
+  if (updated === null) throw new Error('config.md 没有 frontmatter');
+  writeFileSync(configPath, updated, 'utf8');
+}
+
 /** Read whether session capture is enabled (missing config → default off). */
 export function readSessionCaptureEnabled(root) {
   const configPath = join(root, MEMORY_DIR, 'config.md');

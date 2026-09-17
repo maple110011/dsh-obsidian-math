@@ -119,6 +119,21 @@ const BUDGET_TIERS = {
 export function resolveBudgetTier(raw) {
   return Object.prototype.hasOwnProperty.call(BUDGET_TIERS, String(raw)) ? String(raw) : "standard";
 }
+
+/**
+ * The budget set that actually applies for one vault, honouring precedence:
+ * explicit preset config > vault `config.md` > `standard`.
+ *
+ * Exported so the regression suite can assert the precedence directly — it is the one
+ * property here that is invisible at a glance and easy to break by "simplifying".
+ */
+export function budgetsFor(config = {}, ws = null) {
+  // Precedence: an EXPLICIT preset setting wins, else the vault's own choice (written
+  // by the settings page into .deepseek/config.md), else standard.
+  if (config.budgetExplicit === true) return BUDGET_TIERS[config.budgetTier] ?? BUDGET_TIERS.standard;
+  const fromVault = ws?.budget;
+  return BUDGET_TIERS[Object.prototype.hasOwnProperty.call(BUDGET_TIERS, String(fromVault)) ? String(fromVault) : "standard"];
+}
 export { BUDGET_TIERS };
 // Memory-v2 audit pass (arXiv:2606.31191 ISM, localized): deterministic scan of
 // card frontmatter + hook fields, at most once per vault per auditIntervalMs.
@@ -897,10 +912,15 @@ const MEMORY_CONFIG_FILE = join(MEMORY_DIR, "config.md");
 
 /**
  * Parse the workspace's standalone memory settings (.deepseek/config.md
- * frontmatter): enabled / dialogueIndex / reminders / audit. Host-agnostic
+ * frontmatter): enabled / dialogueIndex / reminders / audit / budget. Host-agnostic
  * settings surface — editable without Obsidian or dsh web, and each
  * workspace (vault/folder) can carry its own overrides. A missing file/field
  * returns null so the preset config (agent.cordis.yml) applies.
+ *
+ * `budget` is the injection-budget tier and is the one field the Obsidian settings page
+ * writes (changelog 2026-09-17, "注入预算档位"): preset config is a bootstrap-time build
+ * artifact with no channel from the plugin, so the vault file is the channel — and this
+ * file already establishes the "vault overrides preset, field by field" convention.
  */
 export function parseMemoryConfig(text) {
   if (typeof text !== "string" || text === "") return null;
@@ -910,10 +930,13 @@ export function parseMemoryConfig(text) {
   for (const line of inner.split(/\r?\n/)) {
     const pair = /^(enabled|dialogueIndex|reminders|audit|autoArchive|sessionCapture|captureSubagents):\s*(true|false)\s*$/i.exec(line.trim());
     if (pair !== null) config[pair[1]] = pair[2].toLowerCase() === "true";
+    const budget = /^budget:\s*["']?([A-Za-z-]+)["']?\s*$/i.exec(line.trim());
+    // Only a KNOWN tier is recorded; an unrecognised value leaves the field absent so
+    // the preset config still applies rather than silently pinning `standard`.
+    if (budget !== null && Object.prototype.hasOwnProperty.call(BUDGET_TIERS, budget[1])) config.budget = budget[1];
   }
   return Object.keys(config).length === 0 ? null : config;
 }
-
 export function memoryConfigText(root) {
   const path = join(root, MEMORY_CONFIG_FILE);
   if (!existsSync(path)) return "";
@@ -2572,10 +2595,17 @@ function normalizeConfig(config) {
   // Injection budget tier. An unrecognised value falls back to `standard` rather than
   // throwing: a typo in a config file must not take the whole preset down, and the
   // safe direction here is "the behaviour that existed before tiers did".
-  const budgetTier = resolveBudgetTier(config.budget);
+  // Injection budget tier. Precedence matters and is the whole reason this is not
+  // resolved here: an EXPLICIT `budget` in the preset config wins, otherwise the tier
+  // comes from the vault's `.deepseek/memory/config.md` (written by the settings page),
+  // otherwise `standard`. The vault read needs the vault root, which is per-agent and
+  // not known yet at plugin-construction time, so we only record whether the config
+  // was explicit and let `budgetsFor` finish the job.
+  const budgetExplicit = Object.prototype.hasOwnProperty.call(BUDGET_TIERS, String(config.budget));
+  const budgetTier = budgetExplicit ? String(config.budget) : "standard";
   const budgets = BUDGET_TIERS[budgetTier];
   if (!isAbsolute(sessionsRoot)) throw new TypeError("math-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, autoArchive, sessionCapture, captureSubagents, auditIntervalMs, budgetTier, budgets };
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, autoArchive, sessionCapture, captureSubagents, auditIntervalMs, budgetTier, budgetExplicit, budgets };
 }
 
 function fingerprint(logs) {
@@ -2763,8 +2793,8 @@ class MemoryEngine {
       const dialogueIndex = (ws.dialogueIndex ?? config.dialogueIndexEnabled) ? this.getDialogueIndex(vaultRoot) : { sources: [], entries: [] };
       const auditReport = this.auditReportFor(vaultRoot, ws.audit ?? config.auditEnabled, ws.autoArchive ?? config.autoArchive);
       const query = latestUserText(agent);
-      const memoText = memoDigest(vaultRoot, config.budgets.inbox, query, this.#helpers, ws.reminders ?? config.remindersEnabled);
-      return buildMemorySection({ ...config, vaultRoot }, currentSessionId, dialogueIndex, auditReport, memoText);
+      const memoText = memoDigest(vaultRoot, budgetsFor(config, ws).inbox, query, this.#helpers, ws.reminders ?? config.remindersEnabled);
+      return buildMemorySection({ ...config, vaultRoot, budgets: budgetsFor(config, ws) }, currentSessionId, dialogueIndex, auditReport, memoText);
     } catch (error) {
       return `## 长期记忆（math-memory 暂不可用）\n\n${String(error)}`;
     }

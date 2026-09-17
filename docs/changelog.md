@@ -3,6 +3,23 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-17 · 预算档位的用户入口：走库内 `.deepseek/config.md`（第三批收尾）
+
+**背景**：上一节记了「设置页下拉框卡在一条不存在的通道上」。用户拍板选**通道 2（库内文件承载）**，本轮落地。
+
+**★ 查档少造了一个文件**：我本打算新建 `.deepseek/memory/config.md`，但查档发现**已经存在** `.deepseek/config.md`，而且它的注释就写着「vault overrides preset, field by field；缺失则 preset 生效」，并且 `setSessionCapture` 已经在写它。**所以复用它，只加一个 `budget` 字段**——与原本的设计意图完全一致，但少一个文件、少一套约定。
+
+**改动**：
+
+1. `parseMemoryConfig` 增加 `budget`（字符串，非布尔）——**只记录已知档位**；无法识别的值**保持字段缺失**，从而让 preset 配置继续生效，而不是静默钉死 `standard`。
+2. 新增 `budgetsFor(config, ws)`，把**优先级**写成一行可读代码：**显式 preset 设置 > 库内配置 > standard**。之所以没在 `normalizeConfig` 里定案，是因为库内读取需要 vault root，而那是 per-agent、构造插件时还不知道的。
+3. `dsh/host/memory-admin.mjs` 新增 `setMemoryBudget(root, tier, template)`，照 `setSessionCapture` 的形状（最小 frontmatter diff、缺失时用模板建文件、没有 frontmatter 就拒绝猜）。
+4. 设置页新增「注入预算」下拉框（compact / standard / rich），并说明**它只限制导航层、不限制正文**；`main.js` 的 `MEMORY_ADMIN` 导出表补上 `setMemoryBudget`。
+
+**验证**：`test-memory` **290 → 295**（+5：库内档位被读回、库内决定 budgets、**显式 preset 胜出**、未知档位被忽略、写入器保留原字段）。**两次变异验证**：① 优先级反转 ⇒ 「显式预设胜出」失败（294/295）；② 未知档位被记录 ⇒ 「未知被忽略」失败（294/295）；恢复后 295/295。`build-obsidian` 重建（578327 字节）、`bundle-freshness` / `embedded-writers` / `engine-sync` / `check-doc-constants` 全通过。
+
+**顺带登记**：文献索引逻辑门禁 `scripts/test-lit-import.mjs` 已登记进 `scripts/run-gates.mjs`（用户确认 README 配对守卫工作已完成、该文件不再被占用）。
+
 ## 2026-09-17 · 检索分层：分层取用与失败回退（第三批之二，只补协议文本）
 
 **约定**：**只补协议文本，不动检索核心**（检索改动属 `retrieval-v3.md` 的地盘，单独评）。
