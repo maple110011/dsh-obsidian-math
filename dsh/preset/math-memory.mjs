@@ -405,9 +405,28 @@ function contentText(content) {
     .trim();
 }
 
-function clip(text, maxChars) {
+/**
+ * Truncate to a budget — and SAY SO.
+ *
+ * The trailing `…` this function used to add is not a signal a reader can rely on:
+ * prose legitimately ends with an ellipsis (the audit's own human lines do, e.g.
+ * `names}${count > 3 ? " …" : ""}`), so "ends with …" cannot distinguish "budget cut
+ * this" from "the text is like that". A fragment mistaken for complete evidence is
+ * worse than no evidence, which is why WikiSkill writes an explicit
+ * `[TRUNCATED: …]` marker instead of relying on an ellipsis.
+ *
+ * The marker states the ORIGINAL length, so the reader knows how much is missing
+ * rather than just that something is.
+ */
+/**
+ * Exported so the truncation contract can be asserted directly: the property at
+ * stake ("a cut is always announced") is invisible in the assembled prompt when it
+ * is broken, because a silently truncated section still looks like a section.
+ */
+export function clip(text, maxChars) {
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars).replace(/\s+\S*$/, "")} …`;
+  const kept = text.slice(0, maxChars).replace(/\s+\S*$/, "");
+  return `${kept} … ……［截断：全文 ${text.length} 字符，此处非全文，用 read/grep 取原文件］`;
 }
 
 /**

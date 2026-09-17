@@ -65,6 +65,7 @@ import {
   decodeZstdSessionLog,
   inconsistentWeakCards,
   indexDescriptionIssue,
+  clip,
   AUDIT_SCHEMA_VERSION
 } from '../dsh/preset/math-memory.mjs';
 // The shared frontmatter primitives: `frontmatterBlock`/`replaceFrontmatterBlock`
@@ -2486,6 +2487,37 @@ check('archive: a real memory card is still archived',
     && readFileSync(join(idxRoot, '.deepseek', 'cache', 'audit-ledger.jsonl'), 'utf8').includes('improve-index-line'),
     JSON.stringify(idxReport.ledger));
   rmSync(idxRoot, { recursive: true, force: true });
+}
+
+// ── a budget cut must be announced, not silent ───────────────────────────────
+// The trailing `…` alone cannot carry this: prose legitimately ends with an ellipsis
+// (the audit's own human lines do), so "ends with …" cannot distinguish "budget cut
+// this" from "the text is like that". WikiSkill (arXiv:2608.27454 Appendix C) caps
+// every injected log at 15,000 characters and writes an explicit truncation marker.
+{
+  const short = 'y'.repeat(100);
+  const long = `论证 ${'z'.repeat(400)}`;
+  check('clip: text within the budget is returned byte-for-byte unchanged',
+    clip(short, 140) === short);
+  check('clip: a cut is announced, with the ORIGINAL length (not just "something was cut")',
+    clip(long, 140).includes(`截断：全文 ${long.length} 字符`), clip(long, 140).slice(-40));
+  check('clip: the kept CONTENT stays within the budget (only the marker is added)',
+    clip(long, 140).length - ' ……［截断：全文 403 字符，此处非全文，用 read/grep 取原文件］'.length <= 140,
+    `${clip(long, 140).length} vs budget 140 + fixed marker`);
+  check('clip: the ellipsis convention is preserved for existing readers',
+    clip(long, 140).includes(' …'), clip(long, 140).slice(-60));
+
+  // End to end: a card body larger than the injected tier budget must carry the
+  // marker in the assembled memory section — a rejected budget silently pretending
+  // to be the whole document is the failure this guards.
+  const clipRoot = mkdtempSync(join(tmpdir(), 'dsh-clip-'));
+  mkdirSync(join(clipRoot, '.deepseek', 'memory', 'topics'), { recursive: true });
+  writeFileSync(join(clipRoot, '.deepseek', 'memory', 'topics', 'index.md'),
+    `# 主题索引\n\n${'主题正文 '.repeat(1200)}\n`, 'utf8');
+  const section = buildMemorySection({ vaultRoot: clipRoot, sessionsRoot: join(clipRoot, 'sessions') }, null, null, undefined, undefined);
+  check('clip: the assembled memory section announces that a layer was truncated',
+    section.includes('截断：全文'), section.slice(-120));
+  rmSync(clipRoot, { recursive: true, force: true });
 }
 
 rmSync(root, { recursive: true, force: true });
