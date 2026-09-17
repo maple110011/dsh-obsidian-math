@@ -118,6 +118,12 @@ const AUDIT_CARD_SCAFFOLD = new Set(["index.md", "_README.md"]);
 const AUTO_ARCHIVE_UNUSED_DAYS = 90;
 const PROMOTE_USES = 3;
 const PROMOTE_RATE = 0.6;
+// Cross-occasion support (MSCE `n_min`, arXiv:2607.16621 §4.2): how many DISTINCT
+// episodes must show the same technique before it counts as a method rather than an
+// anecdote, and how close two episodes may be and still count as ONE occasion
+// (MemForest §3.2 treats semantic similarity plus temporal contiguity as one event).
+const OCCASION_MIN = 2;
+const OCCASION_WINDOW_DAYS = 3;
 
 /**
  * Deterministic net-gain verdict for a card, in [-1, 1], or 0 for "no verdict".
@@ -1625,6 +1631,61 @@ export function buildAuditReport(root, helpers) {
     }
   }
 
+  // ── cross-occasion support: one sighting is an anecdote, several are a method ─
+  // MSCE (arXiv:2607.16621 §4.2) refuses to induce a policy until the same signature
+  // bucket holds evidence from at least `n_min` DISTINCT episodes, on the stated
+  // ground that a single long trajectory would otherwise mint an over-specific rule.
+  // MemForest (arXiv:2609.08273 §3.2) defines "the same event" as semantic similarity
+  // plus temporal contiguity, weighting semantics 0.8 / time 0.2.
+  //
+  // The approved plan assumed a strategy card records which episodes exercised its
+  // moves. It does not: `card.uses` counts RETRIEVALS, so it cannot answer "did this
+  // technique work in more than one situation?". This reads the link that DOES exist
+  // — a record's `hook.techniques` and its `source` episode — and counts the distinct
+  // occasions a technique was seen in. Reported only: it backs the promote gate below
+  // without silently changing any card's status on this pass.
+  //
+  // "Same occasion" = same episode bucket, where episodes within OCCASION_WINDOW_DAYS
+  // of each other are one bucket (a derivation done across consecutive days is one
+  // episode of use, not several). Undated evidence counts as its own occasion
+  // (`unknown`), never merged with other undated evidence — inventing proximity would
+  // manufacture support.
+  const OCCASION_LOCAL_WINDOW = OCCASION_WINDOW_DAYS;
+  const occasionsOf = (episodeKeys) => {
+    const days = [];
+    const unknown = [];
+    for (const key of episodeKeys) {
+      const day = parseLocalDay(key);
+      if (day === null) unknown.push(key);
+      else days.push(Math.floor(day.getTime() / 86400000));
+    }
+    days.sort((x, y) => x - y);
+    let buckets = 0;
+    let previous = null;
+    for (const day of days) {
+      if (previous === null || day - previous > OCCASION_LOCAL_WINDOW) buckets += 1;
+      previous = day;
+    }
+    return buckets + unknown.length;
+  };
+  const techniqueEvidence = new Map();
+  for (const card of cards) {
+    if (!card.rel.includes("/records/")) continue; // evidence lives on record cards
+    const episode = extractLinks({ source: card.source, related: "" })[0] ?? "";
+    if (episode === "") continue; // no provenance: cannot claim an occasion
+    const techniques = card.hook === null ? [] : String(hookText(card.hook, "techniques")).split(/\s+/).filter(Boolean);
+    for (const technique of new Set(techniques)) {
+      const entry = techniqueEvidence.get(technique) ?? { techniques: technique, episodes: new Set() };
+      entry.episodes.add(episode);
+      techniqueEvidence.set(technique, entry);
+    }
+  }
+  const crossOccasion = [...techniqueEvidence.values()]
+    .map(({ techniques, episodes }) => ({ techniques, occasions: occasionsOf([...episodes]) }))
+    .filter((entry) => entry.occasions >= 1)
+    .sort((x, y) => (y.occasions - x.occasions) || x.techniques.localeCompare(y.techniques));
+  const independentTechniques = crossOccasion.filter((entry) => entry.occasions >= OCCASION_MIN);
+
   // Deterministic duplicate_of marking (self-correction.md P4): the redundant
   // side of a duplicate pair gets a top-level `duplicate_of` link so retrieval
   // can de-duplicate. Content merge stays the model's job (keep the richer
@@ -1774,6 +1835,9 @@ export function buildAuditReport(root, helpers) {
     downstreamReview: downstreamReview
       .filter(({ card, via }) => live(card) && live(via))
       .map(({ card, via, reason }) => ({ ...cardRef(card), via: cardRef(via), reason })),
+    // Techniques seen in >= OCCASION_MIN independent episodes: the deterministic
+    // answer to "is this a method or a one-off?". Informational for now.
+    independentTechniques: independentTechniques.map(({ techniques, occasions }) => ({ techniques, occasions })),
     archived: archived.map((item) => ({ rel: item.rel, stem: item.stem }))
   };
   const thresholds = {
@@ -1884,6 +1948,12 @@ export function buildAuditReport(root, helpers) {
       const rows = sections.downstreamReview.slice(0, 3).map((item) =>
         `[[${item.rel.replace(/\.md$/, "")}|${item.title}]] ← 依赖 [[${item.via.rel.replace(/\.md$/, "")}|${item.via.title}]]（${item.reason}）`);
       checklistLines.push(`- 下游待复查（依据已变动，逐条读后判断是否仍成立）: ${rows.join("；")}${sections.downstreamReview.length > 3 ? ` … 共 ${sections.downstreamReview.length} 张` : ""}`);
+    }
+    if (sections.independentTechniques.length > 0) {
+      // Only the techniques that cleared the bar: listing every one-off would be a
+      // dump, and the interesting fact is which ones are cross-occasion supported.
+      const rows = sections.independentTechniques.slice(0, 5).map((entry) => `${entry.techniques}(${entry.occasions} 个场合)`);
+      checklistLines.push(`- 跨场合验证过的技巧（≥${OCCASION_MIN} 个独立场合；这些可以当方法用，一次性的只能当线索）: ${rows.join("、")}`);
     }
   } else {
     checklistLines.push("（尚无记忆卡，无可体检内容）");

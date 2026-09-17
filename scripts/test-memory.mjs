@@ -1906,6 +1906,70 @@ check('archive: a real memory card is still archived',
   rmSync(depRoot, { recursive: true, force: true });
 }
 
+// ── 33d. cross-occasion support (improvement-details item 6) ─────────────────
+//
+// MSCE refuses to induce a policy until the same signature has evidence from
+// `n_min` DISTINCT episodes. The approved plan assumed a strategy card records
+// which episodes exercised its moves; it does not, so this reads the link that
+// exists (records.hook.techniques + records.source) and counts distinct OCCASIONS,
+// where episodes a few days apart are one occasion and undated evidence never
+// merges with anything.
+{
+  const occRoot = mkdtempSync(join(tmpdir(), 'dsh-occ-'));
+  const occWrite = (rel, text) => {
+    const abs = join(occRoot, ...rel.split('/'));
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, text, 'utf8');
+    return abs;
+  };
+  const occCard = (title, episode, techniques) => [
+    '---', `title: ${title}`, 'type: fact', 'status: active', 'updated: 2026-09-01',
+    `source: '[[${episode}]]'`, 'hook:', '  operator: analysis',
+    `  techniques: [${techniques}]`, '  verified: single-source', '---', '', `# ${title}`, ''
+  ].join('\n');
+  mkdirSync(join(occRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+  writeFileSync(join(occRoot, '.deepseek', 'memory', 'records', 'index.md'), '# 索引\n', 'utf8');
+
+  // `widely` appears on two episodes 10 days apart -> two occasions.
+  occWrite('.deepseek/memory/records/occ-1.md', occCard('宽用甲', '2026-08-01-a', 'widely'));
+  occWrite('.deepseek/memory/records/occ-2.md', occCard('宽用乙', '2026-08-11-b', 'widely'));
+  // `sameday` appears on two episodes the same day -> ONE occasion.
+  occWrite('.deepseek/memory/records/occ-3.md', occCard('同日甲', '2026-08-02-a', 'sameday'));
+  occWrite('.deepseek/memory/records/occ-4.md', occCard('同日乙', '2026-08-02-b', 'sameday'));
+  // `nearby` appears 2 days apart -> still ONE occasion (inside the window).
+  occWrite('.deepseek/memory/records/occ-5.md', occCard('邻近甲', '2026-08-03-a', 'nearby'));
+  occWrite('.deepseek/memory/records/occ-6.md', occCard('邻近乙', '2026-08-05-b', 'nearby'));
+  // `once` appears once -> an anecdote, never listed.
+  occWrite('.deepseek/memory/records/occ-7.md', occCard('单次', '2026-08-06-a', 'once'));
+  // `orphan` has NO `source` but names the SAME technique as a card that does. Its
+  // empty source must not be counted as an episode of its own: if the provenance
+  // guard is removed, `once` gains a second "occasion" and gets listed — which is
+  // what makes the guard's assertion falsifiable (a first version used a technique
+  // name unique to this card, so dropping the guard changed nothing observable).
+  occWrite('.deepseek/memory/records/occ-8.md', [
+    '---', 'title: 无源卡', 'type: fact', 'status: active', 'updated: 2026-09-01',
+    'hook:', '  operator: analysis', '  techniques: [once]', '  verified: single-source',
+    '---', '', '# 无源卡', ''
+  ].join('\n'));
+
+  const occReport = buildAuditReport(occRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const rows = new Map(occReport.sections.independentTechniques.map((entry) => [entry.techniques, entry.occasions]));
+  check('occasion: two episodes far apart count as two occasions and are listed',
+    rows.get('widely') === 2, JSON.stringify([...rows]));
+  check('occasion: the same day is ONE occasion, not two',
+    !rows.has('sameday'), JSON.stringify([...rows]));
+  check('occasion: evidence a couple of days apart is still ONE occasion (window)',
+    !rows.has('nearby'), JSON.stringify([...rows]));
+  check('occasion: a technique seen once is an anecdote, never listed',
+    !rows.has('once'), JSON.stringify([...rows]));
+  check('occasion: evidence with no usable source cannot manufacture a second occasion',
+    !rows.has('once'), JSON.stringify([...rows]));
+  check('occasion: the checklist explains the distinction instead of dumping every technique',
+    occReport.report.includes('跨场合验证过的技巧') && occReport.report.includes('widely'),
+    occReport.report.split('\n').filter((l) => l.includes('跨场合')).join(' / '));
+  rmSync(occRoot, { recursive: true, force: true });
+}
+
 // §34 multi-view pooling (GraphMemix intake, docs/memory/retrieval-v3.md §7.2).
 //
 // The product default stays the single bag; the max-pool exists so the QA probe
