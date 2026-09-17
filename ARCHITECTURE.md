@@ -53,6 +53,8 @@
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测 |
 | `scripts/check-doc-consistency.mjs` | 文档一致性守卫：断言数等易漂移数字与代码实测值一致（进 `npm test`） |
 | `scripts/lit-import.mjs` | 文献库导入器：BibTeX + PDF + MinerU markdown → agent/人类双面文献库（见 `docs/literature.md`） |
+| `scripts/lib/lit-index.mjs` | 文献索引的**状态与陈旧**逻辑（唯一实现）。`lit-import.mjs` 与门禁 `test-lit-import.mjs` **都 import 它**——抽成模块是为了让测试**进程内**运行：本仓库沙箱禁止捕获子进程管道输出（spawn/exec → EPERM），门禁不能 shell 出去跑导入器。背景：索引「状态」列原先取条目的机器默认值（恒为 unread），而 cards/*.md 跨导入保留 ⇒ 全库卡片其实都已蒸馏、索引却全显示「未读」，且没有门禁会因此失败 |
+| `scripts/test-lit-import.mjs` | 文献索引逻辑门禁（10 断言，**进程内**，进 `npm test`） |
 | `docs/memory/` | **知识库**：README（导航+状态表）、design（当前实现规格）、retrieval-v3（检索提案与状态 + §7 GraphMemix 吸纳决策与 A/B 实测）、testing（QA 方法论）、assessment（评估轮次）、v2-proposal、references（论文笔记）、changelog（记忆系统细账）、control-panel、sidebar-performance（侧栏卡顿原因清单与处置）、handoff（交接） |
 | `docs/literature.md` | **文献库架构规格**：双面分离、文件契约、研读→蒸馏闭环（`scripts/lit-import.mjs` 的实施说明） |
 | `docs/dsh-panel-research.md` | dsh 面板机制调研：noema/aionui 挂载方式，Phase 2 面板路线（官方 `settings.section` 槽位） |
