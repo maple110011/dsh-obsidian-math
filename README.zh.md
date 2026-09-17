@@ -90,7 +90,7 @@ vault/
 ## 开发与质量
 
 ```bash
-npm test          # 语法 + 290 项零 token 回归 + 路由回归（47 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
+npm test          # 语法 + 295 项零 token 回归 + 路由回归（47 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
 npm run qa        # 引擎探针：真实 vault 12 组召回断言 + 可达性分层/A-B 测量（零 token）
 npm run qa:e2e    # 真实会话端到端验收（烧真实 tokens，报告 API 级 usage）
 node scripts/build-obsidian.mjs   # 重建 main.js（改共享文件后必跑）

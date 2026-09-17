@@ -2,5 +2,5 @@
 # 两种语言同权：任何一侧被编辑后，请在同一次改动里补齐另一侧，然后运行
 #   node scripts/check-readme-pair.mjs --write
 # 重新记录。记录只说明"在这些字节上被确认过"，措辞与术语仍由评审负责。
-README.md: a9392c0381fbde74f51f2326833b3c37fc5e7823
-README.zh.md: 59498e1245b3814196db99963059c5be1fcaa78c
+README.md: c9e0d36acf81bdae8abdbd643f98896c50bde533
+README.zh.md: e46c54a6843b3c881a2e6c4feb5a3f2054b56edb
