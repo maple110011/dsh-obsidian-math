@@ -71,10 +71,12 @@
 | 13 | HIGH | `npm run qa:e2e` 在 0.1.5 上**大概率跑不起来**：`e2e.mjs` 用"任何 200"判定就绪、且 `/api/*` **完全不带 token/cookie**；我实测 0.1.5 的 `/api` 无 cookie 一律 401（`requestRejection`：先 Host/Origin 403，再浏览器会话 401） | `scripts/qa/e2e.mjs:27-35,43-69,189,249` |
 | 14 | HIGH | **版本号三方不一致且无门禁**：`package.json`/`package-lock` 0.7.3、`manifest.json` 0.7.4、README 0.7.3、CHANGELOG 顶部 0.7.4、npm registry latest 0.7.1（0.7.2/0.7.3 从未发布） | `package.json:3`、`manifest.json:4`、`CHANGELOG.md:25` |
 | 15 | HIGH | `release.yml:23` 的 awk 抓的是**第一个** `## [` 段——即 `## [Unreleased]`，所以每个 GitHub release 的说明都是 Unreleased 块；且 **tag 触发的两个工作流都不跑测试、不校验 main.js 重建一致性** | `.github/workflows/release.yml:23`、`npm-publish.yml` |
-| 16 | HIGH | **文档声明了不存在的安装方式**：README 让用户"在社区插件市场搜索 DSH Math Notes Assistant 安装"，而 `obsidian-releases` 的 7458 条目里没有 `dsh-math-assistant` | `README.md:51` / `README.zh.md:51` |
+| 16 | ~~HIGH~~ **已作废（2026-09-15 更正）** | **文档声明了不存在的安装方式**：README 让用户"在社区插件市场搜索 DSH Math Notes Assistant 安装"，而 `obsidian-releases` 的 7458 条目里没有 `dsh-math-assistant` | `README.md:51` / `README.zh.md:51` |
 | 17 | HIGH | Obsidian 侧栏 iframe **在 0.1.5 下必然 401**（详见 §4） | `obsidian/main.template.js:889-896` |
 
 ### P1.5 · Obsidian 插件侧专项（第三路审计，均为实测）
+
+> **⚠️ 更正（2026-09-15）**：§2 第 16 条的观察**已经作废**，而且它的**判据本身就是错的**。当时（2026-09-10）我用 `obsidianmd/obsidian-releases` 的 `community-plugins.json` 里没有 `dsh-math-assistant` 来判"未上架"。实测：**该文件至今（2991 行）仍没有本插件，但插件在架**——收录方式已经改变，`community-plugins.json` 不再是收录依据，现行依据是插件在 [community.obsidian.md](https://community.obsidian.md/plugins/dsh-math-assistant) 有页面。**因此 README 写「第三方插件 → 搜索安装」是对的**；反倒是 en 侧后来据此加的「Not in the community plugin browser yet」callout 是错的，本轮已改正。教训见 `handoff.md` 坑 78：**"某份清单里没有它"不等于"它不存在"**；日期化快照里的观察不能直接当现状引用。
 
 这一组此前没有单独列出，因为它们集中在 `obsidian/main.template.js`（约 1800 行、**零自动化测试**、CI 完全看不见）。
 

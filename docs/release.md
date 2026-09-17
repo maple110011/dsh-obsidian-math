@@ -102,32 +102,22 @@ git push origin 0.7.6  # ← 这一步才会真正产出 Release
 - **npm 12 的安装期安全默认值**（`allowScripts` 默认关、`--allow-git`/`--allow-remote` 默认 `none`）：本项目唯一带 lifecycle 脚本的依赖是 devDependency `esbuild`（`postinstall: node install.js`）。`npm ci` 仍会成功，但 **esbuild 的二进制不会下载**，于是 `npm run build:client` 会失败。因此发布工作流钉在 npm 11；将来升 12 时先跑 `npm approve-scripts --allow-scripts-pending` 并把 allowlist 提交进 `package.json`。
 - **本地 registry 缓存会骗人**：排查期间通过本机代理查询 `registry.npmjs.org` 拿到的是**过期文档**（`modified` 时间戳停在旧日期、`/0.7.5` 返回 404），而包其实已经发布。判断「到底发出去没有」要用带 cache-buster 的直连查询，或者看 workflow 里那步 `Confirm the registry state` 的输出。
 
-## 3. 为什么 Obsidian「插件商店」看不到新版本
+## 3. Obsidian 插件商店的更新通道
 
-Obsidian 的插件更新只认两件事：**社区注册表里的条目** + **仓库里 tag 等于
-`manifest.json` 版本的 Release**。本插件的实际情况：
+> **⚠️ 更正（2026-09-15）**：本节原标题是「为什么 Obsidian『插件商店』看不到新版本」，并断言「插件 id 不在 `community-plugins.json` 里 ⇒ 浏览里搜不到」。**那个判据已经作废**：实测该文件至今（2991 行）仍没有 `dsh-math-assistant`，但插件**已在架** —— Obsidian 的收录方式已改变，`community-plugins.json` 不再是收录依据。现行依据是插件在 [community.obsidian.md/plugins/dsh-math-assistant](https://community.obsidian.md/plugins/dsh-math-assistant) 有页面。**判断"上架没有"要查商店页面本身，不要查这个 JSON**（见 `handoff.md` 坑 78）。下面的"更新通道"部分仍然成立，它是**版本可见性**的机制，与收录方式无关。
 
-- 插件 id `dsh-math-assistant` **不在** `obsidianmd/obsidian-releases` 的
-  `community-plugins.json` 里（该文件 7459 条；里面确实有若干其他 DSH 插件，
-  但没有本插件）⇒ 在 Obsidian 的「浏览」里搜不到，也就没有自动更新通道。
-- 即使已上架，`manifest.json` 的版本必须有一个**同号 tag 的 Release**；
-  本地 git tag 停在 0.7.1、npm `latest` 也是 0.7.1，而 0.7.2–0.7.4 从未发过 tag。
-  所以用户端能拿到的最新版永远是 0.7.1。
+更新通道只认一件事：**仓库里存在 tag 等于 `manifest.json` 版本的 Release**。插件在架、但版本页停在旧号的典型成因：
+
+- `manifest.json` 的版本必须有一个**同号 tag 的 Release**；本地 git tag 曾停在 0.7.1、npm `latest` 也是 0.7.1，而 0.7.2–0.7.4 从未发过 tag ⇒ 用户端能拿到的最新版永远是 0.7.1。
 
 结论：**发版 = 推 tag**，不是改版本号。改完版本号不推 tag，等于什么都没发生。
 
 三条可用的分发路径：
 
-1. **手动安装**（当前推荐，README 已写明）：下载 Release 的 `main.js` +
-   `manifest.json` + `styles.css` 放进 `<vault>/.obsidian/plugins/dsh-math-assistant/`。
-2. **BRAT**（Beta Reviewers Auto-update Tool）：填 `maple110011/dsh-obsidian-math`，
-   它按 Release 的 `manifest.json` 版本自动更新——同样要求先推 tag。
-3. **上架社区商店**：向 `obsidianmd/obsidian-releases` 提 PR，在
-   `community-plugins.json` 末尾加 `{"id":"dsh-math-assistant","name":"DSH Math Assistant","author":"maple110011","description":"…","repo":"maple110011/dsh-obsidian-math"}`。
-   前置条件：仓库根目录有 `README.md`、`LICENSE`、`manifest.json`/`versions.json` 合规、
-   Release 里带 `main.js`+`manifest.json`+`styles.css`，且**已有一个正式版本 tag**。
-   ⚠️ 上架后再改名/改 id 会被商店判为"新插件"，`manifest.json` 的 `id` 与
-   `scripts/check-plugin-id.mjs` 必须保持一致。
+1. **社区商店安装**（推荐，[商店页](https://community.obsidian.md/plugins/dsh-math-assistant)）：Obsidian → 设置 → 第三方插件 → 浏览 → 搜索 **DSH Math Notes Assistant**；更新随插件管理器走。
+2. **手动安装**：下载 Release 的 `main.js` + `manifest.json` + `styles.css` 放进 `<vault>/.obsidian/plugins/dsh-math-assistant/`。
+3. **BRAT**（Beta Reviewers Auto-update Tool）：填 `maple110011/dsh-obsidian-math`，它按 Release 的 `manifest.json` 版本自动更新——同样要求先推 tag。
+4. **分发面**：上架后再改名/改 id 会被商店判为"新插件"，`manifest.json` 的 `id` 与 `scripts/check-plugin-id.mjs` 必须保持一致。（历史上曾通过向 `obsidianmd/obsidian-releases` 提 PR 在 `community-plugins.json` 追加条目来上架；该路径已不适用，仅作历史记录。）
 
 ## 4. 推送纪律
 

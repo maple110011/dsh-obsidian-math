@@ -36,7 +36,7 @@
 | `docs/dsh-panel-research.md` | dsh web 面板机制调研（客户端契约 / settings.section 槽位 / profile 装配名单 / 宿主路由） |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
-| `scripts/test-memory.mjs` | 零 token 记忆回归（240 项断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 记忆回归（290 项断言，进 `npm test`） |
 | `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（47 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、四条写入型端点；进 `npm test`） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 项：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写回归） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 项，对真实 dsh；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
@@ -117,7 +117,8 @@
 33. **回执是功能的一部分**：dsh web 面板的 `run()` 原本丢弃响应体——点 ✅/❌/归档 界面上什么都不发生，而唯一显示的 `success=` 对真实卡永远是 `—`。**任何写操作都必须把宿主返回的 `message`/error 显示出来**，否则用户无法区分"生效了"和"点了没反应"。
 34. **`last_not_applicable` 没有读取方**（全仓库 grep 只有写入点）。加新的 frontmatter 字段时，必须同时指出**谁读它**；写而不读的字段会在 UI 上表现为"看起来像 ❌、实际零效果"，比没有这个选项更糟。
 35. **真实 vault 里这套反馈机制从未被使用过**（2026-09-10 全库普查：`last_wrong`/`needs_review`/`last_not_applicable`/`status: superseded`/`verified: user-confirmed`/`success_rate` 全为 0，🔁 字符 0 个，`.deepseek/archive/` 不存在，3 张真实卡全是 `single-source` 且无 `success_rate`）。**"没人用"本身就是最强的信号**：先怀疑入口（文案/回执/位置），再怀疑机制。
-36. **版本号不是发布**：Obsidian 的更新只认「社区注册表条目 + tag 等于 `manifest.json` 版本的 Release」。本插件**不在** `community-plugins.json` 里，且 0.7.2–0.7.4 从未推过 tag ⇒ 用户端永远停在 0.7.1。发版步骤见 `docs/release.md`；`check-version-consistency.mjs` 钉住五处版本号（package / manifest / lock / versions.json / CHANGELOG）。
+36. **版本号不是发布**：Obsidian 的更新只认「**tag 等于 `manifest.json` 版本的 Release**」。当时 0.7.2–0.7.4 从未推过 tag ⇒ 用户端永远停在 0.7.1，表现为"商店里看不到新版本"。发版步骤见 `docs/release.md`；`check-version-consistency.mjs` 钉住五处版本号（package / manifest / lock / versions.json / CHANGELOG）。
+    - **⚠️ 更正（2026-09-15）**：本条原文还写着「本插件**不在** `community-plugins.json` 里」并把它当作"看不到新版本"的原因之一。**那句是错的**——插件早已在架，收录方式已改变、`community-plugins.json` 不再是收录依据（详见坑 78）。"版本号不是发布"这个结论仍然成立，成立的理由只有 tag 那一条。
 37. **面板是两半，生效方式不同**：宿主半（`math-memory-panel.mjs` + `memory-admin.mjs`，装在 `profiles/web/node_modules/@dsh-math-memory/…`）**由 dsh web 进程启动时加载** ⇒ 换新要**重启 dsh web**；客户端半（`client.js`）是页面加载时取的静态文件 ⇒ **刷新页面**即可。两者之间存在"新客户端 + 旧宿主"的窗口，所以客户端必须给每个字段兜底（`{ rel:'', topic:'', … , ...card }`），否则会渲染出字面量 `#undefined`。
 38. **旧缓存（audit schema v1）要能降级渲染**：v1 的 `memory-audit.json` 只有 `report` 字符串，没有 `human`/`sections`/`decisions`/`today`。面板不能因此说"还没有体检记录"，也不能把模型清单原样摊开——`normalizeAuditForPanel` 会从 v1 遗留的 `pendingReview`/`archiveCandidates`/`passive`/`generatedAt` 合成 `sections`/`decisions`/`today`，`legacyAuditSummary` 合成人话摘要；下一次体检写回新格式后自动失效。
 39. **跨皮肤写样式只能用各皮肤都保证存在的 token**。dsh web 面板的次级文字原本用 `--dsw-alias-label-dimmed`，而用户当前皮肤 `orca-link` **只定义 `primary/secondary/tertiary/caption`** —— 该变量不存在，`color` 声明在计算值阶段失效、颜色回退到继承值。表现是"浅色文字看不清"，真因是"这条样式根本没生效"。现在统一用 `var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary, …))`。Obsidian 侧同理：`--text-faint` 换成 `var(--text-muted, var(--text-faint))`。**改面板配色前先确认皮肤里有没有这个变量**。
@@ -216,6 +217,13 @@
     - **实测证据**：会话日志里模型生成的链接指向 `127.0.0.1:52269`，`netstat` 显示该端口早已不存在；同一时刻**任何**回环端口上都没有 LinkServer 在听。
     - **修法**：端口与令牌进 `data.json`（`linkServerPort` / `linkServerToken`），启动时复用；端口被占则回落随机端口**并写一行日志**（"链接又变了"必须有痕迹，否则下次还得从零排查）。守卫 `scripts/test-link-server.mjs`（12 项：固定端口、重载后端口/令牌不变、占用时回落不抛、两个端点的令牌与路径穿越判定）。
     - **仍未做**：把链接模板改成**运行时**注入（`ctx.systemPrompt.context()`），这样即使 LinkServer 换端口，新回复也总带当前地址；以及 3180 代理在"服务还活着但代理没绑上"时能自愈（本次排查中我把代理 reload 成了无监听状态，只能靠 reload 插件恢复）。
+78. **★ 「某份清单里没有它」不是「它不存在」：我据一份过期的收录清单，把一个在架的插件判成"没上架"**（2026-09-15，同一天里我先误判、再按误判改了文档，被维护者当场纠正）。
+    - **经过**：维护者要求核对中英 README 的漂移。我读到 `docs/project-assessment-2026-09-10.md` 第 16 条（判 HIGH：README 让用户在社区插件市场搜索，而 `obsidian-releases` 的 `community-plugins.json` 里没有 `dsh-math-assistant`），又**只**核验了 `community-plugins.json`（当时实测 2991 行，确实没有本插件），于是判定 zh 侧的「第三方插件 → 搜索安装」是**不存在的安装方式**，把它改掉，并把 en 侧早已存在的「尚未上架社区插件市场」当成正确的一侧去"统一"。
+    - **实际事实**：**插件已在架**，中文 README 原本是对的。Obsidian 的收录方式已经改变，`community-plugins.json` **不再是收录依据**；现行依据是插件在 [community.obsidian.md](https://community.obsidian.md/plugins/dsh-math-assistant) 有页面（第三方目录 [obsidianstats](https://www.obsidianstats.com/plugins/dsh-math-assistant) 也收录了）。用一句"JSON 里没有"就下结论，等于**拿一把已经作废的尺子量**。
+    - **它同时命中了仓库自己的两条纪律**：① `docs/agent-repo-maintenance.md` §5.3「已归档/已退役的文件里，仍可能藏着一句当下的声明」——`project-assessment-2026-09-10.md` 是**日期化快照**，它写的是 2026-09-10 的观察，不是今天的结论；② 「报告是线索不是事实」（坑 64）——我当时把它的结论当成了可直接执行的事实，**没有回去核对当下**。**核查规则**：判断"某东西存不存在"要用**当下的权威来源**（官方商店页 / 官方 API / 现场），清单文件只在**其自身被声明为权威**时才算证据；用清单做否定结论前，先确认这份清单还在被维护。
+    - **连带纠正**：en 侧 README 的「**Not in the community plugin browser yet**」callout（含 BRAT 退路）**本身是错的**，需要按在架事实改正（本轮先把误改的 zh 侧还原，en 侧的事实修正单独做）。`docs/project-assessment-2026-09-10.md` 第 16 条与 `docs/release.md` §3 也要就地加日期化更正——它们仍在把这条早已不成立的观察当现状引用。
+    - **本轮的净产出（保留）**：① 门禁 `scripts/check-readme-pair.mjs`（第 39 条）+ 一致性记录 `README.i18n.yaml`：只改一侧就红并指出是哪一侧（"最近被改的一侧即源"的机器形态），另比结构签名 / 切换行 / 相对链接集合 / 围栏代码骨架；② 它自己的变异验证 `--selftest`（8 项，同进程纯函数——**初版是假的**：fork 守卫看退出码，而受限环境禁止管道 stdio ⇒ `spawnSync` EPERM 被读成"退出 1"，于是每个变异都"被抓住"，最后 8/8 才真正成立）；③ 两侧 README 的 `- Version:`/`- 版本：` 行纳入 `check-version-consistency.mjs`（此前只锚 `handoff.md`/`design.md`）；④ 两侧**真实同构**的结论（14 节 / 29 条目 / 3 围栏、层级逐节一致）——即"英文显著落后于中文"这一初始判断不成立，真正落后的是两者共同腐烂的版本行。
+    - **★ 与 dsh 上游 docs/i18n 的两处「故意不同」（照抄会误报，保留此结论）**：① 上游要求围栏代码块**逐字节一致（含注释）**——本仓库的注释是**有意本地化**的，`check-doc-consistency.mjs` 正是锚在中文那一份的注释措辞上（`# 语法 + 240 项零 token 回归`），所以这里只比"去掉注释后的首个 token（命令/路径）"；② 上游要求中文侧相对链接指向 `.zh.md`——本仓库**没有第二语言语料**（`docs/**`、`literature/**` 都只有中文一份），两侧必须指向**同一批文件**，所以比的是"两侧链接集合相等"。第一版按上游规则写，当场误报 15 处。**教训**：规则随语料结构走。
 
 ## 5. 用户决策记录（不要推翻）
 
@@ -238,7 +246,7 @@
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 240 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 语法检查（= node scripts/run-gates.mjs）
+npm test                        # 290 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile

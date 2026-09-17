@@ -56,9 +56,9 @@ Being explicit about the boundary matters more than listing features:
 
 ## Install
 
-**A (recommended)**: download `main.js` / `manifest.json` / `styles.css` from the [latest release](https://github.com/maple110011/dsh-obsidian-math/releases) into `<vault>/.obsidian/plugins/dsh-math-assistant/`, then enable the plugin. First run auto-detects dsh, initializes preset/profile/templates, and starts the service.
+**A (recommended)**: install it from the community plugin browser — "Settings → Community plugins → Browse" and search **DSH Math Notes Assistant** — or download `main.js` / `manifest.json` / `styles.css` from the [latest release](https://github.com/maple110011/dsh-obsidian-math/releases) into `<vault>/.obsidian/plugins/dsh-math-assistant/`. First run auto-detects dsh, initializes preset/profile/templates, and starts the service.
 
-> **Not in the community plugin browser yet.** The plugin id `dsh-math-assistant` is not present in Obsidian's `community-plugins.json`, so "Settings → Community plugins → Browse" will not find it; install it as above (or via [BRAT](https://github.com/TfTHacker/obsidian42-brat) pointed at this repo). See [`docs/release.md`](docs/release.md) for what the store listing still needs.
+> **On the store**: the listing is live at [community.obsidian.md/plugins/dsh-math-assistant](https://community.obsidian.md/plugins/dsh-math-assistant). Updates follow the store and the plugin manager once a release exists whose tag equals the `manifest.json` version; no manual file replacement is needed. [`docs/release.md`](docs/release.md) owns the release procedure.
 
 **B (CLI)**:
 ```bash
@@ -92,7 +92,7 @@ vault/
 ## Development & quality
 
 ```bash
-npm test          # syntax + 240 zero-token regression checks + 47 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
+npm test          # syntax + 290 zero-token regression checks + 47 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
 npm run qa        # engine probe: 12 ground-truth recall assertions + reachability layering / pooling A/B on the real vault (zero tokens)
 npm run qa:e2e    # real-session end-to-end acceptance (spends real tokens; reports API-level usage)
 node scripts/build-obsidian.mjs   # rebuild main.js (required after shared-file changes)
@@ -103,7 +103,7 @@ node scripts/deploy-local.mjs     # one-shot local deployment
 - **Memory knowledge base**: [docs/memory/](docs/memory/) — design (implementation spec), retrieval-v3 (retrieval proposal + §7 GraphMemix intake decisions and A/B measurements), testing (QA methodology), assessment, references (paper notes), [sidebar-performance](docs/memory/sidebar-performance.md) (why the Obsidian panel was janky and what was measured), changelog, handoff.
 - **Host-version adaptation**: [docs/dsh-0.1.5-adaptation.md](docs/dsh-0.1.5-adaptation.md) — evidence, fix list, and the reasons for what was deliberately left alone under dsh 0.1.5-rc.1 / session format V3 / `dsh-web-all@0.3.20`.
 - **Acceptance record**: both probes call the SHIPPED ranking pipeline (`buildRecallDoc` / `rankRecallDocuments` / `rankStrategyCards`) instead of re-deriving it — seed probe 8/8 on the synthetic vault, engine probe **12/12** on the real vault (navigation indices are demoted, so the "library has no answer → weak signal" control holds). The engine probe additionally prints GraphMemix-style **reachability layering** (Direct / Recoverable / No access) and a signed net-recovery Δ for the bag-vs-multi-view A/B, plus target ranks — the measurement that kept multi-view max-pooling out of the default path (`docs/memory/retrieval-v3.md` §7.2). The real-session E2E suite covers 5 cases (including the no-answer honesty and reformulate-retry behaviors); the cost-benchmark question (170K tokens pre-system) now measures ≈25K billed tokens (68% of the prompt served from cache).
-- Version: **0.7.5** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
+- Version: **0.7.7** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
 
 ## Privacy & safety
 

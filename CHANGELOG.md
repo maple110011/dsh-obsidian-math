@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **两处文档漂移**：① 记忆回归的断言数在文档里停在 **240**，实测 `test-memory.mjs` 已执行 **290** 项，`check-doc-consistency.mjs` 已在报 7 处 FAIL——本轮把 7 处一并更正，13 个可比锚点恢复全绿；② 两侧 README 的版本声明都停在 **0.7.5**（仓库已在 0.7.7），一并改到 0.7.7。
+- **英文 README 声称「尚未收录进社区插件市场」是错的**：插件**在架**（[community.obsidian.md/plugins/dsh-math-assistant](https://community.obsidian.md/plugins/dsh-math-assistant)）。此前用 `obsidianmd/obsidian-releases` 的 `community-plugins.json` 里没有本插件 id 来判"没上架"，而 Obsidian 的收录方式已改变、**该文件不再是收录依据**。`docs/release.md` §3、`docs/handoff.md` 坑 36 与 `docs/project-assessment-2026-09-10.md` 第 16 条同步更正。中文 README 的安装一节原本正确，未改动。
+- **中文 README 的三处细节落后于英文侧**：① 补齐 `docs/memory/design.md` 与 `docs/release.md` 两条相对链接（中文侧原先只写作纯文本路径），两侧链接集合恢复相等；② 补上"更新随商店与插件管理器走"；③ 皮肤中心开关的说明改为与英文侧一致——**进阶**，且聚合包已自带皮肤中心。
+
+### Added
+
+- **门禁 38 → 39：中英 README 配对守卫** `scripts/check-readme-pair.mjs`。两侧结构、语言切换行、相对链接集合与围栏代码骨架必须对应，并由一致性记录 `README.i18n.yaml` 记下两侧的 git blob hash —— **只改一侧就会红，并指出是哪一侧被编辑**。改完一侧请在同一次改动里补齐另一侧，再跑 `node scripts/check-readme-pair.mjs --write` 重新记录。变异验证 `--selftest`（8 项，同进程）。**同时把两个 README 的版本行纳入 `check-version-consistency.mjs`**。细节见 `docs/handoff.md` 坑 78。
+
 ## [0.7.7] - 2026-09-15
 
 > 承接 0.7.6 的三处实测缺陷：**工具返回值不合 schema**（`note_recall` 有一次直接不可用）、**链接跳转服务的端口/令牌一重载就变**、以及**点笔记链接会额外弹一个外部网页**。修完并各自补了零 token 门禁（35 → 38）。

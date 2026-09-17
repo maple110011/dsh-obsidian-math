@@ -1,0 +1,6 @@
+# README.md ↔ README.zh.md 一致性记录：两侧在上一次被确认「说同样的话」时的 git blob hash。
+# 两种语言同权：任何一侧被编辑后，请在同一次改动里补齐另一侧，然后运行
+#   node scripts/check-readme-pair.mjs --write
+# 重新记录。记录只说明"在这些字节上被确认过"，措辞与术语仍由评审负责。
+README.md: a9392c0381fbde74f51f2326833b3c37fc5e7823
+README.zh.md: 59498e1245b3814196db99963059c5be1fcaa78c

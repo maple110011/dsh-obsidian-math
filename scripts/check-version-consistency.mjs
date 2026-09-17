@@ -116,6 +116,27 @@ for (const rel of bannerDocs) {
   }
 }
 
+/**
+ * README 的版本声明。两个 README 都是**从代码里取真值**的活文档，不是历史记录：
+ * `## Development & quality` 末尾那行 `- Version: **x.y.z**` 是读者（人和 agent）
+ * 判断"这个包/插件现在是什么版本"的第一处，而它当时落在 0.7.5，仓库已经是 0.7.7
+ * —— 五处版本号一致的门禁管不到 README，于是它腐烂了两个版本（0.7.6 / 0.7.7）。
+ * 这里把它按与 `bannerDocs` 相同的精确标记比对，中英两侧都要写、且必须一致。
+ */
+for (const [rel, re] of [
+  ['README.md', /^-\s*Version:\s*\*\*(\d+\.\d+\.\d+)\*\*/m],
+  ['README.zh.md', /^-\s*版本：\s*\*\*(\d+\.\d+\.\d+)\*\*/m],
+]) {
+  const m = re.exec(read(rel));
+  if (m === null) {
+    fail(`${rel}: no "- Version/版本: **${packageVersion}**" line — the README is a living document and must state the version it describes`);
+  } else if (m[1] !== packageVersion) {
+    fail(`${rel}: declares version ${m[1]} but the repo is at ${packageVersion}`);
+  } else {
+    ok(`${rel}: version ${m[1]}`);
+  }
+}
+
 if (failed === 0) {
   console.log(`\nversion-consistency: all artifacts agree on ${packageVersion}${tag === '' ? '' : ` and tag ${tag}`}`);
 }

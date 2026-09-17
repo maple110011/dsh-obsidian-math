@@ -45,7 +45,7 @@
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignore，机器特定路径；备份 + 三路安装 + 验证） |
 | `scripts/qa/` | **QA 工具链**：`engine-probe.mjs`（零 token 召回断言 + 可达性分层/池化 A/B）、`e2e.mjs`（真实会话验收，含 API 级 token 计量）、`sidebar-perf-probe.mjs`（**按需**：CDP 驱动真实 dsh 测侧栏交互卡顿，不进 CI）、`cases.json`、`run.mjs`；方法论见 `docs/memory/testing.md` |
-| `scripts/test-memory.mjs` | 零 token 回归（240 断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 回归（290 断言，进 `npm test`） |
 | `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（47 断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、写入型端点；进 `npm test`） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 断言，对**真实 dsh**：内部端口 + token → 反代兑换 → 界面/资源/API/WebSocket 全通；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 断言：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写：注入位置与规则内容、非导航不重写、无 `</head>` 与 gzip 透传、补丁锚点变化时原样返回、开关关闭后字节相同） |
@@ -83,7 +83,7 @@
 ## 4. 常用命令
 
 ```bash
-npm test                        # 语法 + 240 项回归 + 47 项路由回归 + 8 项认证 + 32 项反代回归 + 安装器 e2e（含漂移检测）+ preset-sync 回归
+npm test                        # 语法 + 290 项回归 + 47 项路由回归 + 8 项认证 + 32 项反代回归 + 安装器 e2e（含漂移检测）+ preset-sync 回归
 npm run qa                      # 引擎探针（零 token，12 组召回断言 + 可达性分层/池化 A/B）
 npm run qa:e2e                  # 引擎探针 + 真实会话端到端（烧真实 tokens，含 API 级计量）
 node scripts/build-obsidian.mjs # 重建 main.js（改 dsh/ 或模板后必跑）
@@ -99,5 +99,5 @@ dsh --profile notes-assistant                 # 纯 CLI 启动（bundle 已提�
 1. 逻辑放对层：host（Obsidian 插件）/ agent（preset）/ 数据（vault 模板）；
 2. 纯函数进 `scripts/test-memory.mjs` 回归；行为断言进 `scripts/qa/`；
 3. 新模板三路安装（main.template.js bootstrap / install.mjs / deploy-local.mjs）+ 进 build-obsidian.mjs 嵌入清单；
-4. 文档同步：design.md（规格）、CHANGELOG.md（发布摘要）＋ docs/changelog.md（**仓库级**细账：为什么改、怎么改、踩了什么坑）、**README.md 与 README.zh.md 中英同步（中文文档必须始终保留）**、必要时 docs/handoff.md；断言数等数字改动后跑 `scripts/check-doc-consistency.mjs`（进 `npm test`）。
+4. 文档同步：design.md（规格）、CHANGELOG.md（发布摘要）＋ docs/changelog.md（**仓库级**细账：为什么改、怎么改、踩了什么坑）、**README.md 与 README.zh.md 中英同步（中文文档必须始终保留；由 `scripts/check-readme-pair.mjs` 判定：结构签名 + 切换行 + 链接集合 + 围栏代码骨架 + 一致性记录 `README.i18n.yaml`。**只改一侧就红，并指出是哪一侧被编辑**；改完一侧必须补齐另一侧再跑 `node scripts/check-readme-pair.mjs --write` 重新记录）**、必要时 docs/handoff.md；断言数等数字改动后跑 `scripts/check-doc-consistency.mjs`，两侧的版本行由 `scripts/check-version-consistency.mjs` 守（都在 `npm test` 里）。
 5. 构建 → npm test → npm run qa → deploy-local →（用户口令后）提交推送。

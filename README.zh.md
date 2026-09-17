@@ -28,7 +28,7 @@
 ### 检索（v3：统一入口、粗筛-精读）
 - **`note_recall` 统一检索**：一次 BM25 排序覆盖用户笔记 + 全部记忆层（记忆卡带 hook 字段加权、备忘录、主题、定理/事件索引）；Unicode 连字符归一 + 中文字符包含桥接词形差异；命中带 **coverage**（查询词覆盖率，<0.35 视为词面巧合弱信号）。
 - **精读挑选协议**：蒸馏查询（挑战描述 + 候选技巧）→ 读前 2-3 篇全文逐条判适用 → 空结果改写重试一次 → 仍无则明说「库里没有」，不编造；同一轮 ≤2 次检索、≤3 篇全文。
-- **导航式注入**：系统提示只注入导航层（画像/记号/主题/记录/模板/事件索引），相关内容按需拉取——每轮注入有硬上限（≤18000 字符；各层预算见 docs/memory/design.md §3）。
+- **导航式注入**：系统提示只注入导航层（画像/记号/主题/记录/模板/事件索引），相关内容按需拉取——每轮注入有硬上限（≤18000 字符；各层预算见 [docs/memory/design.md](docs/memory/design.md) §3）。
 - `note_search`（用户笔记 tag 过滤）、`note_links`（反链/顺链扩读）、`note_create`（拒绝覆盖）配合使用。
 
 ### 记忆（五层 + 维护闭环）
@@ -65,9 +65,9 @@ dsh-math-memory install --vault "<你的 vault 路径>"
 dsh --profile notes-assistant --port 3180                  # 启动（原生：bundle 已提供 panel/workspace，无需 --patch）
 ```
 
-插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**皮肤中心开关**（可选 `@linxin666` 皮肤设置）、**侧栏性能模式**（默认开启：代理把皮肤在侧栏里的高开销特效去掉，并把皮肤客户端脚本 `hooks.mjs` 的两处热循环减速——实测那才是侧栏卡顿的主因）、**侧栏加载皮肤动态装饰**（默认开启；关掉则侧栏不加载皮肤脚本，实测最流畅，代价是 hero 场景/状态角色消失）、**捕获策略四档下拉框**。详细原因与实测数据见 [docs/memory/sidebar-performance.md](docs/memory/sidebar-performance.md)。
+插件设置项：端口、dsh 安装目录、DSH_HOME、自动启动、自动初始化、自动归档（>90 天事件）、ribbon 按钮、关闭 Obsidian 时保留服务、**皮肤中心开关**（进阶；聚合包已自带皮肤中心）、**侧栏性能模式**（默认开启：代理把皮肤在侧栏里的高开销特效去掉，并把皮肤客户端脚本 `hooks.mjs` 的两处热循环减速——实测那才是侧栏卡顿的主因）、**侧栏加载皮肤动态装饰**（默认开启；关掉则侧栏不加载皮肤脚本，实测最流畅，代价是 hero 场景/状态角色消失）、**捕获策略四档下拉框**。详细原因与实测数据见 [docs/memory/sidebar-performance.md](docs/memory/sidebar-performance.md)。
 
-> **完整指引**：安装原理、冲突解决（owner marker / `--force` 接管）与卸载（三级删除、`--purge-data` 确认短语）见 [`docs/installation.md`](docs/installation.md)。
+> **完整指引**：安装原理、冲突解决（owner marker / `--force` 接管）与卸载（三级删除、`--purge-data` 确认短语）见 [`docs/installation.md`](docs/installation.md)；发版与商店更新通道见 [`docs/release.md`](docs/release.md)。**更新随商店与插件管理器走**——只要存在 tag 等于 `manifest.json` 版本的 Release，就不必手动换文件。
 
 ## vault 布局
 
@@ -90,7 +90,7 @@ vault/
 ## 开发与质量
 
 ```bash
-npm test          # 语法 + 240 项零 token 回归 + 路由回归（47 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
+npm test          # 语法 + 290 项零 token 回归 + 路由回归（47 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
 npm run qa        # 引擎探针：真实 vault 12 组召回断言 + 可达性分层/A-B 测量（零 token）
 npm run qa:e2e    # 真实会话端到端验收（烧真实 tokens，报告 API 级 usage）
 node scripts/build-obsidian.mjs   # 重建 main.js（改共享文件后必跑）
@@ -101,7 +101,7 @@ node scripts/deploy-local.mjs     # 本机一键部署
 - **记忆系统知识库**：[docs/memory/](docs/memory/)——design（实现规格）、retrieval-v3（检索提案 + §7 GraphMemix 吸纳决策与 A/B 实测）、testing（QA 方法论）、assessment、references（论文笔记）、[sidebar-performance](docs/memory/sidebar-performance.md)（侧栏卡顿的原因清单与处置）、changelog、handoff。
 - **宿主版本适配**：[docs/dsh-0.1.5-adaptation.md](docs/dsh-0.1.5-adaptation.md)——dsh 0.1.5-rc.1 / 会话格式 V3 / `dsh-web-all@0.3.20` 的影响取证、修复清单与「刻意不改」的理由。
 - **验收记录**：两个探针都改为调用**产品自己的排序管线**（`buildRecallDoc` / `rankRecallDocuments` / `rankStrategyCards`），不再各自复刻公式——仿真 vault 探针 8/8，真实 vault 探针 **12/12**（导航索引已降权，因此「库里没有答案 → 弱信号」这条控制项成立）。引擎探针另打印 GraphMemix 式**可达性分层**（Direct / Recoverable / No access）与单袋 vs 多视图的**有符号净恢复 Δ**、目标排名——正是这次测量把多视图 max-pool 挡在默认路径之外（`docs/memory/retrieval-v3.md` §7.2）。真实会话 E2E 共 5 个用例（含「无答案不编造」「改写重试」行为验证）；成本基准题（旧系统同题 17 万 tokens）新系统实测约 2.5 万计费 tokens（缓存命中 68%）。
-- 版本：**0.7.5**（试做型；记忆架构未经长期使用测试，会继续演进）。
+- 版本：**0.7.7**（试做型；记忆架构未经长期使用测试，会继续演进）。
 
 ## 隐私与安全
 

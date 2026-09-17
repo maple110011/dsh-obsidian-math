@@ -41,6 +41,11 @@ const GATES = [
   { name: 'check: plugin id', args: ['scripts/check-plugin-id.mjs'] },
   { name: 'check: version consistency', args: ['scripts/check-version-consistency.mjs'] },
   { name: 'check: doc consistency', args: ['scripts/check-doc-consistency.mjs'] },
+  // 双语文档配对：README.md ↔ README.zh.md 的结构、切换行、链接集合与一致性记录。
+  // 此前没有任何门禁覆盖这一对，于是 zh 侧把"社区插件市场能搜到"这条**不存在**的
+  // 安装方式留在了原地（评估报告第 16 条 HIGH），两边的版本行也一起停在 0.7.5。
+  // 变异验证：`node scripts/check-readme-pair.mjs --selftest`（同进程、不产生子进程）。
+  { name: 'check: readme pair (en/zh)', args: ['scripts/check-readme-pair.mjs'] },
   { name: 'check: embedded loader', args: ['scripts/check-embedded-loader.mjs'] },
   { name: 'check: embedded writers', args: ['scripts/check-embedded-writers.mjs'] },
   { name: 'check: engine sync (preset vs host)', args: ['scripts/check-engine-sync.mjs'] },
