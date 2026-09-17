@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-17T11:14:16.085Z",
+  "generatedAt": "2026-09-17T18:30:35.142Z",
   "source": "D:\\临时\\agent记忆",
   "out": "literature",
   "bibPath": "D:\\临时\\agent记忆\\导出的条目.bib",
@@ -178,6 +178,13 @@
       "mineruDir": null,
       "status": "to-process",
       "card": "created"
+    },
+    {
+      "citekey": "tangWikiSkillCompilingAgent2026",
+      "pdf": "tang et al. - 2026 - wikiskill compiling agent experience into persistent knowledge for skill evolution.pdf",
+      "mineruDir": "Tang et al. - 2026 - WikiSkill Compiling Agent Experience into Persistent Knowledge for Skill Evolution.pdf-438b8827-4bdc-44ff-acc0-f86c0f4cae6d",
+      "status": "unread",
+      "card": "kept"
     }
   ],
   "warnings": {

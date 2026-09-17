@@ -36,6 +36,7 @@
 | 已蒸馏 | [Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory](cards/danusFactGraphMemory2026.md) | Liu, Jihao 等 | 2026 | Computer Science - Artificial Intelligence |
 | 已蒸馏 | [OptSkills: Learning Generalizable Optimization Skills from Problem Archetypes via Cluster-Based Distillation](cards/yangOptSkillsLearningGeneralizable2026.md) | Yang, Haochen 等 | 2026 | Computer Science - Artificial Intelligence |
 | 已蒸馏 | [Co-Mathematician: A repository-backed mathematical research workspace for coding agents](cards/verymathCoMathematician2026.md) | VeryMath | 2026 | Computer Science - Artificial Intelligence |
+| 已蒸馏 | [WikiSkill: Compiling Agent Experience into Persistent Knowledge for Skill Evolution](cards/tangWikiSkillCompilingAgent2026.md) | Tang, Liyan 等 | 2026 | Computer Science - Artificial Intelligence |
 <!-- END AUTO-INDEX -->
 
 ## 使用
