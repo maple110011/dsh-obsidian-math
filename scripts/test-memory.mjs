@@ -634,6 +634,44 @@ check('feedback: inapplicable marks context but keeps success_rate/verified',
     !/not_applicable_when:/.test(readFileSync(wrongOnlyAbs, 'utf8')),
     JSON.stringify(readFileSync(wrongOnlyAbs, 'utf8').split('\n').filter((l) => l.includes('not_applicable_when'))));
 
+  // ── the QUOTED boundary form the template actually recommends ─────────────
+  // Found 2026-09-17 by probing `not_applicable_when: "…"` (templates write it with
+  // quotes): the old code split the raw line, so the opening quote stayed attached to
+  // the first segment and the value became `"等价刻画…时"、谱半径`. The gate matches by
+  // substring, so a quoted segment almost never fires — the boundary would silently
+  // stop working while looking healthy.
+  {
+    const quotedRoot = mkdtempSync(join(tmpdir(), 'dsh-quoted-'));
+    const quotedRel = '.deepseek/memory/records/quoted.md';
+    const quotedAbs = join(quotedRoot, ...quotedRel.split('/'));
+    mkdirSync(join(quotedAbs, '..'), { recursive: true });
+    mkdirSync(join(quotedRoot, '.deepseek', 'cache'), { recursive: true });
+    writeFileSync(quotedAbs, [
+      '---', 'title: 带引号边界的卡', 'type: fact', 'status: active', "source: '[[ep-1]]'",
+      'hook:', '  operator: analysis', '  verified: single-source',
+      '  not_applicable_when: "等价刻画不存在或更繁时"',
+      '---', '', '# 带引号边界的卡', '', '正文谈 谱半径。', ''
+    ].join('\n'), 'utf8');
+    writeFileSync(join(quotedRoot, '.deepseek', 'cache', 'retrieval-stats.json'), JSON.stringify({
+      [quotedRel]: { uses: 1, last_used: '2026-09-10', last_query: '谱半径 与 无关词' }
+    }), 'utf8');
+    applyFeedback(quotedAbs, 'inapplicable', quotedRoot);
+    const quotedText = readFileSync(quotedAbs, 'utf8');
+    const quotedValue = /^\s*not_applicable_when:\s*(.*)$/m.exec(quotedText)?.[1] ?? '';
+    check('shrink: a QUOTED boundary is unwrapped, not turned into a quoted segment',
+      !quotedValue.includes('"') && quotedValue.includes('等价刻画不存在或更繁时') && quotedValue.includes('谱半径'),
+      JSON.stringify(quotedValue));
+    const quotedDoc = buildRecallDoc(quotedRel, quotedText);
+    check('shrink: both the pre-existing boundary and the added one actually gate',
+      rankRecallDocuments([quotedDoc], '谱半径 的问题', {}).excluded.length === 1
+      && rankRecallDocuments([quotedDoc], '等价刻画不存在 的情况', {}).excluded.length === 1,
+      JSON.stringify({
+        added: rankRecallDocuments([quotedDoc], '谱半径 的问题', {}).excluded.length,
+        original: rankRecallDocuments([quotedDoc], '等价刻画不存在 的情况', {}).excluded.length
+      }));
+    rmSync(quotedRoot, { recursive: true, force: true });
+  }
+
   // The recording side, asserted directly. Without this the write could be deleted
   // and every other assertion would still pass (it did — that is why the function
   // is exported).

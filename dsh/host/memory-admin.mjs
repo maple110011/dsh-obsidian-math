@@ -325,7 +325,15 @@ export function applyFeedback(filePath, action, root = '') {
     // whose scope was never the complaint.
     const phrases = boundaryPhrasesFromQuery(root, filePath);
     if (phrases.length > 0) {
-      const declared = /^\s*not_applicable_when:\s*(.*)$/m.exec(frontmatter)?.[1] ?? '';
+      // Unwrap the declared value before splitting. Templates write
+      // `not_applicable_when: "等价刻画不存在或更繁时"` — WITH quotes — so splitting the
+      // raw line makes `"…时"` (quotes included) one segment. The gate matches by
+      // substring, so a quoted segment almost never matches; appending to it produces a
+      // boundary that silently stops working. Found 2026-09-17 by probing exactly the
+      // quoted prose form the template shows.
+      const declared = (/^\s*not_applicable_when:\s*(.*)$/m.exec(frontmatter)?.[1] ?? '')
+        .trim()
+        .replace(/^["']|["']$/g, '');
       const segments = declared.split(/[、，,；;]/).map((part) => part.trim()).filter(Boolean);
       const added = phrases.filter((phrase) => !segments.includes(phrase));
       if (added.length > 0) {
