@@ -608,7 +608,9 @@ const confirmRes = applyFeedback(wrongCard, 'confirm');
 const confirmAfter = readFileSync(wrongCard, 'utf8');
 check('feedback: confirm clears needs_review', confirmRes.ok === true && /needs_review:\s*false/.test(confirmAfter));
 
-// P5: strategy cards read top-level uses/success_rate and get promoted.
+// P5: strategy cards read top-level uses/success_rate and get promoted. `source` is
+// present because promotion now also requires traceable evidence (grounding gate):
+// a candidate that met the usage bar but has no provenance stays a candidate.
 mkdirSync(join(root, '.deepseek', 'strategy'), { recursive: true });
 writeFileSync(join(root, '.deepseek', 'strategy', 'strat-x.md'), card([
   '---',
@@ -617,6 +619,7 @@ writeFileSync(join(root, '.deepseek', 'strategy', 'strat-x.md'), card([
   'difficulty: definition-level-proof',
   'domain: [analysis]',
   'provenance: agent',
+  'source: \'[[2026-08-01-episode-proof]]\'',
   'verified: single-source',
   'uses: 5',
   'success_rate: 0.8',
@@ -1968,6 +1971,50 @@ check('archive: a real memory card is still archived',
     occReport.report.includes('跨场合验证过的技巧') && occReport.report.includes('widely'),
     occReport.report.split('\n').filter((l) => l.includes('跨场合')).join(' / '));
   rmSync(occRoot, { recursive: true, force: true });
+}
+
+// ── 33e. the grounding gate on promotion (improvement-details item 7, part 1) ──
+//
+// MSCE promotes a policy to a skill only when it still retains evidence. The
+// deterministic half of that available here is provenance: a candidate that met the
+// usage/success bar but has no traceable `source` must stay a candidate, and must be
+// NAMED so "why is this still a candidate?" has an answer. The gate may only block
+// when provenance is absent — never demand more — or honest cards become un-promotable.
+{
+  const gateRoot = mkdtempSync(join(tmpdir(), 'dsh-gate-'));
+  const strategyCard = (withSource) => [
+    '---', 'title: 缺证据候选', 'type: strategy', 'status: candidate',
+    'difficulty: definition-level-proof', 'provenance: agent',
+    ...(withSource ? ["source: '[[2026-08-01-episode-proof]]'"] : []),
+    'verified: single-source', 'uses: 5', 'success_rate: 0.8', 'updated: 2026-08-10',
+    '---', '', '# 缺证据候选', ''
+  ].join('\n');
+  mkdirSync(join(gateRoot, '.deepseek', 'strategy'), { recursive: true });
+  const gatePath = join(gateRoot, '.deepseek', 'strategy', 'gate-candidate.md');
+  writeFileSync(gatePath, strategyCard(false), 'utf8');
+
+  const blocked = buildAuditReport(gateRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const blockedText = readFileSync(gatePath, 'utf8');
+  check('gate: a candidate that clears uses+rate but has no source is NOT promoted',
+    /^status:\s*candidate/m.test(blockedText),
+    blockedText.split('\n').slice(0, 9).join('|'));
+  check('gate: the blocked candidate is named, with the reason',
+    blocked.structuralDetail.promoteBlocked.length === 1
+    && blocked.structuralDetail.promoteBlocked[0].title === '缺证据候选'
+    && String(blocked.structuralDetail.promoteBlocked[0].reason).includes('source'),
+    JSON.stringify(blocked.structuralDetail.promoteBlocked));
+  check('gate: the checklist explains that adding the source will self-promote it',
+    blocked.report.includes('暂不晋升') && blocked.report.includes('缺证据候选'),
+    blocked.report.split('\n').filter((l) => l.includes('晋升')).join(' / '));
+
+  // Now give it provenance: the very same card must promote on the next audit.
+  writeFileSync(gatePath, strategyCard(true), 'utf8');
+  const promoted = buildAuditReport(gateRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const promotedText = readFileSync(gatePath, 'utf8');
+  check('gate: adding the source lets the same card promote (the gate blocks, it does not punish)',
+    /^status:\s*active/m.test(promotedText) && promoted.structuralDetail.promoteBlocked.length === 0,
+    JSON.stringify({ status: promotedText.split('\n').slice(0, 9).join('|'), blocked: promoted.structuralDetail.promoteBlocked }));
+  rmSync(gateRoot, { recursive: true, force: true });
 }
 
 // §34 multi-view pooling (GraphMemix intake, docs/memory/retrieval-v3.md §7.2).

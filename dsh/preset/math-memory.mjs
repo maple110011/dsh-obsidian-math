@@ -1760,9 +1760,31 @@ export function buildAuditReport(root, helpers) {
 
   // Deterministic promote (self-correction.md P5b): a candidate strategy card
   // that has been used enough and succeeds often enough becomes active.
+  //
+  // Third gate — evidence grounding (MSCE, arXiv:2607.16621 §4.3): a skill is only
+  // crystallized when it retains its evidence AND recent evidence still fits the
+  // current trigger/procedure. The deterministic part of that, available here, is
+  // provenance: a candidate with no traceable `source` has no evidence to promote
+  // on, so it stays a candidate. The gate can ONLY block when provenance is absent —
+  // it never demands more than the template already asks for, because a gate that
+  // requires fields honest cards may lack would mark them never-promotable.
+  //
+  // Deliberately NOT gated here: cross-occasion support (`n_min` distinct episodes).
+  // The audit does compute it, but only for RECORD techniques — records carry the
+  // hook and the episode link, while a strategy card's moves point at retrieve
+  // targets, not at episodes. Turning that count into a promotion gate would change
+  // promotion for every candidate on the strength of data that does not describe the
+  // card. The audit reports the blocked candidates instead, and the reader decides.
+  const PROMOTE_BLOCKERS = [];
   for (const card of cards) {
     if (card.status !== "candidate" || card.type !== "strategy") continue;
     if (card.uses < PROMOTE_USES || card.successRate === null || card.successRate < PROMOTE_RATE) continue;
+    if (String(card.source ?? "").trim() === "") {
+      // `cardRef` is declared further down (TDZ), and it only renames these two
+      // fields, so build the entry directly.
+      PROMOTE_BLOCKERS.push({ rel: card.rel, title: card.title, gain: card.gain ?? 0, reason: "缺 source（无可回溯证据）" });
+      continue;
+    }
     try {
       const text = readFileSync(card.filePath, "utf8");
       const block = frontmatterBlock(text);
@@ -1895,6 +1917,25 @@ export function buildAuditReport(root, helpers) {
   }
   const status = warnings.length === 0 ? "ok" : "degraded";
 
+  // The names behind the structural counts. Lifted out of the return object so the
+  // checklist can quote the same arrays it publishes (the panels/CLI read them
+  // without re-running the scan).
+  const structuralDetail = {
+    unjustifiedUpgrade: structural.unjustifiedUpgrade.slice(0, 20),
+    usesMismatch: structural.usesMismatch.slice(0, 20),
+    hubs: hubCards.slice(0, 20).map((card) => ({
+      ...cardRef(card),
+      backlinks: backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0
+    })),
+    // The authoritative gain verdict per card, including the zeros. Kept flat and
+    // separate from the sections because a card with a verdict may appear in no
+    // section at all (a healthy, unused card), and the panels need the full list.
+    gains: cards.filter(live).map((card) => ({ rel: card.rel, gain: card.gain ?? 0 })),
+    // Candidates that met the usage/success bar but were held back by the grounding
+    // gate. Named so "why is this still a candidate?" has an answer.
+    promoteBlocked: PROMOTE_BLOCKERS.filter((entry) => !archivedRels.has(entry.rel))
+  };
+
   /** Model-facing checklist: terse, imperative, paths and thresholds included. */
   const checklistLines = [];
   if (cards.length > 0) {
@@ -1954,6 +1995,10 @@ export function buildAuditReport(root, helpers) {
       // dump, and the interesting fact is which ones are cross-occasion supported.
       const rows = sections.independentTechniques.slice(0, 5).map((entry) => `${entry.techniques}(${entry.occasions} 个场合)`);
       checklistLines.push(`- 跨场合验证过的技巧（≥${OCCASION_MIN} 个独立场合；这些可以当方法用，一次性的只能当线索）: ${rows.join("、")}`);
+    }
+    if (structuralDetail.promoteBlocked.length > 0) {
+      const rows = structuralDetail.promoteBlocked.map((entry) => `[[${entry.rel.replace(/\.md$/, "")}|${entry.title}]]（${entry.reason}）`);
+      checklistLines.push(`- 够格但缺证据、暂不晋升的候选策略卡（补上 source 后会自行晋升）: ${rows.join("；")}`);
     }
   } else {
     checklistLines.push("（尚无记忆卡，无可体检内容）");
@@ -2062,18 +2107,7 @@ export function buildAuditReport(root, helpers) {
     },
     // The names behind the structural counts (the checklist quotes a few; the
     // panels/CLI can list them all without re-running the scan).
-    structuralDetail: {
-      unjustifiedUpgrade: structural.unjustifiedUpgrade.slice(0, 20),
-      usesMismatch: structural.usesMismatch.slice(0, 20),
-      hubs: hubCards.slice(0, 20).map((card) => ({
-        ...cardRef(card),
-        backlinks: backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0
-      })),
-      // The authoritative gain verdict per card, including the zeros. Kept flat and
-      // separate from the sections because a card with a verdict may appear in no
-      // section at all (a healthy, unused card), and the panels need the full list.
-      gains: cards.filter(live).map((card) => ({ rel: card.rel, gain: card.gain ?? 0 }))
-    },
+    structuralDetail,
     // Legacy flat fields (audit schema v1 readers: dsh/host/memory-admin.mjs and
     // older panels). Same arrays as `sections`, minus the archived ones.
     antipatterns: sections.antipatterns.map((card) => card.rel),
