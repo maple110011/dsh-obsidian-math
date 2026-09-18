@@ -89,7 +89,9 @@ git push origin 0.7.6  # ← 这一步才会真正产出 Release
 
 - **退出码 0 ≠ 已发布**：分阶段发布（staged publishing）上传后等人用 2FA 批准，此时公开 registry 上什么都没有，而 pipeline 会全绿（0.7.5 就出现过一次「全绿但 npm 上没有」）。
 - **退出码非 0 ≠ 未发布**：重复推送同一个 tag 时 npm 报 `You cannot publish over the previously published versions`，而该版本其实早就在了（仓库为修发布链路反复移动过 0.7.5 tag）。现在这种情况算成功。
-- **⚠️ 第三种：registry 的可见性有延迟（0.7.6 实测）**。`Publish` 步 success、日志里已有 `+ dsh-math-memory@0.7.6`，但下一步 `Confirm the registry state` 在 60 秒内查到的仍是 missing ⇒ 开 issue + 判红。实测 **约 60–80 秒**后 registry 才出现该版本。**处置：等一两分钟再 `Re-run failed jobs`**（`POST /actions/runs/<id>/rerun-failed-jobs`），第二次即可确认并自动关 issue。**不要据此改代码或版本号**。
+- **⚠️ 第三种：registry 的可见性有延迟（0.7.6 实测 60–80 秒；0.7.7 约 4–5 分钟；0.7.8 约 92 秒）**。`Publish` 步 success、日志里已有 `+ dsh-math-memory@<版本>`，但下一步 `Confirm the registry state` 查到的仍是 missing ⇒ 开 issue + 判红。
+  - **处置**：**先用只读方式独立核实 registry 的真实状态，不要凭 workflow 的结论行动**（0.7.8 实测有效的查法：直接取 `https://registry.npmjs.org/dsh-math-memory/latest`，回应里 `"version"`/`"_id"` 就是当前真实状态；本机 `npm view` 在受限环境可能因 `EPERM` 写不了缓存而失败，**失败≠未发布**）。若 registry 已有该版本 ⇒ 该红是**假失败**：可 `Re-run failed jobs`（等 registry 可见后第二次即绿并自动关 issue），也可以不 re-run、只手工关 issue。**绝对不要据此改代码或版本号。**
+  - **附带后果**：失败路径会把"关历史 publish-failure issue"那一步 `skip`，所以每次这类假失败都**留下一件手工事（关 issue）**；issue 正文里最好写明"实际已发布 + 核实依据"，与 0.7.7 的做法一致。
 
 历史教训（已修，勿回退）：
 
