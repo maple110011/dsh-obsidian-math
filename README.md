@@ -103,7 +103,7 @@ node scripts/deploy-local.mjs     # one-shot local deployment
 - **Memory knowledge base**: [docs/memory/](docs/memory/) — design (implementation spec), retrieval-v3 (retrieval proposal + §7 GraphMemix intake decisions and A/B measurements), testing (QA methodology), assessment, references (paper notes), [sidebar-performance](docs/memory/sidebar-performance.md) (why the Obsidian panel was janky and what was measured), changelog, handoff.
 - **Host-version adaptation**: [docs/dsh-0.1.5-adaptation.md](docs/dsh-0.1.5-adaptation.md) — evidence, fix list, and the reasons for what was deliberately left alone under dsh 0.1.5-rc.1 / session format V3 / `dsh-web-all@0.3.20`.
 - **Acceptance record**: both probes call the SHIPPED ranking pipeline (`buildRecallDoc` / `rankRecallDocuments` / `rankStrategyCards`) instead of re-deriving it — seed probe 8/8 on the synthetic vault, engine probe **12/12** on the real vault (navigation indices are demoted, so the "library has no answer → weak signal" control holds). The engine probe additionally prints GraphMemix-style **reachability layering** (Direct / Recoverable / No access) and a signed net-recovery Δ for the bag-vs-multi-view A/B, plus target ranks — the measurement that kept multi-view max-pooling out of the default path (`docs/memory/retrieval-v3.md` §7.2). The real-session E2E suite covers 5 cases (including the no-answer honesty and reformulate-retry behaviors).
-- Version: **0.7.7** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
+- Version: **0.7.8** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
 
 ## Privacy & safety
 

@@ -101,7 +101,7 @@ node scripts/deploy-local.mjs     # 本机一键部署
 - **记忆系统知识库**：[docs/memory/](docs/memory/)——design（实现规格）、retrieval-v3（检索提案 + §7 GraphMemix 吸纳决策与 A/B 实测）、testing（QA 方法论）、assessment、references（论文笔记）、[sidebar-performance](docs/memory/sidebar-performance.md)（侧栏卡顿的原因清单与处置）、changelog、handoff。
 - **宿主版本适配**：[docs/dsh-0.1.5-adaptation.md](docs/dsh-0.1.5-adaptation.md)——dsh 0.1.5-rc.1 / 会话格式 V3 / `dsh-web-all@0.3.20` 的影响取证、修复清单与「刻意不改」的理由。
 - **验收记录**：两个探针都改为调用**产品自己的排序管线**（`buildRecallDoc` / `rankRecallDocuments` / `rankStrategyCards`），不再各自复刻公式——仿真 vault 探针 8/8，真实 vault 探针 **12/12**（导航索引已降权，因此「库里没有答案 → 弱信号」这条控制项成立）。引擎探针另打印 GraphMemix 式**可达性分层**（Direct / Recoverable / No access）与单袋 vs 多视图的**有符号净恢复 Δ**、目标排名——正是这次测量把多视图 max-pool 挡在默认路径之外（`docs/memory/retrieval-v3.md` §7.2）。真实会话 E2E 共 5 个用例（含「无答案不编造」「改写重试」行为验证）。
-- 版本：**0.7.7**（试做型；记忆架构未经长期使用测试，会继续演进）。
+- 版本：**0.7.8**（试做型；记忆架构未经长期使用测试，会继续演进）。
 
 ## 隐私与安全
 

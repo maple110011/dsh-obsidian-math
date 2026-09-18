@@ -1,9 +1,10 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、决策、已修坑、未做事项与工作约定。
-> 当前版本：0.7.7
+> 当前版本：0.7.8
 > （本文件描述**当前**状态；它与 `package.json` 的一致性由 `check-version-consistency.mjs` 守卫）
-> 最后更新：2026-09-15（0.7.7）——用户实测的三处缺陷：**工具返回值不合 schema**（dsh 对成功返回值也严格校验 + `additionalProperties: false`，坑 75）、**`note_recall` 遇到边界卡直接抛异常**（`entry.doc.X` 形状错误，零覆盖分支，坑 76）、**链接跳转的端口/令牌不稳定 + 点链接弹外部网页**（`target="_blank"` 与跨源导航，坑 77）。门禁 35 → **38**。此前的 2026-09-14（0.7.6）：「新建会话」静默失效的根因与修复（agent preset 的 persona 字段 `text`→`prefix`，见坑 70）+ 卡顿随文档规模增长的实测（坑 71、`sidebar-performance.md` §0.3）。更早的 2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**0.7.2 时**（记忆纠错与确定性自维护落地，见 `self-correction.md`；上一版 0.7.1 = 2026-08-26）。0.7.1 新增 **dsh-native 分发重构**（bundle + `dsh plugin add` 原生安装、`--direct` 离线拷贝、owner marker 冲突解决、对称 `uninstall`；功能无变化，仅优化安装方式），详见 `docs/dsh-native-refactor.md` 与 `docs/installation.md`。
+> 最后更新：2026-09-18（0.7.8）——**治理闭环 + 记录纪律**：净增益 `gain`、有方向的依据链 `depends_on` 与失效级联、接地门、状态即权限、边界随否决收窄、`decision_guidance`；**体检台账**（`cache/audit-ledger.jsonl`，跨次判定史，"此前已在账"不再当作新问题）、**索引行说明下限**、**卡片尺寸上限**、**预算截断自报**、**破坏性写入原子化 + 失败进报告**、注入预算档位（含设置页入口）。**0.7.7 与它之间没有 Release**：0.7.8 装的是 0.7.7 之后 43 个提交的全部用户可见改动。门禁 38 → **41**，零 token 回归 240 → **335** 项。
+> 更早：2026-09-15（0.7.7）——用户实测的三处缺陷：**工具返回值不合 schema**（dsh 对成功返回值也严格校验 + `additionalProperties: false`，坑 75）、**`note_recall` 遇到边界卡直接抛异常**（`entry.doc.X` 形状错误，零覆盖分支，坑 76）、**链接跳转的端口/令牌不稳定 + 点链接弹外部网页**（`target="_blank"` 与跨源导航，坑 77）。门禁 35 → **38**。此前的 2026-09-14（0.7.6）：「新建会话」静默失效的根因与修复（agent preset 的 persona 字段 `text`→`prefix`，见坑 70）+ 卡顿随文档规模增长的实测（坑 71、`sidebar-performance.md` §0.3）。更早的 2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**0.7.2 时**（记忆纠错与确定性自维护落地，见 `self-correction.md`；上一版 0.7.1 = 2026-08-26）。0.7.1 新增 **dsh-native 分发重构**（bundle + `dsh plugin add` 原生安装、`--direct` 离线拷贝、owner marker 冲突解决、对称 `uninstall`；功能无变化，仅优化安装方式），详见 `docs/dsh-native-refactor.md` 与 `docs/installation.md`。
 
 ## 1. 项目是什么
 
