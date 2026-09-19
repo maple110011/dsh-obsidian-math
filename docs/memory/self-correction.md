@@ -79,7 +79,7 @@
 ### P3 · 遗忘真正发生（低效用卡确定性自动归档）
 
 - **现状**：`archiveCandidates` 已确定性算出（0.5 verified + 0.3 freq + 0.2 recency，排除 user-confirmed），但只「向用户建议处置，不自行删除」；`archiveMemoryFile()`（软移动）已实现。
-- **方案**：新增可配置开关 `autoArchive`（`.deepseek/config.md` 或 `agent.cordis.yml`），**默认 off**。开启后，体检对**同时满足**以下条件的卡确定性移入 `.deepseek/archive/records/`（移动而非删除，可逆）：
+- **方案**：新增可配置开关 `autoArchive`（`.deepseek/config.md` 或 `agent.cordis.yml`）——**提案时默认 off，2026-09-18 起默认 on**（用户明确要求把"逐张点归档"这类平凡工作做掉；判据很窄，且是移动不是删除，写 `false` 即回到只建议）。开启后，体检对**同时满足**以下条件的卡确定性移入 `.deepseek/archive/<层>/`（移动而非删除，可逆）：
   - `status === 'active'` 且 `verified !== 'user-confirmed'`；
   - `uses === 0` 且 `days > 90`（零使用 + 长期陈旧）；
   - 不在 `duplicates` 的「被保留方」（避免归档刚合并的卡）。

@@ -103,9 +103,12 @@
     auditEnabled: true
     auditIntervalMs: 86400000
     auditMaintainHookStats: true
-    # 自动归档（self-correction.md P3）：false = 只建议、不自动移动低效用卡（默认，与「删除由用户决定」一致）；
-    # true = 体检把「零使用 + 长期陈旧(>90天) + 非用户确认」的卡移入 .deepseek/archive/records/（移动而非删除）。
-    autoArchive: false
+    # 自动归档（self-correction.md P3）：true = 体检把「零使用 + 长期陈旧(>90天) + 非用户确认」
+    # 的卡移入 .deepseek/archive/<层>/（移动而非删除，可逆、有 .bak，随时可找回）。
+    # 2026-09-18 起默认 **true**：用户明确要求「把耗费时间的平凡工作做掉」，而逐张点「归档」
+    # 正是那种平凡工作；判据本身极窄（零使用 + 90 天 + 非用户确认），且这是移动不是删除。
+    # 想回到「只建议不归档」就在工作区 .deepseek/config.md 写 autoArchive: false。
+    autoArchive: true
     # 自动保存对话（obelisk-comparison.md §5）：false = 不自动把整场对话写进证据层（默认关，
     # 避免不经用户同意就记录一大堆）；true = 每场对话结束后，确定性把整场对话（不含思考）
     # 写进 .deepseek/memory/episodes/ 证据层。
