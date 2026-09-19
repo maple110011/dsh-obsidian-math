@@ -65,6 +65,7 @@ import {
   decodeZstdSessionLog,
   inconsistentWeakCards,
   indexDescriptionIssue,
+  scanNoteClaims,
   clip,
   writeFileAtomic,
   AUDIT_SCHEMA_VERSION
@@ -2542,11 +2543,15 @@ check('archive: a real memory card is still archived',
   // "degraded, not silent" rather than a half-written card.
   writeFileSync(target, 'SECOND\n', 'utf8');
   mkdirSync(`${target}.tmp`, { recursive: true });
-  const failed = writeFileAtomic(target, 'THIRD\n');
+  // NOTE the local name: this once shadowed the suite's `failed` counter at module
+  // scope, so the summary line threw `ReferenceError: failed is not defined` AFTER
+  // every assertion had passed — i.e. a green suite reported as a crash. Keep it
+  // distinct from the counter.
+  const failedWrite = writeFileAtomic(target, 'THIRD\n');
   check('atomic write: a failed write leaves the original untouched and reports why',
-    failed.ok === false && typeof failed.reason === 'string' && failed.reason !== ''
+    failedWrite.ok === false && typeof failedWrite.reason === 'string' && failedWrite.reason !== ''
     && readFileSync(target, 'utf8') === 'SECOND\n',
-    JSON.stringify({ ok: failed.ok, reason: failed.reason, body: readFileSync(target, 'utf8') }));
+    JSON.stringify({ ok: failedWrite.ok, reason: failedWrite.reason, body: readFileSync(target, 'utf8') }));
   check('atomic write: a foreign object at the temp path is not deleted (only our own temp is cleaned up)',
     existsSync(`${target}.tmp`) && statSync(`${target}.tmp`).isDirectory(),
     'the occupied directory belongs to the caller');
@@ -2623,8 +2628,168 @@ check('archive: a real memory card is still archived',
   rmSync(sizeRoot, { recursive: true, force: true });
 }
 
+// ── note scope: `theorems/index.md` vs the notes it points at (2026-09-18) ───
+// The card audit covers records/templates/strategy. The user's own notes and the
+// theorem index were covered by NOTHING, which is backwards: that is where the
+// claims nobody verifies live. The real instance driving this check:
+// `theorems/index.md` labelled Cramér–Rao 已证 while its carrier note said "written
+// by AI from a dictated outline, not my draft" and carried a "do not treat as
+// proved" marker in the body. In-note honesty did not stop the index from being
+// trusted downstream.
+{
+  const noteRoot = mkdtempSync(join(tmpdir(), 'dsh-note-claims-'));
+  mkdirSync(join(noteRoot, '.deepseek', 'memory', 'theorems'), { recursive: true });
+  mkdirSync(join(noteRoot, '笔记', '概率'), { recursive: true });
+  const theoremIndex = [
+    '# 定理索引',
+    '',
+    '- 好集原理 · 领域:测度论 · 关键词:最小封闭类 · 状态:引用(技巧) · 讨论载体:[[笔记/概率/好集原理]]',
+    '- Cramér–Rao 不等式 · 领域:数理统计 · 关键词:Fisher信息 · 状态:已证(矩阵序版) · 讨论载体:[[笔记/概率/统计随笔]]',
+    '- π-λ 定理 · 领域:测度论 · 状态:已证 · 讨论载体:[[笔记/概率/好集原理]]',
+    '- 幽灵定理 · 领域:分析学 · 状态:已证 · 讨论载体:[[笔记/分析/不存在]]'
+  ].join('\n');
+  writeFileSync(join(noteRoot, '.deepseek', 'memory', 'theorems', 'index.md'), theoremIndex);
+  // The carrier that declines to vouch for itself, exactly like the real one.
+  writeFileSync(join(noteRoot, '笔记', '概率', '统计随笔.md'), [
+    '# 高等数理统计随笔',
+    '',
+    '> 本篇由 AI 依口述骨架撰写，不是我的原稿。',
+    '',
+    '第三步的严格化是本篇最不可靠的一处（`<!-- AI 补全：待核对 -->`），请勿当作已证。',
+    '',
+    Array.from({ length: 40 }, (_, i) => `正文第 ${i + 1} 行，用来把它撑过存根长度下限。`).join('\n')
+  ].join('\n'));
+  // A carrier that is honest AND complete: must NOT be flagged.
+  writeFileSync(join(noteRoot, '笔记', '概率', '好集原理.md'), [
+    '# 好集原理', '',
+    Array.from({ length: 40 }, (_, i) => `正文第 ${i + 1} 行，完整的证明与例子。`).join('\n')
+  ].join('\n'));
+
+  const scan = scanNoteClaims(noteRoot);
+  check('note claims: an index line saying 已证 whose carrier declines to vouch is reported',
+    scan.contradictions.length === 1 && scan.contradictions[0].name.includes('Cramér')
+    && scan.contradictions[0].carrier === '笔记/概率/统计随笔.md',
+    JSON.stringify(scan.contradictions));
+  check('note claims: the reason names the marker found in the carrier, not just "suspicious"',
+    /待核对/.test(scan.contradictions[0]?.reason ?? ''), scan.contradictions[0]?.reason ?? '');
+  check('note claims: an honest, complete carrier is NOT flagged (the check does not cry wolf)',
+    !scan.contradictions.some((item) => item.carrier.includes('好集原理')),
+    JSON.stringify(scan.contradictions.map((item) => item.carrier)));
+  check('note claims: `状态:引用` is not treated as a claim of proof (no false positive)',
+    scan.total === 4 && scan.contradictions.length === 1,
+    JSON.stringify({ total: scan.total, contradictions: scan.contradictions.length }));
+  check('note claims: an index line pointing at a missing note is reported separately',
+    scan.unresolved.length === 1 && scan.unresolved[0].target === '笔记/分析/不存在',
+    JSON.stringify(scan.unresolved));
+
+  // The second trigger: the carrier exists but is a stub. Kept as its own fixture
+  // because the taxonomy study showed a length filter CAN be wrong (a 2,059-char note
+  // with a full proof was once misjudged as a stub) — so the wording stays a
+  // suspicion ("疑似存根"), and the check must fire on a genuinely tiny carrier.
+  mkdirSync(join(noteRoot, '笔记', '分析'), { recursive: true });
+  writeFileSync(join(noteRoot, '笔记', '分析', '存根.md'), '# 存根\n');
+  mkdirSync(join(noteRoot, '.deepseek', 'memory', 'theorems'), { recursive: true });
+  writeFileSync(join(noteRoot, '.deepseek', 'memory', 'theorems', 'index.md'), theoremIndex + '\n- 空壳定理 · 领域:分析学 · 状态:已证 · 讨论载体:[[笔记/分析/存根]]');
+  const stubScan = scanNoteClaims(noteRoot);
+  check('note claims: a 已证 line whose carrier is a stub is reported, as a SUSPICION',
+    stubScan.contradictions.some((item) => item.carrier === '笔记/分析/存根.md' && /疑似存根/.test(item.reason)),
+    JSON.stringify(stubScan.contradictions.map((i) => i.reason)));
+  writeFileSync(join(noteRoot, '.deepseek', 'memory', 'theorems', 'index.md'), theoremIndex);
+
+  // Reach the report too: a finding nobody reads is not a finding.
+  const noteReport = buildAuditReport(noteRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('note claims: the finding reaches the HUMAN summary too (not only the model checklist)',
+    noteReport.sections.noteClaims.length === 1 && noteReport.counts.noteClaims === 1
+    && noteReport.human.includes('定理索引') && noteReport.human.includes('Cramér'),
+    JSON.stringify({ section: noteReport.sections.noteClaims.length, human: noteReport.human.slice(0, 160) }));
+  check('note claims: the finding reaches the model checklist with an action',
+    noteReport.report.includes('定理索引与载体矛盾') && noteReport.report.includes('定理索引指向不存在的笔记'),
+    noteReport.report.slice(0, 200));
+  check('note claims: it counts as something needing a decision',
+    noteReport.decisions.noteClaimCards === 2 && noteReport.decisions.total >= 2,
+    JSON.stringify(noteReport.decisions));
+
+  // A vault with no theorem index must not error or manufacture findings.
+  const bareRoot = mkdtempSync(join(tmpdir(), 'dsh-note-bare-'));
+  const bare = scanNoteClaims(bareRoot);
+  check('note claims: no theorem index ⇒ empty result, not a throw',
+    bare.indexPresent === false && bare.contradictions.length === 0 && bare.unresolved.length === 0,
+    JSON.stringify(bare));
+  rmSync(noteRoot, { recursive: true, force: true });
+  rmSync(bareRoot, { recursive: true, force: true });
+}
+
+// ── corroboration upgrade: `cross-referenced` is decided by the plugin (2026-09-18)
+// `cross-referenced` means "somewhere else in this vault names the same pattern or
+// technique" — a fact about files. Requiring a user click for it made every card
+// start at single-source and stay there, so the "single-source for 60+ days" list
+// reported the same cards forever. The plugin may fill in THIS grade only;
+// `user-confirmed` still needs the user.
+{
+  const corrRoot = mkdtempSync(join(tmpdir(), 'dsh-corroborate-'));
+  mkdirSync(join(corrRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+  mkdirSync(join(corrRoot, '笔记'), { recursive: true });
+  const cardPath = join(corrRoot, '.deepseek', 'memory', 'records', 'corroborated.md');
+  const lonelyPath = join(corrRoot, '.deepseek', 'memory', 'records', 'lonely.md');
+  writeFileSync(cardPath, card([
+    '---', 'title: 有互证的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'source: "[[2026-01-01-ep]]"', 'related: "[[笔记/子列方法]]"',
+    'hook:', '  operator: probability', '  pattern: subsequence_argument',
+    '  techniques:', '    - borel-cantelli', '  verified: single-source', '---', '', '# 内容'
+  ]));
+  writeFileSync(lonelyPath, card([
+    '---', 'title: 无互证的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'source: "[[2026-01-01-ep]]"', 'hook:', '  operator: analysis',
+    '  pattern: some_unique_pattern_nobody_else_names', '  verified: single-source', '---', '', '# 内容'
+  ]));
+  // The corroborating note NAMES the pattern.
+  writeFileSync(join(corrRoot, '笔记', '子列方法.md'), '# 子列方法\n\n这里的 subsequence_argument 模式可以这样用。\n');
+  // A README that documents an EXAMPLE hook must not corroborate anything: it is
+  // scaffold, not evidence. Linked from the lonely card so the exclusion is exercised.
+  writeFileSync(join(corrRoot, '.deepseek', 'memory', 'records', '_README.md'),
+    'hook:\n  pattern: some_unique_pattern_nobody_else_names\n');
+
+  const first = buildAuditReport(corrRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const after = readFileSync(cardPath, 'utf8');
+  check('corroboration: a linked document naming the same pattern raises the level to cross-referenced',
+    /verified:\s*cross-referenced/.test(after), after.split('\n').slice(0, 20).join(' | '));
+  check('corroboration: the witness is written in the same edit (no level without provenance)',
+    /verified_by:\s*corroboration/.test(after), after.split('\n').slice(0, 20).join(' | '));
+  check('corroboration: the report says which document corroborated it',
+    first.sections.corroborated.length === 1 && first.sections.corroborated[0].via === '笔记/子列方法.md'
+    && first.counts.corroborated === 1,
+    JSON.stringify(first.sections.corroborated));
+  check('corroboration: a card nothing else names is left alone (no promotion on a shared topic)',
+    /verified:\s*single-source/.test(readFileSync(lonelyPath, 'utf8'))
+    && !first.sections.corroborated.some((item) => item.rel.endsWith('lonely.md')),
+    readFileSync(lonelyPath, 'utf8').split('\n').slice(0, 14).join(' | '));
+  check('corroboration: a layer README is not evidence (its example hook corroborates nothing)',
+    /verified:\s*single-source/.test(readFileSync(lonelyPath, 'utf8')),
+    'README documents pattern: some_unique_pattern_nobody_else_names');
+  check('corroboration: the upgrade is reported to the user, not applied silently',
+    first.human.includes('与他处互证') && first.report.includes('cross-referenced'),
+    first.human.slice(0, 200));
+
+  // Idempotency: the second daily pass must see `cross-referenced` already and do
+  // nothing — otherwise every audit would rewrite the same card forever, and the
+  // stats-sync postcondition (which compares declared vs merged) would keep failing.
+  const beforeSecond = readFileSync(cardPath, 'utf8');
+  const second = buildAuditReport(corrRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('corroboration: a second pass is a no-op (no repeated rewrite)',
+    readFileSync(cardPath, 'utf8') === beforeSecond && second.sections.corroborated.length === 0,
+    JSON.stringify(second.sections.corroborated));
+  check('corroboration: an already cross-referenced card is not reported as needing corroboration',
+    !second.sections.unverified.some((card) => card.rel.endsWith('corroborated.md')),
+    JSON.stringify(second.sections.unverified.map((c) => c.rel)));
+  rmSync(corrRoot, { recursive: true, force: true });
+}
+
 rmSync(root, { recursive: true, force: true });
-const failed = results.filter((r) => !r.ok).length;
+// The counter must be DERIVED here, not tracked incrementally: a local `failed`
+// variable inside one of the fixture blocks silently shadowed it, so this line threw
+// `ReferenceError: failed is not defined` after every assertion had passed — a fully
+// green suite reported as a crash.
+const failed = results.filter((result) => !result.ok).length;
 console.log(`__CHECKS__ ${results.length - failed}/${results.length}`);
 console.log(`\n${results.length - failed}/${results.length} checks passed`);
 process.exit(failed === 0 ? 0 : 1);

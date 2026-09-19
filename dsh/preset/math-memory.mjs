@@ -191,6 +191,38 @@ const AUDIT_INDEX_DESC_MIN = 8;
 // at 10–30 lines because a knowledge page that grows into an essay stops being usable.
 const AUDIT_BODY_MAX_LINES = 20;
 const AUDIT_MAX_MOVES = 5;
+// ── note-scope audit (2026-09-18) ────────────────────────────────────────────
+// The card audit above covers records/templates/strategy — the layers the AGENT
+// writes. The user's own notes and `theorems/index.md` were covered by NOTHING,
+// which is backwards: they are the only writers with no verifier at all. The scan
+// below is READ-ONLY and reports one thing above all: an index line that claims a
+// theorem is proved while its carrier note says otherwise. The real instance that
+// motivated it: `theorems/index.md` labelled Cramér–Rao 已证 while the carrier note
+// said "written by AI from a dictated outline, not my draft" and carried an explicit
+// "do not treat as proved" marker inside the body. In-note honesty did not stop the
+// index from being used downstream.
+//
+// Deliberately no score and no threshold on "carrier looks like a stub" beyond a
+// length floor: the taxonomy study measured that a 2,059-char note with a full proof
+// was misjudged as a stub by a length filter, so the length floor is only ever used
+// to name a SUSPICION ("疑似存根"), never as a claim of fact.
+const AUDIT_NOTE_STUB_CHARS = 120;
+const AUDIT_NOTE_MAX_ITEMS = 12;
+const AUDIT_THEOREM_INDEX = join(MEMORY_DIR, "memory", "theorems", "index.md");
+// Index statuses that assert the content is settled. `引用` is deliberately absent:
+// "cited from elsewhere" makes no claim about the vault's own proof, so it is not a
+// contradiction to find a 待核对 marker there.
+const AUDIT_PROVED_TOKENS = ["已证"];
+// Markers meaning the carrier itself declines to vouch for the content. Matched in
+// the note body, not in the index line.
+const AUDIT_OPEN_MARKERS = ["待核对", "待补", "AI 补全", "待证明", "存疑"];
+// Directories a note scan must skip. `.deepseek` holds the memory tree (audited
+// separately) and `deploy-backup-…` is a COPY of it: resolving wikilinks by basename
+// against a backup manufactures phantom duplicate targets, which is how a real vault
+// pollutes this check.
+const NOTE_SCAN_SKIP_DIRS = new Set([".obsidian", ".git", ".trash", "node_modules", ".deepseek"]);
+const NOTE_SCAN_SKIP_PREFIXES = ["deploy-backup-"];
+
 
 /**
  * Deterministic net-gain verdict for a card, in [-1, 1], or 0 for "no verdict".
@@ -1123,7 +1155,7 @@ function readRetrievalStats(root) {
  * text; returns the new frontmatter or null when there is no block-style hook
  * (flow-style `hook: { ... }` is deliberately left untouched).
  */
-function rewriteHookStats(frontmatterText, uses, lastUsed, gain = 0) {
+function rewriteHookStats(frontmatterText, uses, lastUsed, gain = 0, verification = null) {
   const lines = frontmatterText.split(/\r?\n/);
   const hookIdx = lines.findIndex((line) => /^hook:\s*$/.test(line));
   if (hookIdx === -1) return null;
@@ -1133,12 +1165,23 @@ function rewriteHookStats(frontmatterText, uses, lastUsed, gain = 0) {
   let usesSeen = false;
   let lastUsedSeen = false;
   let gainSeen = false;
+  let verifiedSeen = false;
+  let witnessSeen = false;
   // `null` means "leave that line exactly as it is" — used when only the gain
   // verdict is being persisted and usage statistics are not being maintained.
   const touchUses = uses !== null && uses !== undefined;
   const touchLastUsed = lastUsed !== null && lastUsed !== undefined;
+  const touchVerified = verification !== null && verification !== undefined;
   const updated = [];
   for (const line of block) {
+    // The verification pair is rewritten in the SAME pass as the statistics so the
+    // card is never left half-updated, and so a corroboration upgrade produces a
+    // one-line diff (verified + its witness) rather than a restructured block.
+    const verifyMatch = /^(\s*)(verified|verified_by):\s*(.*)$/.exec(line);
+    if (verifyMatch !== null && touchVerified) {
+      if (verifyMatch[2] === "verified") { verifiedSeen = true; updated.push(`${verifyMatch[1]}verified: ${verification.verified}`); continue; }
+      witnessSeen = true; updated.push(`${verifyMatch[1]}verified_by: ${verification.verifiedBy}`); continue;
+    }
     const match = /^(\s*)(uses|last_used|gain):\s*(.*)$/.exec(line);
     if (match !== null && match[2] === "uses") {
       if (!touchUses) { usesSeen = true; updated.push(line); continue; }
@@ -1163,6 +1206,10 @@ function rewriteHookStats(frontmatterText, uses, lastUsed, gain = 0) {
   if (!usesSeen && touchUses) updated.push(`  uses: ${uses}`);
   if (!lastUsedSeen && touchLastUsed && lastUsed !== "") updated.push(`  last_used: ${lastUsed}`);
   if (!gainSeen && gain !== 0) updated.push(`  gain: ${gain}`);
+  if (touchVerified) {
+    if (!verifiedSeen) updated.push(`  verified: ${verification.verified}`);
+    if (!witnessSeen) updated.push(`  verified_by: ${verification.verifiedBy}`);
+  }
   return [...lines.slice(0, hookIdx + 1), ...updated, ...lines.slice(endIdx)].join(frontmatterText.includes("\r\n") ? "\r\n" : "\n");
 }
 
@@ -1176,7 +1223,7 @@ function rewriteHookStats(frontmatterText, uses, lastUsed, gain = 0) {
  *   audit counts the `false`s: a silently failed sync used to look identical to
  *   a successful one (design-intake §1 item 5).
  */
-function syncHookStatsToCard(filePath, effectiveUses, lastUsed, gain = 0) {
+function syncHookStatsToCard(filePath, effectiveUses, lastUsed, gain = 0, verification = null) {
   let text;
   try {
     text = readFileSync(filePath, "utf8");
@@ -1185,13 +1232,27 @@ function syncHookStatsToCard(filePath, effectiveUses, lastUsed, gain = 0) {
   }
   const block = frontmatterBlock(text);
   if (block === null) return false;
-  const rewritten = rewriteHookStats(block, effectiveUses, lastUsed, gain);
+  const rewritten = rewriteHookStats(block, effectiveUses, lastUsed, gain, verification);
   if (rewritten === null) return false;
-  if (rewritten === block) return verifyUsesWritten(text, effectiveUses, true);
+  const touchUses = effectiveUses !== null && effectiveUses !== undefined;
+  if (rewritten === block) return touchUses ? verifyUsesWritten(text, effectiveUses, true) : true;
   try {
     const next = replaceFrontmatterBlock(text, rewritten);
     writeFileSync(filePath, next, "utf8");
     // Post-condition, not an assumption: read back what we just claimed to write.
+    // When a corroboration upgrade rode along, the witness must be on disk too —
+    // otherwise the audit would mint exactly the "upgraded without a witness" state
+    // its own `unjustifiedUpgrade` check exists to catch.
+    if (verification !== null && verification !== undefined) {
+      const reread = (() => { try { return readFileSync(filePath, "utf8"); } catch { return ""; } })();
+      if (!new RegExp(`^\\s*verified:\\s*${verification.verified}\\s*$`, "m").test(reread)) return false;
+      if (!new RegExp(`^\\s*verified_by:\\s*${verification.verifiedBy}\\s*$`, "m").test(reread)) return false;
+    }
+    // Only assert the `uses` postcondition when this call was asked to touch `uses`.
+    // A corroboration-only call passes `null` (leave the line alone), and demanding
+    // `uses: null` would fail every time — which it did, so the level landed on disk
+    // while the report said nothing had happened (caught by the gate assertions).
+    if (!touchUses) return true;
     return verifyUsesWritten(next, effectiveUses, true);
   } catch {
     return false;
@@ -1564,6 +1625,20 @@ function actionableAuditEntries(sections, hintFor) {
     const object = `${item.rel}|${item.via.rel}`;
     push(object, "re-verify-dependent", "premise-moved", `reason=${item.reason}`, `${item.title} ← ${item.via.title}`);
   }
+  // Note scope: a mislabelled theorem in the index is a recommendation like any
+  // other, so it enters the ledger too — otherwise "the same wrong 已证 has been
+  // reported for eleven days" would be invisible exactly where it matters most.
+  for (const item of sections.noteClaims ?? []) {
+    push(item.carrier, "relabel-theorem-index", "index-claims-proved", `reason=${item.reason}`, `${item.name}（${item.reason}）`);
+  }
+  for (const item of sections.noteIndexUnresolved ?? []) {
+    push(AUDIT_THEOREM_INDEX, "fix-index-target", "index-target-unresolved", `target=${item.target}`, `${item.name} → [[${item.target}]]`);
+  }
+  // A failed corroboration write is a recommendation ("this card's level is one grade
+  // too low and the write did not land"), not a silent no-op.
+  for (const rel of sections.corroborationFailures ?? []) {
+    push(rel, "retry-corroboration-write", "corroboration-write-failed", "verified=single-source", rel);
+  }
   return out;
 }
 
@@ -1628,6 +1703,189 @@ export function indexDescriptionIssue(line, minChars = 8) {
  */
 function ledgerHint(hintFor, object, action, criterion, fallback = "") {
   return hintFor.get(`${object}|${action}|${criterion}`) ?? fallback;
+}
+
+/** Strip an Obsidian wikilink target down to a vault-relative candidate path. */
+function noteLinkTarget(raw) {
+  return String(raw ?? "").trim().replace(/^\.\//, "").replace(/\.md$/i, "");
+}
+
+/**
+ * Walk the vault's OWN notes (never the memory tree) and return relative paths.
+ *
+ * Bounded and skip-listed on purpose: this runs once per day on somebody's real
+ * vault, so it must not descend into `.git`, `.obsidian`, `node_modules`, the
+ * memory tree (audited separately), or a `deploy-backup-…` copy of it.
+ */
+function listVaultNotes(root, maxFiles = 4000) {
+  const out = [];
+  const walk = (rel) => {
+    if (out.length >= maxFiles) return;
+    const absolute = rel === "" ? root : join(root, rel);
+    let entries = [];
+    try {
+      entries = readdirSync(absolute, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const name = entry.name;
+      if (entry.isDirectory()) {
+        if (NOTE_SCAN_SKIP_DIRS.has(name)) continue;
+        if (NOTE_SCAN_SKIP_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
+        if (name.startsWith(".")) continue;
+        walk(rel === "" ? name : rel + "/" + name);
+      } else if (entry.isFile() && name.toLowerCase().endsWith(".md")) {
+        out.push(rel === "" ? name : rel + "/" + name);
+      }
+    }
+  };
+  walk("");
+  return out;
+}
+
+/**
+ * Find the card's corroborating counterpart, if it has one. DETERMINISTIC, and the
+ * one legitimate path by which the plugin may raise `verified` to `cross-referenced`.
+ *
+ * WHY this exists (2026-09-18): `cross-referenced` means "somewhere else in this vault
+ * says the same thing", which is a FACT ABOUT FILES, not a matter of taste — so making
+ * the user click ✅ for it was asking them to do bookkeeping. The cost of that mistake
+ * was structural: every new card starts at `single-source`, nothing could ever raise it
+ * without a human click, so the "single-source for over 60 days" list reported the same
+ * cards forever and the only exit was one click per card. (Measured 2026-09-10: every
+ * such field in the real vault was 0 — the mechanism was never used.)
+ *
+ * The judgement this does NOT replace: `user-confirmed` still requires the user, and a
+ * ❌ still downgrades one level. This only fills in the middle grade, with evidence.
+ *
+ * What counts as corroboration (deliberately narrow, and the reason is asserted):
+ *   another document that this card links to (`related` or `depends_on`, resolved to an
+ *   actual file) MENTIONS this card's hook signature — its `pattern` or one of its
+ *   `techniques` — in its own text. A shared topic is not enough; the other document has
+ *   to name the same structural pattern or technique, which is what "cross-referenced"
+ *   claims. Scaffold files (`_README.md`, `index.md`) are excluded: the layer READMEs
+ *   document an EXAMPLE hook (`pattern: subsequence_argument`) and would otherwise
+ *   "corroborate" every card that links to them.
+ *
+ * @returns the vault-relative path of the corroborating document, or null.
+ */
+function findCorroboration(card, candidates, links) {
+  const signatures = [
+    String(card.hook?.pattern ?? ""),
+    ...(Array.isArray(card.hook?.techniques) ? card.hook.techniques : [])
+  ].map((value) => String(value).trim().toLowerCase()).filter((value) => value.length >= 6);
+  if (signatures.length === 0) return null;
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const target of links(card)) {
+    const key = String(target).replace(/\.md$/i, "");
+    const other = candidates.get(key) ?? candidates.get(key.split("/").at(-1));
+    if (other === undefined) continue;
+    const haystack = other.text.toLowerCase();
+    if (signatures.some((signature) => new RegExp(`(^|[^\\p{L}\\p{N}_])${escape(signature)}([^\\p{L}\\p{N}_]|$)`, "u").test(haystack))) {
+      return other.rel;
+    }
+  }
+  return null;
+}
+
+/**
+ * READ-ONLY audit of `theorems/index.md` (the personal Matlas) and the notes it
+ * points at. Returns findings; writes nothing, ever.
+ *
+ * Two findings, both deterministic:
+ *   1. `contradictions` — an index line that says a theorem is proved (已证) while
+ *      its carrier note declines to vouch for the content (a 待核对-style marker in
+ *      the body, or a carrier short enough to be a stub). This is the highest-value
+ *      check in the whole audit: the index is what a reader (human or agent) trusts
+ *      when deciding whether to rely on a result, so a wrong label here reaches
+ *      everything downstream. Real instance: Cramér–Rao, see the constants above.
+ *   2. `unresolved` — the index points at a note that does not resolve. The existing
+ *      broken-link check only ever ran on `records/` cards, so a dangling carrier
+ *      link was invisible.
+ *
+ * Exported so the regression suite can exercise it directly (`scripts/test-memory.mjs`)
+ * and, more importantly, so the "no finding" case can be asserted too (a check that
+ * never fires and a check that fires wrongly are equally useless).
+ */
+export function scanNoteClaims(root) {
+  const result = {
+    indexPresent: false,
+    total: 0,
+    resolved: 0,
+    stubCarriers: 0,
+    contradictions: [],
+    unresolved: []
+  };
+  let text = "";
+  try {
+    text = readFileSync(join(root, AUDIT_THEOREM_INDEX), "utf8");
+  } catch {
+    return result; // no theorem index yet: nothing to audit, and not an error
+  }
+  result.indexPresent = true;
+
+  const notes = listVaultNotes(root);
+  const byBasename = new Map();
+  for (const rel of notes) {
+    const base = rel.split("/").at(-1).replace(/\.md$/i, "");
+    if (!byBasename.has(base)) byBasename.set(base, rel);
+  }
+  const exists = (target) => {
+    const clean = noteLinkTarget(target);
+    if (clean === "") return null;
+    const direct = clean + ".md";
+    if (existsSync(join(root, direct))) return direct;
+    const base = clean.split("/").at(-1);
+    return byBasename.get(base) ?? null;
+  };
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith(">") || trimmed.startsWith("#")) continue;
+    const link = /\[\[([^\[\]|#]+)(?:#[^\]\[]*)?(?:\|[^\]\[]*)?\]\]/.exec(trimmed);
+    if (link === null) continue;
+    result.total += 1;
+    const target = link[1];
+    // The theorem's NAME is the line's label, not the link target: the index format
+    // is `- <定理名> · 领域:… · 状态:… · 讨论载体:[[载体]]`, so the label is what
+    // precedes the first metadata separator. Taking the link's display text (which
+    // these lines usually omit) or the target path would name the finding after the
+    // CARRIER instead of the theorem — useless to a reader.
+    const display = (() => {
+      const head = trimmed.replace(/^[-*+]\s*/, "").split(/\s*·\s*/)[0].trim();
+      if (head !== "" && !head.includes("[[")) return head;
+      const inner = link[0].replace(/^\[\[|\]\]$/g, "");
+      const pipe = inner.indexOf("|");
+      return (pipe === -1 ? inner : inner.slice(pipe + 1)).replace(/^#+\s*/, "").trim();
+    })();
+    const carrier = exists(target);
+    if (carrier === null) {
+      result.unresolved.push({ target: noteLinkTarget(target), name: display, line: trimmed.slice(0, 80) });
+      continue;
+    }
+    result.resolved += 1;
+    const claimsProved = AUDIT_PROVED_TOKENS.some((token) => trimmed.includes(token));
+    if (!claimsProved) continue;
+    let body = "";
+    try {
+      body = readFileSync(join(root, carrier), "utf8");
+    } catch {
+      continue;
+    }
+    const marker = AUDIT_OPEN_MARKERS.find((m) => body.includes(m));
+    const bodyChars = body.replace(/\s+/g, "").length;
+    if (marker !== undefined) {
+      result.contradictions.push({ name: display, carrier, reason: `载体含「${marker}」`, detail: "index-claims-proved" });
+      result.stubCarriers += 1;
+    } else if (bodyChars < AUDIT_NOTE_STUB_CHARS) {
+      result.contradictions.push({ name: display, carrier, reason: `载体仅 ${bodyChars} 字（疑似存根）`, detail: "index-claims-proved" });
+      result.stubCarriers += 1;
+    }
+  }
+  result.contradictions = result.contradictions.slice(0, AUDIT_NOTE_MAX_ITEMS);
+  result.unresolved = result.unresolved.slice(0, AUDIT_NOTE_MAX_ITEMS);
+  return result;
 }
 
 /**
@@ -2171,6 +2429,64 @@ export function buildAuditReport(root, helpers) {
     }
   }
 
+  // ── deterministic corroboration upgrade (`cross-referenced`, 2026-09-18) ────
+  // `cross-referenced` means "somewhere else in this vault names the same pattern or
+  // technique" — a fact about files, not a matter of taste. Requiring a user click for
+  // it asked the user to do bookkeeping, and the cost was structural: every card starts
+  // at `single-source`, nothing could raise it, so the "single-source for 60+ days" list
+  // reported the same cards forever. This fills in the MIDDLE grade only:
+  // `user-confirmed` still requires the user, and a ❌ still demotes one level.
+  //
+  // The witness (`verified_by: corroboration`) is written in the SAME edit as the level,
+  // and the write is verified by reading the file back — otherwise the audit would mint
+  // the exact "level raised with no witness" state its own `unjustifiedUpgrade` check
+  // exists to catch.
+  // Evidence pool for the corroboration pass: the user's own notes AND the resource
+  // layer. Indexed by basename AND by vault-relative path, because `related:` in the
+  // wild links by bare name (`[[好集原理]]`) as often as by path
+  // (`[[笔记/概率/好集原理]]`) — a basename-only index silently finds nothing for the
+  // first form, which is how the first implementation of this pass wrote no upgrades.
+  const corroborationDocs = new Map();
+  {
+    const addCandidate = (rel) => {
+      const stem = String(rel).split("/").at(-1).replace(/\.md$/i, "");
+      // Scaffold files document an EXAMPLE hook (`pattern: subsequence_argument`), so
+      // treating them as evidence would "corroborate" every card that links to a README.
+      if (AUDIT_CARD_SCAFFOLD.has(String(rel).split("/").at(-1)) || stem.startsWith("_")) return;
+      const key = String(rel).replace(/\.md$/i, "");
+      const entry = { rel: key + ".md" };
+      if (corroborationDocs.has(key)) return;
+      try {
+        entry.text = readFileSync(join(root, key + ".md"), "utf8");
+      } catch {
+        return; // unreadable candidate: simply not evidence
+      }
+      corroborationDocs.set(key, entry);
+      if (!corroborationDocs.has(stem)) corroborationDocs.set(stem, entry);
+    };
+    for (const rel of listVaultNotes(root)) addCandidate(rel);
+    for (const card of cards) addCandidate(card.rel);
+  }
+  const corroborated = [];
+  const corroborationFailures = [];
+  for (const card of cards) {
+    if (card.verified !== "single-source") continue;
+    if (card.status !== "active") continue;
+    const via = findCorroboration(card, corroborationDocs, (c) => extractLinks({ source: c.source, related: c.related, depends_on: c.dependsOn }));
+    if (via === null) continue;
+    const ok = syncHookStatsToCard(card.filePath, null, null, 0, { verified: "cross-referenced", verifiedBy: "corroboration" });
+    if (!ok) {
+      corroborationFailures.push(card.rel);
+      continue;
+    }
+    // Mutate the in-memory card so the REST of this pass (utility, archive
+    // candidates, the unverified list) sees what is now on disk. Without this the
+    // report would describe a state the files no longer have.
+    card.verified = "cross-referenced";
+    card.verifiedBy = "corroboration";
+    corroborated.push({ rel: card.rel, title: card.title, via });
+  }
+
   // ── heat/utility + antipatterns (memory-review 2026-08) ────────────────────
   // Heat-based utility (MACLA prune × MemoryOS heat × ISM promote/demote):
   // 0.5 × verified strength + 0.3 × usage frequency + 0.2 × recency (90-day).
@@ -2289,7 +2605,10 @@ export function buildAuditReport(root, helpers) {
     title: card.title,
     gain: card.gain ?? 0,
     uses: card.uses,
-    successRate: card.successRate
+    successRate: card.successRate,
+    // Carried so a reader can tell WHICH grade the report is talking about — the
+    // corroboration list is meaningless without it.
+    verified: card.verified ?? null
   });
   const liveArchiveCandidates = archiveCandidates.filter(({ card }) => live(card));
   const livePendingReview = pendingReview.filter(live);
@@ -2348,6 +2667,11 @@ export function buildAuditReport(root, helpers) {
     // Techniques seen in >= OCCASION_MIN independent episodes: the deterministic
     // answer to "is this a method or a one-off?". Informational for now.
     independentTechniques: independentTechniques.map(({ techniques, occasions }) => ({ techniques, occasions })),
+    // Cards the audit itself raised to `cross-referenced` this pass, each with the
+    // document that corroborated it (the evidence is reported, not written into the
+    // card: a stored pointer would need re-verification on every rename, and the
+    // witness `verified_by: corroboration` is what the unjustifiedUpgrade check reads).
+    corroborated: corroborated.slice(0, 5).map((item) => ({ rel: item.rel, title: item.title, via: item.via })),
     archived: archived.map((item) => ({ rel: item.rel, stem: item.stem }))
   };
   const thresholds = {
@@ -2393,11 +2717,27 @@ export function buildAuditReport(root, helpers) {
   // counts as one decision PER DEPENDENT CARD: each is a separate judgement, and
   // collapsing them would hide how far a single wrong premise reached.
   const liveDownstreamReview = sections.downstreamReview;
+  const noteClaims = scanNoteClaims(root);
+  // Publish the note findings on `sections` right away, so every consumer (ledger,
+  // checklist, human summary, panel) reads ONE derivation instead of re-scanning.
+  sections.noteClaims = noteClaims.contradictions;
+  sections.noteIndexUnresolved = noteClaims.unresolved;
+  sections.noteIndexTotal = noteClaims.total;
+  // The corroboration pass already published `sections.corroborated`; mirror the
+  // failures here. The warning itself is pushed further down, INSIDE the `warnings`
+  // block — `warnings` is declared after this point (first version pushed here and
+  // threw "Cannot access 'warnings' before initialization").
+  sections.corroborationFailures = corroborationFailures.slice(0, 5);
   const decisions = {
     reviewCards: livePendingReview.length,
     cleanupCards: liveArchiveCandidates.length + liveDuplicates.length,
     downstreamCards: liveDownstreamReview.length,
+    // A wrong label in `theorems/index.md` is the one finding that is BOTH
+    // deterministic to detect AND read by everything downstream, so it is counted
+    // as a decision rather than buried in a list.
+    noteClaimCards: sections.noteClaims.length + sections.noteIndexUnresolved.length,
     total: livePendingReview.length + liveArchiveCandidates.length + liveDuplicates.length + liveDownstreamReview.length
+      + sections.noteClaims.length + sections.noteIndexUnresolved.length
   };
 
   // `counts` keeps its v1 key set (readers written against 0.7.x must not break)
@@ -2413,7 +2753,10 @@ export function buildAuditReport(root, helpers) {
     archiveCandidates: sections.archiveCandidates.length,
     pendingReview: sections.pendingReview.length,
     harmed: sections.harmed.length,
-    autoArchived: sections.archived.length
+    autoArchived: sections.archived.length,
+    noteClaims: sections.noteClaims.length,
+    noteIndexUnresolved: sections.noteIndexUnresolved.length,
+    corroborated: sections.corroborated.length
   };
 
   // Degraded instead of silent success (R2 `status:"degraded"`, design-intake §1
@@ -2441,6 +2784,13 @@ export function buildAuditReport(root, helpers) {
   }
   if (structural.usesMismatch.length > 0) {
     warnings.push(`${structural.usesMismatch.length} 张卡的声明 uses 与合并值不一致：${structural.usesMismatch.slice(0, 3).join("、")}`);
+  }
+  // A corroboration write that could not be confirmed belongs in `warnings` for the
+  // same reason an archive failure does: the audit claimed to raise a card's level, and
+  // the claim must be falsifiable. Pushed HERE (after `warnings` exists), not at the
+  // point the failures were collected.
+  if (corroborationFailures.length > 0) {
+    warnings.push(`${corroborationFailures.length} 张卡找到互证依据但等级写入未确认：${corroborationFailures.slice(0, 3).join("、")}`);
   }
   const status = warnings.length === 0 ? "ok" : "degraded";
 
@@ -2561,6 +2911,33 @@ export function buildAuditReport(root, helpers) {
     checklistLines.push("（尚无记忆卡，无可体检内容）");
   }
 
+  // ── note scope ───────────────────────────────────────────────────────────────
+  // Rendered OUTSIDE the `cards.length > 0` branch on purpose. The theorem index is
+  // the user's own artifact and predates (or outlives) any memory card, so gating
+  // these findings behind "has cards" would hide exactly the case they exist for: a
+  // fresh vault whose index already mislabels a theorem. (Caught by the gate below —
+  // the first version of this code did gate them, and the assertion for it failed.)
+  //
+  // `noteClaims` is stated before `noteIndexUnresolved` because its reach is wider:
+  // the index is what both the reader and the agent trust when deciding whether a
+  // result may be relied on.
+  if (sections.noteClaims.length > 0) {
+    const rows = sections.noteClaims.slice(0, 3).map((item) => `${item.name} → [[${item.carrier.replace(/\.md$/, "")}]]（${item.reason}）`);
+    checklistLines.push(`- 定理索引与载体矛盾（索引写"已证"，载体自己没认可，逐条读后改索引或补证明）: ${rows.join("；")}${sections.noteClaims.length > 3 ? ` … 共 ${sections.noteClaims.length} 条` : ""}`);
+  }
+  if (sections.noteIndexUnresolved.length > 0) {
+    const rows = sections.noteIndexUnresolved.slice(0, 3).map((item) => `${item.name} → [[${item.target}]]`);
+    checklistLines.push(`- 定理索引指向不存在的笔记（读者与 agent 都按名字找，指错了就等于找不到）: ${rows.join("；")}${sections.noteIndexUnresolved.length > 3 ? ` … 共 ${sections.noteIndexUnresolved.length} 条` : ""}`);
+  }
+
+  // ── what the audit decided BY ITSELF this pass ───────────────────────────────
+  // Stated explicitly, not silently applied: a level change the user did not ask for
+  // must be visible, together with the evidence, so it can be disputed.
+  if (sections.corroborated.length > 0) {
+    const rows = sections.corroborated.slice(0, 5).map((item) => `[[${item.rel.replace(/\.md$/, "")}|${item.title}]]（依据：[[${item.via.replace(/\.md$/, "")}]]）`);
+    checklistLines.push(`- 本次由插件升为「与他处互证」（cross-referenced；判定依据是另一份文档里出现了同一 pattern/技巧，证据随行，仍未获用户确认）: ${rows.join("；")}`);
+  }
+
   /**
    * Human-facing summary: answers "how is my memory, and what needs me?".
    * Counts-only headline (no invented 0-100 score), then one line per thing the
@@ -2635,8 +3012,27 @@ export function buildAuditReport(root, helpers) {
       humanLines.push(`📦 本次体检自动归档了 ${sections.archived.length} 张低效用卡（在 .deepseek/archive/ 下按层存放，可找回）。`);
     }
     if (decisions.total === 0 && counts.weak === 0) humanLines.push("（没有需要你处理的项目。）");
-  } else {
+  } else if (sections.noteClaims.length === 0 && sections.noteIndexUnresolved.length === 0) {
     humanLines.push("（还没有记忆卡，暂时没有可体检的内容。）");
+  }
+
+  // Note scope, outside the card branch for the same reason as the checklist: the
+  // theorem index is the user's own artifact and must be audited whether or not any
+  // memory card exists yet.
+  if (sections.noteClaims.length > 0) {
+    const names = sections.noteClaims.slice(0, 3).map((item) => `「${item.name}」（${item.reason}）`).join("、");
+    humanLines.push(`🧾 定理索引里有 ${sections.noteClaims.length} 条写着"已证"，但它们指向的笔记自己并不认可：${names}${sections.noteClaims.length > 3 ? " …" : ""}——索引是你和助手判断"这条能不能用"的入口，盖错章会被下游一直沿用。`);
+  }
+  if (sections.noteIndexUnresolved.length > 0) {
+    const names = sections.noteIndexUnresolved.slice(0, 3).map((item) => `「${item.name}」→ ${item.target}`).join("、");
+    humanLines.push(`🔗 定理索引里有 ${sections.noteIndexUnresolved.length} 条指向不存在的笔记：${names}——按名字找不到就等于这条定理没登记。`);
+  }
+  // What the plugin upgraded on its own. Reported so the user can dispute it — an
+  // automatic level change that shows up nowhere would be exactly the "the system
+  // decided something about my notes and never said so" failure.
+  if (sections.corroborated.length > 0) {
+    const names = sections.corroborated.slice(0, 3).map((item) => `「${item.title}」（依据 ${item.via}）`).join("、");
+    humanLines.push(`⚖️ 本次把 ${sections.corroborated.length} 张卡从"单次来源"升为"与他处互证"：${names}${sections.corroborated.length > 3 ? " …" : ""}——依据是另一份文档里出现了同一个模式或技巧；这只是自动比对的结果，仍不等于你确认过，随时可以点 ❌ 推翻。`);
   }
 
   // `report` stays for backward compatibility with anything reading the old

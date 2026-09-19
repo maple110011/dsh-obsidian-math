@@ -239,6 +239,34 @@
 - **怎么报**：进 `structural.tooLong` / `structural.tooManyMoves`，清单里**说清该做什么**（拆成一到两张原子卡 / 把过程挪进 episode / 按触发条件排序并移出不触发的 move），**只报告不自动改**——拆卡需要判断，属于模型与用户的活。
 - **状态**：**已实现**（`buildAuditReport` + 体检台账 `split-card` / `split-or-prioritize-moves`；模板纪律写在 `records-readme.md` 第 6 条与 `strategy-readme.md` 第 9 条）。**未做**（有意）：episode 与 topics/theorems 的同类上限（它们的形态不同，需要各自的分布数据）。
 
+### 8.5 笔记范围：定理索引与载体笔记的**只读**审查（**已实现**，2026-09-18）
+
+> **来源与理由**：在此之前，体检只扫 `records/` / `templates/` / `strategy/` 三层（`AUDIT_CARD_DIRS`），而**用户自己手写的笔记与 `theorems/index.md` 不在任何检查范围内**——这恰好是**唯一没有 verifier 的写入者**。真实实例（对真实 vault 的只读调研发现）：`theorems/index.md` 把 Cramér–Rao 登记为 `状态:已证`，而它的载体笔记自己写着"由 AI 依口述骨架撰写……不是我的原稿"，正文里还有一句"请勿当作已证"。**文内的诚实标记挡不住下游按索引使用**——索引是人和 agent 判断"这条能不能用"的入口，盖错章会被一直沿用。
+
+- **`scanNoteClaims(root)`**（导出、有断言）：读 `theorems/index.md`，逐行取定理名与载体链接，产出**两类发现**：
+  1. **`contradictions`**——索引说"已证"，但载体**自己不认可**：载体正文含 `待核对`/`待补`/`AI 补全`/`待证明`/`存疑`（这是**确定的事实**），或载体短于 `AUDIT_NOTE_STUB_CHARS = 120` 字（这是**明说的猜测**，措辞写"疑似存根"）。
+  2. **`unresolved`**——索引指向的笔记不存在。既有的断链检查**只对 `records/` 生效**（`:1939` 那一行 `if (!card.rel.includes("/records/")) continue;`），所以索引里的悬空载体以前是**看不见**的。
+- **只读**：不写任何文件、不改任何卡片、不产生台账以外的副作用（台账仍由既有机制写）。
+- **`状态:引用` 不算"已证"**：它只声称"引自别处"，不声称 vault 内已证，因此载体里有 `待核对` **不构成矛盾**（有断言守住这条否定性性质）。
+- **笔记名取行首标签、不取链接**：索引格式是 `- <定理名> · 领域:… · 状态:… · 讨论载体:[[载体]]`，第一版实现取链接的显示文本（这些行通常没有）或链接目标，于是**把发现命名成了载体而不是定理**——由门禁的断言抓出并修正。
+- **漏报与误报的边界（实测教训）**：长度下限**不能**当作"存根"的证明——同一批调研里一篇 2,059 字、含完整证明与两个应用例的笔记曾被长度过滤误判为存根。因此这里只把它当"疑似"，且同一条发现只报一次。
+- **扫描范围有界**：`listVaultNotes` 跳过 `.git` / `.obsidian` / `node_modules` / `.deepseek`（记忆树另行审计）与 `deploy-backup-…`（它是 `.deepseek/` 的**整份副本**，按 basename 解析 wikilink 会制造幻影同名目标）。
+- **无论有没有记忆卡都报**：定理索引是用户自己的产物，可能先于任何记忆卡存在——第一版把这些发现放在"有卡片"分支里，被门禁断言抓出（新建库索引盖错章反而看不见）。
+- **状态**：**已实现**（`scanNoteClaims` + `counts.noteClaims` / `counts.noteIndexUnresolved` / `sections.noteClaims` / `sections.noteIndexUnresolved` + `decisions.noteClaimCards`，进体检清单与人类摘要、进体检台账）。断言 335 → **345**（含变异验证：让 `contradictions` 恒为空 ⇒ 4 条断言红）。
+- **未做（有意）**：不做 claim 级台账与内容指纹作废、不做数值反例、不做形式化——理由与方案见 `literature/notes/verification-framework-2026-09-18.md`（待拍板）。
+
+### 8.6 `cross-referenced` 由插件确定性写入（**已实现**，2026-09-18）
+
+> **来源与理由**：`cross-referenced`（与别处互证）的含义是「这份 vault 里另有一处说了同一件事」——**这是关于文件的事实，不是用户的口味**，所以要求用户点 ✅ 才给这一级，等于让用户做记账。代价是**结构性**的：每张新卡都从 `single-source` 起步，而**没有任何东西能把它升上去**，于是「单源超过 60 天」清单永远报同一批卡、唯一出路是逐张点 ✅。实测（2026-09-10 复查真实 vault）该字段全为 0，说明这条路没人走。
+
+- **判据（窄，且有否定性断言守住）**：卡片通过 `related` / `depends_on` / `source` 链到**另一份文档**（用户笔记或记忆卡，**排除 `_README.md` / `index.md` 脚手架**——层 README 里写着示例 hook `pattern: subsequence_argument`，否则每一张链到 README 的卡都会被"互证"），而**该文档正文里出现了这张卡的 `hook.pattern` 或某个 `hook.techniques`**（按词边界匹配，≥6 字符）。只共享主题不算。
+- **写入**：`verified: cross-referenced` + 凭据 `verified_by: corroboration`，**同一次编辑写完**，并**读回校验**——否则会造出体检自己那条 `unjustifiedUpgrade` 检查要抓的「等级升高但无凭据」状态。凭据取值只有两个：`user`（用户点 ✅）与 `corroboration`（体检比对成功），模型两个都不能写。
+- **`user-confirmed` 仍然只有用户能给**，❌ 仍然降一级（`wrong` 路径把凭据改回 `none`）。
+- **升的是「中间那一级」**：`utilityOf` 的验证强度 0.33 → 0.66，因此升过级的卡在低效用归档里更不容易被选中——这是设计意图（有互证的卡不该与孤立卡同价）。
+- **证据进报告、不进卡片**：`sections.corroborated` 列出「哪张卡 ← 依据哪份文档」，但不往卡里写指针——存指针会在改名后腐烂，而凭据字段已经足够让体检判真伪。报告同时进体检清单与人类摘要（**自动改等级必须可见可争议**）。
+- **失败要报**：写入未确认时进 `warnings`（与归档失败同形），并作为一个建议进体检台账。
+- **状态**：**已实现**（`findCorroboration` + `rewriteHookStats` 的 verification 参数 + `syncHookStatsToCard` 的读回校验）。断言 345 → **353**（本项 10 条，其余见 §8.6）（含"没被别处提到的卡不动""README 不算证据""第二遍是 no-op（幂等）"三条否定性断言；变异验证：让 `via` 恒为 `null` ⇒ 5 条断言红）。
+
 ## 9. 安全边界（fail-closed）
 
 - 工具面：文件读写/搜索 + 五个笔记工具（note_recall / note_strategy / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；
@@ -250,7 +278,7 @@
 **从 WikiSkill（arXiv:2608.27454）借来的两条"我们领先"的自我认知（2026-09-18 记入，防止后人反向重做）**：
 
 - **它自陈"不评估技能检索与触发"**（Limitations 第一条：为了隔离技能质量，把全部技能整段注入 prompt）。我们的 `note_recall`（统一 BM25 + hook 加权 + coverage 弱信号 + 边界硬门控）与 `note_strategy`（difficulty 主匹配 + 状态即权限 + ≤4 步迭代检索）正是它留白的那一块。⇒ **不要因为它的"三层级联"说法去重写检索**；要补的是索引行的可读性（§8.2）与截断的诚实性（§3）。
-- **它自陈"wiki 没有自动裁剪机制"**（Limitations 第三条：模式页与日志无界累积）。我们有 `archive/`、`superseded`、`autoArchive`（默认 off）、`unused` 检测与**体检台账的两个有界上限**（§8.1）。⇒ 不裁剪会累积是**已被作者承认的真问题**，我们的归档路线方向正确；这里要补的是**裁得准**（枢纽保护、下游复查），不是"加一个自动删除"。
+- **它自陈"wiki 没有自动裁剪机制"**（Limitations 第三条：模式页与日志无界累积）。我们有 `archive/`、`superseded`、`autoArchive`（**2026-09-18 起默认开**，判据是"零使用 + >90 天 + 非用户确认"，移动而非删除）、`unused` 检测与**体检台账的两个有界上限**（§8.1）。⇒ 不裁剪会累积是**已被作者承认的真问题**，我们的归档路线方向正确；这里要补的是**裁得准**（枢纽保护、下游复查），不是"加一个自动删除"。
 
 检索为纯 BM25 词法（无 embedding，语义召回靠 Tier B 可选后端、暂未启用）；三写协议仍依赖模型自律（体检提供 records 的结构校验兜底，但内容质量仍靠 prompt）；记忆架构处于 prototype 阶段、无长期 field testing；记忆面板有两套入口：Obsidian 侧 ItemView（浏览/搜索/编辑/反馈/归档）与 dsh web 的 `settings.section` 面板（`dsh/client-panel/`，主 dsh web 3080 上使用）。
 
