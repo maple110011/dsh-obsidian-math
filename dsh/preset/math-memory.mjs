@@ -1797,6 +1797,190 @@ function findCorroboration(card, candidates, links) {
 }
 
 /**
+ * Collect the notation a vault actually uses, from the DEFINITION SENTENCES in the
+ * user's own notes. Returns `[{ symbol, name, note }]`, deduplicated.
+ *
+ * WHY this shape (2026-09-18): `notation.md` has been an empty template since it was
+ * created — every row still reads 「（示例）」 — because the order was wrong: the user was
+ * asked to fill a table FIRST so that a checker would have input. Observed reality says
+ * nobody does that. This inverts it: the plugin watches how the notes are actually
+ * written, and the user is only asked a question when the same NAME turns up under more
+ * than one symbol.
+ *
+ * KNOWN LIMITS of this first version (measured on the real vault, deliberately left
+ * visible rather than papered over):
+ *   1. a definition whose right-hand side starts with math gets truncated at the first
+ *      space (`称 $L_k$ 为 $k$ 阶…` → `$k`), because there is no LaTeX parser here;
+ *   2. coverage is partial: the vault's dominant notation (`\leadsto`, 37 uses) is NOT
+ *      recovered, because it is introduced in a different sentence shape;
+ *   3. descriptive prose can be misread as a definition
+ *      (`$X_i$ 表示某指定区域的年降雨量`).
+ * The point of shipping it is to find out, from real use, whether "definition sentences"
+ * is even the right entry point.
+ */
+export function collectNotation(notes) {
+  const PATTERNS = [
+    /记\s*\$([^$]{1,30})\$\s*(?:为|表示|记作)\s*([^\n]{1,40})/g,
+    /(?:称|把)\s*\$([^$]{1,30})\$\s*(?:为|叫作|称为)\s*([^\n]{1,40})/g,
+    /\$([^$]{1,30})\$\s*(?:表示|代表|记作|称为)\s*([^\n]{1,40})/g,
+    /(?:用|以)\s*\$([^$]{1,30})\$\s*(?:表示|记|代表)\s*([^\n]{1,40})/g
+  ];
+  const out = [];
+  const seen = new Set();
+  for (const { rel, text } of notes) {
+    const body = String(text);
+    for (const pattern of PATTERNS) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(body)) !== null) {
+        const symbol = match[1].trim();
+        // The right-hand side is a Chinese phrase naming the object. Cut at the first
+        // delimiter, then drop markup. See limit (1) above: a math-led name survives
+        // only as its first token.
+        const name = match[2]
+          .split(/[，。；、,.;:：!?！？(（\[【]/)[0]
+          .replace(/[*`_>#]/g, "")
+          .replace(/[）)】\]]+$/, "")
+          .trim();
+        if (symbol === "" || symbol.length > 30) continue;
+        // A "name" with no Chinese in it is a fragment of the formula, not a name.
+        if (name === "" || name.length > 24) continue;
+        if (!/[\u4e00-\u9fff]/.test(name)) continue;
+        const key = symbol + "|" + name;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ symbol, name, note: rel });
+        if (out.length >= 200) return out;
+      }
+    }
+  }
+  return out;
+}
+
+/** Render the generated block of `notation.md` (grouped by NAME, conflicts flagged). */
+export function renderNotationBlock(entries, today = localDateString()) {
+  const byName = new Map();
+  for (const entry of entries) {
+    const list = byName.get(entry.name) ?? [];
+    list.push(entry);
+    byName.set(entry.name, list);
+  }
+  const L = [];
+  L.push(`> 本块由体检自动生成（${today}）：扫你笔记里的定义句（记/称/用 … 为/表示/记作 …）得到`);
+  L.push("> 「记号 → 名字」配对。**只报告，不改你的笔记**；上面的手工表不会被它覆盖。");
+  L.push("> ⚠️ 这是**观察版**：抽取规则会漏（定义句形态很多）、也可能误读（描述句被当成定义）。");
+  L.push("> 若某个名字下确实有多套记号且你要统一，把决定写进上面的「已采纳」表即可，本块下次仍会如实列出。");
+  if (entries.length === 0) {
+    // Silence would be the worst outcome: "the feature is broken", "there is nothing to
+    // collect" and "the switch is off" would look identical. Say which one it is.
+    L.push(">");
+    L.push("> **本次没有抽到任何记号**——要么你的笔记还没出现「记/称/用 … 为/表示/记作 …」这类定义句，");
+    L.push("> 要么抽取规则漏了（观察版已知会漏）。若你觉得自己写过定义句却没被收到，请把那一句发给助手，");
+    L.push("> 这是改进抽取规则最直接的输入。");
+    return L.join("\n");
+  }
+  L.push("");
+  L.push("| 记号 | 名字 | 出处 | 备注 |");
+  L.push("|---|---|---|---|");
+  const names = [...byName.keys()].sort((a, b) => a.localeCompare(b, "zh"));
+  for (const name of names) {
+    const list = byName.get(name);
+    const symbols = [...new Set(list.map((item) => item.symbol))];
+    const notes = [...new Set(list.map((item) => item.note))];
+    if (symbols.length > 1) {
+      L.push(`| ${symbols.join(" / ")} | ${name} | ${notes.join("、")} | **同名多记号（${symbols.length} 套）——需确认是"混用"还是"有意区分语境"** |`);
+    } else {
+      L.push(`| ${symbols[0]} | ${name} | ${notes.join("、")} |  |`);
+    }
+  }
+  return L.join("\n");
+}
+
+/**
+ * Notation hygiene + gap markers, in ONE read-only pass over the user's notes.
+ *
+ *   `gaps`      — notes carrying 待补/待核对/TODO markers, with counts. Measured on the
+ *                 real vault: 14 hits, all genuine (it admits two unproven steps and
+ *                 carries 22 markers inside one long AI-drafted file).
+ *   `notation`  — `[{ symbol, name, note }]` from `collectNotation`.
+ *   `conflicts` — names carrying MORE THAN ONE symbol. This is the only thing reported
+ *                 as a conflict: one SYMBOL under two meanings is not reported (that
+ *                 needs semantics and would cry wolf — the vault's three convergence
+ *                 arrows are plausibly deliberate context distinctions).
+ */
+export function scanNoteHygiene(root) {
+  const notes = [];
+  for (const rel of listVaultNotes(root)) {
+    try {
+      notes.push({ rel, text: readFileSync(join(root, rel), "utf8") });
+    } catch {
+      // unreadable note: skip, not an error
+    }
+  }
+  const gaps = [];
+  for (const note of notes) {
+    const matches = note.text.match(/待补|待核对|待证明|TODO|待完成/g) ?? [];
+    if (matches.length === 0) continue;
+    gaps.push({ rel: note.rel, count: matches.length });
+  }
+  gaps.sort((a, b) => b.count - a.count);
+  const notation = collectNotation(notes);
+  const byName = new Map();
+  for (const entry of notation) {
+    const list = byName.get(entry.name) ?? [];
+    list.push(entry);
+    byName.set(entry.name, list);
+  }
+  const conflicts = [...byName.entries()]
+    .map(([name, list]) => ({ name, symbols: [...new Set(list.map((item) => item.symbol))], notes: [...new Set(list.map((item) => item.note))] }))
+    .filter((entry) => entry.symbols.length > 1)
+    .sort((a, b) => b.symbols.length - a.symbols.length);
+  return {
+    gaps: gaps.slice(0, AUDIT_NOTE_MAX_ITEMS),
+    gapTotal: gaps.reduce((sum, item) => sum + item.count, 0),
+    notation,
+    conflicts: conflicts.slice(0, AUDIT_NOTE_MAX_ITEMS)
+  };
+}
+
+/**
+ * Write the generated notation block into `notation.md`, between BEGIN/END markers.
+ *
+ * Preserves everything written by hand — the block is appended if absent, replaced in
+ * place if present. The target is the file `AGENTS.md` §2 already declares as the
+ * notation system's home, so this adds no new layer.
+ *
+ * @returns `{ ok, reason }`; never throws into the audit.
+ */
+function syncNotationBlock(root, entries, today, enabled = true) {
+  const path = join(root, MEMORY_DIR, "memory", "notation.md");
+  const block = renderNotationBlock(entries, today);
+  const BEGIN = "<!-- BEGIN AUTO-NOTATION (体检生成，勿手改本块) -->";
+  const END = "<!-- END AUTO-NOTATION -->";
+  if (enabled !== true) return { ok: true, reason: "disabled" };
+  try {
+    let text = "";
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      text = "---\ntype: memory/notation\nupdated: " + today + "\n---\n\n# 记号体系（notation system）\n\n## 已采纳（adopted）\n\n| 记号 | 含义 | 领域 | 出处 | 备注 |\n|---|---|---|---|---|\n\n## 候选 / 讨论中（candidates）\n\n## 已否决（rejected）\n\n## 修订历史\n\n- " + today + " 创建\n";
+    }
+    const wrapped = BEGIN + "\n" + block + "\n" + END;
+    const start = text.indexOf(BEGIN);
+    const end = text.indexOf(END);
+    const next = start >= 0 && end > start
+      ? text.slice(0, start) + wrapped + text.slice(end + END.length)
+      : text.replace(/\s*$/, "") + "\n\n## 自动收集（体检生成，勿手改本块）\n\n" + wrapped + "\n";
+    if (next === text) return { ok: true, reason: "unchanged" };
+    writeFileSync(path, next, "utf8");
+    // Read back, not assume — the same postcondition discipline as the stats sync.
+    return readFileSync(path, "utf8").includes(BEGIN) ? { ok: true } : { ok: false, reason: "读回校验失败" };
+  } catch (error) {
+    return { ok: false, reason: String(error?.message ?? error) };
+  }
+}
+
+/**
  * Records that carry GENERAL METHODOLOGY rather than a problem-bound product.
  *
  * WHY this exists (2026-09-18): the protocol gives the same kind of content two homes.
@@ -2784,11 +2968,25 @@ export function buildAuditReport(root, helpers) {
   // collapsing them would hide how far a single wrong premise reached.
   const liveDownstreamReview = sections.downstreamReview;
   const noteClaims = scanNoteClaims(root);
+  // Note hygiene (gap markers + notation) is a second read-only pass over the same
+  // notes. Its one write is the generated notation block, whose target is the file the
+  // protocol already designates — no new layer, and hand-written rows are preserved.
+  const noteHygiene = scanNoteHygiene(root);
+  // The notation sync has its OWN kill switch (`auditMaintainNotation`), independent of
+  // whether the scan runs: a user who does not want the audit writing into
+  // `notation.md` should still get the findings reported, and vice versa.
+  const notationSync = syncNotationBlock(root, noteHygiene.notation, today, helpers.maintainNotation !== false);
+  // NOT pushed here: `warnings` is declared further down, and pushing before it exists
+  // throws "Cannot access 'warnings' before initialization" — the same trap the
+  // corroboration-failure warning hit. It is pushed inside the warnings block below.
   // Publish the note findings on `sections` right away, so every consumer (ledger,
   // checklist, human summary, panel) reads ONE derivation instead of re-scanning.
   sections.noteClaims = noteClaims.contradictions;
   sections.noteIndexUnresolved = noteClaims.unresolved;
   sections.noteIndexTotal = noteClaims.total;
+  sections.noteGaps = noteHygiene.gaps;
+  sections.notationConflicts = noteHygiene.conflicts;
+  sections.notationCollected = noteHygiene.notation.length;
   // The corroboration pass already published `sections.corroborated`; mirror the
   // failures here. The warning itself is pushed further down, INSIDE the `warnings`
   // block — `warnings` is declared after this point (first version pushed here and
@@ -2823,7 +3021,10 @@ export function buildAuditReport(root, helpers) {
     noteClaims: sections.noteClaims.length,
     noteIndexUnresolved: sections.noteIndexUnresolved.length,
     corroborated: sections.corroborated.length,
-    methodologyInRecords: sections.methodologyInRecords.length
+    methodologyInRecords: sections.methodologyInRecords.length,
+    noteGaps: sections.noteGaps.length,
+    notationConflicts: sections.notationConflicts.length,
+    notationCollected: sections.notationCollected
   };
 
   // Degraded instead of silent success (R2 `status:"degraded"`, design-intake §1
@@ -2858,6 +3059,12 @@ export function buildAuditReport(root, helpers) {
   // point the failures were collected.
   if (corroborationFailures.length > 0) {
     warnings.push(`${corroborationFailures.length} 张卡找到互证依据但等级写入未确认：${corroborationFailures.slice(0, 3).join("、")}`);
+  }
+  // A generated notation block that could not be confirmed is the same kind of claim as
+  // an archive that "succeeded": the audit says it recorded the notation, and the claim
+  // has to be falsifiable.
+  if (!notationSync.ok) {
+    warnings.push(`notation.md 自动块未确认写入：${notationSync.reason}`);
   }
   const status = warnings.length === 0 ? "ok" : "degraded";
 
@@ -3018,6 +3225,18 @@ export function buildAuditReport(root, helpers) {
     checklistLines.push(`- 一般性梳理落在了记录层（记录层的内容会被当"已沉淀"引用，而同类内容放 inbox 才会带"待打磨"标记）: ${rows.join("；")}${sections.methodologyInRecords.length > 3 ? ` … 共 ${sections.methodologyInRecords.length} 条` : ""}——逐条判断：它本该是一条 idea（移进 inbox/），还是确实服务于某道题（那就补上它关联的笔记）？`);
   }
 
+  // Gap markers and notation conflicts (see `scanNoteHygiene`). Both are properties of
+  // the user's OWN notes, so they render outside the cards branch like the other note
+  // findings.
+  if (sections.noteGaps.length > 0) {
+    const rows = sections.noteGaps.slice(0, 3).map((item) => `[[${item.rel.replace(/\.md$/, "")}]](${item.count} 处)`);
+    checklistLines.push(`- 笔记里自报的未闭合处（待补/待核对）：${rows.join("、")}${sections.noteGaps.length > 3 ? ` … 共 ${sections.noteGaps.length} 篇` : ""}——相关讨论时读原文，能补的补上；补不了就把"未闭合"写在结论旁边，不要让它悄悄变成已证。`);
+  }
+  if (sections.notationConflicts.length > 0) {
+    const rows = sections.notationConflicts.slice(0, 3).map((item) => `「${item.name}」：${item.symbols.join(" / ")}`);
+    checklistLines.push(`- 记号同名多套（自动收集自你笔记里的定义句）: ${rows.join("；")}${sections.notationConflicts.length > 3 ? ` … 共 ${sections.notationConflicts.length} 组` : ""}——**只报告不判定**：这可能是混用，也可能是有意按语境区分。在相关讨论时问一次用户，得到答复后写进 profile/notation 的已采纳表；不要自己改用户的记号。`);
+  }
+
   // ── what the audit decided BY ITSELF this pass ───────────────────────────────
   // Stated explicitly, not silently applied: a level change the user did not ask for
   // must be visible, together with the evidence, so it can be disputed.
@@ -3118,6 +3337,14 @@ export function buildAuditReport(root, helpers) {
   if (sections.methodologyInRecords.length > 0) {
     const names = sections.methodologyInRecords.slice(0, 3).map((item) => `「${item.title}」`).join("、");
     humanLines.push(`📥 有 ${sections.methodologyInRecords.length} 条"一般性梳理"被记进了**记录层**（会以"已沉淀的事实"身份被引用）：${names}${sections.methodologyInRecords.length > 3 ? " …" : ""}——同类内容放进想法层时系统会标注"待打磨"，放这里则不会。助手会在相关讨论时判断它们该移进想法层，还是确实服务于某道题（那就补上关联的笔记）。`);
+  }
+  if (sections.noteGaps.length > 0) {
+    const names = sections.noteGaps.slice(0, 3).map((item) => `「${item.rel.split("/").pop().replace(/\.md$/, "")}」(${item.count} 处)`).join("、");
+    humanLines.push(`🚧 你笔记里有 ${sections.noteGaps.length} 篇标着"待补/待核对"（共 ${noteHygiene.gapTotal} 处）：${names}${sections.noteGaps.length > 3 ? " …" : ""}——这些是你自己记下的未闭合处，助手在相关讨论时会先看它们。`);
+  }
+  if (sections.notationConflicts.length > 0) {
+    const names = sections.notationConflicts.slice(0, 3).map((item) => `「${item.name}」(${item.symbols.join(" / ")})`).join("、");
+    humanLines.push(`🔤 自动收集到 ${sections.notationCollected} 条记号定义，其中 ${sections.notationConflicts.length} 组**同名多套记号**：${names}${sections.notationConflicts.length > 3 ? " …" : ""}——可能是有意按语境区分，也可能是混用，只有你知道；已写进 \`.deepseek/memory/notation.md\` 的自动块，你回一句就定案。`);
   }
   // What the plugin upgraded on its own. Reported so the user can dispute it — an
   // automatic level change that shows up nowhere would be exactly the "the system

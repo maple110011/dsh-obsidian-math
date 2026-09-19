@@ -66,6 +66,8 @@ import {
   inconsistentWeakCards,
   indexDescriptionIssue,
   scanNoteClaims,
+  scanNoteHygiene,
+  collectNotation,
   clip,
   writeFileAtomic,
   AUDIT_SCHEMA_VERSION
@@ -2911,6 +2913,83 @@ check('archive: a real memory card is still archived',
     mreport.human.includes('一般性梳理') && mreport.counts.methodologyInRecords === flagged.length,
     JSON.stringify(mreport.counts.methodologyInRecords));
   rmSync(mroot, { recursive: true, force: true });
+}
+
+// ── notation collection + gap markers (B3 观察版, 2026-09-18) ────────────────
+// `notation.md` had been an empty template since it was created, because the user was
+// asked to fill a table FIRST so a checker would have input. This inverts the order:
+// the plugin reads the definition sentences the notes already contain, writes them into
+// a generated block, and only ASKS when one name carries several symbols.
+{
+  const nroot = mkdtempSync(join(tmpdir(), 'dsh-notation-'));
+  mkdirSync(join(nroot, '.deepseek', 'memory'), { recursive: true });
+  mkdirSync(join(nroot, '笔记'), { recursive: true });
+  writeFileSync(join(nroot, '笔记', '收敛.md'), [
+    '# 收敛',
+    '',
+    '$\\leadsto$ 表示依分布收敛，在概率语境下也写作 $\\xrightarrow{d}$。',
+    '$\\stackrel{as}{\\to}$ 表示依分布收敛（另一种写法）。',
+    '$\\xrightarrow{P}$ 表示依概率收敛。',
+    '这里还有一处待核对：弱收敛与依分布收敛是否等同。'
+  ].join('\n'));
+  // The user's OWN hand-written rows must survive the generated block.
+  const handWritten = ['---', 'type: memory/notation', '---', '', '# 记号体系', '', '## 已采纳（adopted）', '', '| 记号 | 含义 |', '|---|---|', '| $\\sigma$ | 标准差 |'].join('\n');
+  writeFileSync(join(nroot, '.deepseek', 'memory', 'notation.md'), handWritten);
+
+  const hyg = scanNoteHygiene(nroot);
+  check('notation: definition sentences are collected as symbol → name pairs',
+    hyg.notation.length >= 3 && hyg.notation.some((e) => e.symbol.includes('leadsto') && e.name.includes('依分布收敛')),
+    JSON.stringify(hyg.notation));
+  check('notation: one NAME carried by several symbols is reported as a conflict',
+    hyg.conflicts.some((c) => c.name.includes('依分布收敛') && c.symbols.length >= 2),
+    JSON.stringify(hyg.conflicts));
+  check('notation: the 记号 hygiene scan and the gap scan share one pass',
+    hyg.gaps.some((g) => g.rel === '笔记/收敛.md' && g.count === 1),
+    JSON.stringify(hyg.gaps));
+
+  const nreport = buildAuditReport(nroot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const notationText = readFileSync(join(nroot, '.deepseek', 'memory', 'notation.md'), 'utf8');
+  check('notation: the generated block lands in notation.md between its markers',
+    notationText.includes('BEGIN AUTO-NOTATION') && notationText.includes('END AUTO-NOTATION')
+    && notationText.includes('依分布收敛'),
+    notationText.slice(0, 120));
+  check('notation: the hand-written rows are preserved (generated block never overwrites them)',
+    notationText.includes('| $\\sigma$ | 标准差 |') && notationText.includes('## 已采纳'),
+    notationText.includes('标准差') ? 'kept' : 'LOST');
+  check('notation: a second audit does not duplicate the block',
+    (() => {
+      buildAuditReport(nroot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+      const again = readFileSync(join(nroot, '.deepseek', 'memory', 'notation.md'), 'utf8');
+      return again.split('BEGIN AUTO-NOTATION').length - 1 === 1;
+    })(), 'block count');
+  check('notation: the finding reaches the human summary and the counts',
+    nreport.counts.notationCollected >= 2 && nreport.counts.noteGaps === 1
+    && (nreport.human.includes('记号') || nreport.human.includes('待补')),
+    JSON.stringify({ collected: nreport.counts.notationCollected, gaps: nreport.counts.noteGaps }));
+
+  // The switch must be able to turn the WRITE off without turning the FINDING off.
+  const quietRoot = mkdtempSync(join(tmpdir(), 'dsh-notation-off-'));
+  mkdirSync(join(quietRoot, '.deepseek', 'memory'), { recursive: true });
+  mkdirSync(join(quietRoot, '笔记'), { recursive: true });
+  writeFileSync(join(quietRoot, '笔记', 'x.md'), '$\\alpha$ 表示显著性水平。');
+  const offReport = buildAuditReport(quietRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false, maintainNotation: false });
+  check('notation: auditMaintainNotation:false does not write, but still reports',
+    !existsSync(join(quietRoot, '.deepseek', 'memory', 'notation.md')) && offReport.counts.notationCollected >= 1,
+    JSON.stringify({ file: existsSync(join(quietRoot, '.deepseek', 'memory', 'notation.md')), collected: offReport.counts.notationCollected }));
+
+  // An empty collection must SAY so rather than leaving the block blank or absent.
+  const bare2 = mkdtempSync(join(tmpdir(), 'dsh-notation-empty-'));
+  mkdirSync(join(bare2, '.deepseek', 'memory'), { recursive: true });
+  mkdirSync(join(bare2, '笔记'), { recursive: true });
+  writeFileSync(join(bare2, '笔记', 'y.md'), '这篇笔记里没有任何定义句。');
+  buildAuditReport(bare2, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const emptyText = readFileSync(join(bare2, '.deepseek', 'memory', 'notation.md'), 'utf8');
+  check('notation: finding nothing is stated explicitly (not silence)',
+    emptyText.includes('本次没有抽到任何记号'),
+    emptyText.includes('BEGIN AUTO-NOTATION') ? 'block written' : 'NO BLOCK');
+  rmSync(nroot, { recursive: true, force: true });
+  rmSync(quietRoot, { recursive: true, force: true });
+  rmSync(bare2, { recursive: true, force: true });
 }
 
 rmSync(root, { recursive: true, force: true });
