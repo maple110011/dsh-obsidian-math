@@ -1639,6 +1639,11 @@ function actionableAuditEntries(sections, hintFor) {
   for (const rel of sections.corroborationFailures ?? []) {
     push(rel, "retry-corroboration-write", "corroboration-write-failed", "verified=single-source", rel);
   }
+  // Methodology that hardened into the record layer: a recommendation to re-route it
+  // (to `inbox/`) or to bind it to the problem it came from.
+  for (const item of sections.methodologyInRecords ?? []) {
+    push(item.rel, "reroute-to-idea-layer", "methodology-in-records", `reason=${item.reason}`, `${item.title}（${item.reason}）`);
+  }
   return out;
 }
 
@@ -1760,15 +1765,17 @@ function listVaultNotes(root, maxFiles = 4000) {
  * ❌ still downgrades one level. This only fills in the middle grade, with evidence.
  *
  * What counts as corroboration (deliberately narrow, and the reason is asserted):
- *   another document that this card links to (`related` or `depends_on`, resolved to an
- *   actual file) MENTIONS this card's hook signature — its `pattern` or one of its
- *   `techniques` — in its own text. A shared topic is not enough; the other document has
- *   to name the same structural pattern or technique, which is what "cross-referenced"
- *   claims. Scaffold files (`_README.md`, `index.md`) are excluded: the layer READMEs
- *   document an EXAMPLE hook (`pattern: subsequence_argument`) and would otherwise
- *   "corroborate" every card that links to them.
+ *   ANOTHER CARD cannot vouch for this one. The evidence must be one of the USER'S OWN
+ *   NOTES (`listVaultNotes`) that this card links to (`related` / `depends_on` /
+ *   `source`) and that mentions this card's hook signature — its `pattern` or one of its
+ *   `techniques` — in its own text. A shared topic is not enough, and neither is another
+ *   agent-authored card agreeing: two guesses agreeing would mint a "cross-referenced"
+ *   grade out of nothing, which is precisely how a store gets more wrong as it grows.
+ *   Scaffold files (`_README.md`, `index.md`) are excluded: the layer READMEs document
+ *   an EXAMPLE hook (`pattern: subsequence_argument`) and would otherwise "corroborate"
+ *   every card that links to them.
  *
- * @returns the vault-relative path of the corroborating document, or null.
+ * @returns the vault-relative path of the corroborating NOTE, or null.
  */
 function findCorroboration(card, candidates, links) {
   const signatures = [
@@ -1787,6 +1794,55 @@ function findCorroboration(card, candidates, links) {
     }
   }
   return null;
+}
+
+/**
+ * Records that carry GENERAL METHODOLOGY rather than a problem-bound product.
+ *
+ * WHY this exists (2026-09-18): the protocol gives the same kind of content two homes.
+ * `AGENTS.md` §2 routes "一般性数学思路/方法/技巧/观点" to `inbox/` (the idea layer,
+ * whose injection is labelled 待打磨), while §4 routes "构造的例子、反例、分解计划、
+ * 障碍、**提取到的证明模式**" to `records/` (type `artifact`) — and "提取到的证明模式"
+ * and "一般性方法" are the same thing. Where such a card lands decides whether it is
+ * treated as SETTLED (records: injected with no provisional marker, citable as memory)
+ * or as a DRAFT (inbox: labelled 待打磨). Both are legal, so nothing ever caught the
+ * difference — and the user's worry is exactly this: an agent's own methodological
+ * gloss, possibly slightly off, hardening into "fact" and being reused and re-derived
+ * from there.
+ *
+ * Shape being detected: the user's own observation records are problem-bound (they link
+ * the note or the question they came from) and concrete. A card that names no user note,
+ * and whose body contains no formula or number at all, reads as pure talk.
+ *
+ * Deliberately TWO conditions together, and only for `artifact`: reporting every
+ * note-less record would cry wolf on ordinary observations, and a check that cries wolf
+ * gets ignored. Reported, never moved — the model decides whether a card belongs in
+ * `inbox/` or should instead be tied to the problem it served.
+ *
+ * @returns array of `{ title, rel, reason }`.
+ */
+export function methodologyInRecordLayer(records, linkTargetsOf) {
+  const out = [];
+  for (const card of records) {
+    if (card.type !== "artifact") continue;
+    const links = linkTargetsOf(card);
+    // A link to a USER NOTE is the binding that makes a card problem-bound (`[[笔记/…]]`
+    // or a note stem). Links to episodes/cards do not count.
+    const boundToNote = links.some((target) => {
+      const text = String(target);
+      if (text.startsWith(".deepseek/") || text.startsWith("rec-") || text.startsWith("tpl-") || text.startsWith("strat-")) return false;
+      return !/^\d{4}-\d{2}-\d{2}/.test(text); // episode files are date-stamped
+    });
+    if (boundToNote) continue;
+    const body = String(card.body ?? "");
+    // `$` is END-OF-LINE in a regex, so it must be escaped to mean "LaTeX delimiter";
+    // without the backslash a body containing any `$…$` was still caught by the other
+    // alternatives, but the intent would have been lost silently.
+    const hasConcrete = /\$|\\[a-zA-Z]+|[0-9]|≤|≥|≠|→|⟹|⟸|⇔/.test(body);
+    if (hasConcrete) continue;
+    out.push({ title: card.title, rel: card.rel, reason: "既未关联任何笔记，正文也没有公式或数字" });
+  }
+  return out.slice(0, 8);
 }
 
 /**
@@ -2173,6 +2229,9 @@ export function buildAuditReport(root, helpers) {
     try {
       const rawText = readFileSync(card.filePath, "utf8");
       const body = stripFrontmatter(rawText);
+      // Kept on the card: the methodology-in-record-layer check needs the PROSE (the
+      // parsed card object carries fields, not the body).
+      card.body = body;
       const bodyLines = body.split(/\r?\n/).filter((line) => line.trim() !== "").length;
       if (bodyLines > AUDIT_BODY_MAX_LINES) {
         structural.tooLong.push(`${card.title}(${bodyLines} 行 > ${AUDIT_BODY_MAX_LINES})`);
@@ -2441,31 +2500,31 @@ export function buildAuditReport(root, helpers) {
   // and the write is verified by reading the file back — otherwise the audit would mint
   // the exact "level raised with no witness" state its own `unjustifiedUpgrade` check
   // exists to catch.
-  // Evidence pool for the corroboration pass: the user's own notes AND the resource
-  // layer. Indexed by basename AND by vault-relative path, because `related:` in the
-  // wild links by bare name (`[[好集原理]]`) as often as by path
-  // (`[[笔记/概率/好集原理]]`) — a basename-only index silently finds nothing for the
-  // first form, which is how the first implementation of this pass wrote no upgrades.
+  // Evidence pool for the corroboration pass: the USER'S OWN NOTES ONLY.
+  //
+  // Why not memory cards too (first version included them, and that was wrong): the
+  // point of this pass is "the user's own material already says this". A *card* is
+  // usually something the agent wrote, so allowing cards as evidence would let one
+  // agent-authored note confirm another — two guesses agreeing would mint a
+  // `cross-referenced` grade out of nothing, which is exactly the "it gets more wrong
+  // as it accumulates" failure. Cards can still LINK to each other; what they cannot
+  // do is vouch for each other.
   const corroborationDocs = new Map();
   {
-    const addCandidate = (rel) => {
+    for (const rel of listVaultNotes(root)) {
       const stem = String(rel).split("/").at(-1).replace(/\.md$/i, "");
-      // Scaffold files document an EXAMPLE hook (`pattern: subsequence_argument`), so
-      // treating them as evidence would "corroborate" every card that links to a README.
-      if (AUDIT_CARD_SCAFFOLD.has(String(rel).split("/").at(-1)) || stem.startsWith("_")) return;
       const key = String(rel).replace(/\.md$/i, "");
-      const entry = { rel: key + ".md" };
-      if (corroborationDocs.has(key)) return;
+      if (corroborationDocs.has(key)) continue;
+      let text;
       try {
-        entry.text = readFileSync(join(root, key + ".md"), "utf8");
+        text = readFileSync(join(root, key + ".md"), "utf8");
       } catch {
-        return; // unreadable candidate: simply not evidence
+        continue; // unreadable candidate: simply not evidence
       }
+      const entry = { rel: key + ".md", text };
       corroborationDocs.set(key, entry);
       if (!corroborationDocs.has(stem)) corroborationDocs.set(stem, entry);
-    };
-    for (const rel of listVaultNotes(root)) addCandidate(rel);
-    for (const card of cards) addCandidate(card.rel);
+    }
   }
   const corroborated = [];
   const corroborationFailures = [];
@@ -2623,6 +2682,13 @@ export function buildAuditReport(root, helpers) {
     weak: weak.filter(live).map(cardRef),
     unused: unused.filter(live).map((card) => ({ ...cardRef(card), days: card.days ?? null })),
     unverified: unverified.filter(live).map(cardRef),
+    // General methodology that landed in the RECORD layer (see
+    // `methodologyInRecordLayer`): it reads as settled here, while the same content in
+    // `inbox/` would be injected as 待打磨. Reported so the routing can be corrected.
+    methodologyInRecords: methodologyInRecordLayer(
+      cards.filter(live),
+      (card) => extractLinks({ source: "", related: card.related, depends_on: card.dependsOn })
+    ),
     // Most-similar pair first (see the sort above); `jaccard` is carried so the
     // checklist can state WHY this pair is at the top.
     duplicates: liveDuplicates.slice(0, 3).map(({ a, b, jaccard }) => ({
@@ -2756,7 +2822,8 @@ export function buildAuditReport(root, helpers) {
     autoArchived: sections.archived.length,
     noteClaims: sections.noteClaims.length,
     noteIndexUnresolved: sections.noteIndexUnresolved.length,
-    corroborated: sections.corroborated.length
+    corroborated: sections.corroborated.length,
+    methodologyInRecords: sections.methodologyInRecords.length
   };
 
   // Degraded instead of silent success (R2 `status:"degraded"`, design-intake §1
@@ -2911,6 +2978,18 @@ export function buildAuditReport(root, helpers) {
     checklistLines.push("（尚无记忆卡，无可体检内容）");
   }
 
+  // The routing finding. Stated with the ACTION, because the fix is a decision the
+  // model can make from the card's content: move it to the idea layer, or tie it to
+  // the problem it actually came from. Outside the `cards.length > 0` branch for the
+  // same reason as the note findings below — it is about records, not about the layers
+  // that carry statistics.
+  // (One line only: an earlier version ALSO pushed this inside the cards branch, so the
+  // finding was printed twice — caught by the fixture output, not by an assertion.)
+  if (sections.methodologyInRecords.length > 0) {
+    const rows = sections.methodologyInRecords.slice(0, 3).map((item) => `[[${item.rel.replace(/\.md$/, "")}|${item.title}]]（${item.reason}）`);
+    checklistLines.push(`- 一般性梳理落在了记录层（记录层的内容会被当"已沉淀"引用，而同类内容放 inbox 才会带"待打磨"标记）: ${rows.join("；")}${sections.methodologyInRecords.length > 3 ? ` … 共 ${sections.methodologyInRecords.length} 条` : ""}——逐条判断：它本该是一条 idea（移进 inbox/），还是确实服务于某道题（那就补上它关联的笔记）？`);
+  }
+
   // ── note scope ───────────────────────────────────────────────────────────────
   // Rendered OUTSIDE the `cards.length > 0` branch on purpose. The theorem index is
   // the user's own artifact and predates (or outlives) any memory card, so gating
@@ -2928,6 +3007,15 @@ export function buildAuditReport(root, helpers) {
   if (sections.noteIndexUnresolved.length > 0) {
     const rows = sections.noteIndexUnresolved.slice(0, 3).map((item) => `${item.name} → [[${item.target}]]`);
     checklistLines.push(`- 定理索引指向不存在的笔记（读者与 agent 都按名字找，指错了就等于找不到）: ${rows.join("；")}${sections.noteIndexUnresolved.length > 3 ? ` … 共 ${sections.noteIndexUnresolved.length} 条` : ""}`);
+  }
+  // The routing finding. Stated with the ACTION, because the fix is a decision the
+  // model can make from the card's content: move it to the idea layer, or tie it to
+  // the problem it actually came from. Outside the `cards.length > 0` branch for the
+  // same reason as the note findings below — it is about records, not about the layers
+  // that carry statistics.
+  if (sections.methodologyInRecords.length > 0) {
+    const rows = sections.methodologyInRecords.slice(0, 3).map((item) => `[[${item.rel.replace(/\.md$/, "")}|${item.title}]]（${item.reason}）`);
+    checklistLines.push(`- 一般性梳理落在了记录层（记录层的内容会被当"已沉淀"引用，而同类内容放 inbox 才会带"待打磨"标记）: ${rows.join("；")}${sections.methodologyInRecords.length > 3 ? ` … 共 ${sections.methodologyInRecords.length} 条` : ""}——逐条判断：它本该是一条 idea（移进 inbox/），还是确实服务于某道题（那就补上它关联的笔记）？`);
   }
 
   // ── what the audit decided BY ITSELF this pass ───────────────────────────────
@@ -3026,6 +3114,10 @@ export function buildAuditReport(root, helpers) {
   if (sections.noteIndexUnresolved.length > 0) {
     const names = sections.noteIndexUnresolved.slice(0, 3).map((item) => `「${item.name}」→ ${item.target}`).join("、");
     humanLines.push(`🔗 定理索引里有 ${sections.noteIndexUnresolved.length} 条指向不存在的笔记：${names}——按名字找不到就等于这条定理没登记。`);
+  }
+  if (sections.methodologyInRecords.length > 0) {
+    const names = sections.methodologyInRecords.slice(0, 3).map((item) => `「${item.title}」`).join("、");
+    humanLines.push(`📥 有 ${sections.methodologyInRecords.length} 条"一般性梳理"被记进了**记录层**（会以"已沉淀的事实"身份被引用）：${names}${sections.methodologyInRecords.length > 3 ? " …" : ""}——同类内容放进想法层时系统会标注"待打磨"，放这里则不会。助手会在相关讨论时判断它们该移进想法层，还是确实服务于某道题（那就补上关联的笔记）。`);
   }
   // What the plugin upgraded on its own. Reported so the user can dispute it — an
   // automatic level change that shows up nowhere would be exactly the "the system

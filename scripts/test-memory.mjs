@@ -2802,6 +2802,29 @@ check('archive: a real memory card is still archived',
   check('corroboration: a layer README is not evidence (its example hook corroborates nothing)',
     /verified:\s*single-source/.test(readFileSync(lonelyPath, 'utf8')),
     'README documents pattern: some_unique_pattern_nobody_else_names');
+  // Two agent-written cards agreeing must NOT mint a `cross-referenced` grade: that is
+  // the "it gets more wrong as it accumulates" failure. Evidence has to be the user's
+  // own note.
+  {
+    const twoCardsRoot = mkdtempSync(join(tmpdir(), 'dsh-corr-cards-'));
+    mkdirSync(join(twoCardsRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+    writeFileSync(join(twoCardsRoot, '.deepseek', 'memory', 'records', 'peer.md'), card([
+      '---', 'title: 另一张卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+      'hook:', '  pattern: shared_guess_pattern', '  verified: single-source', '---', '',
+      '# 我也这么猜 shared_guess_pattern'
+    ]));
+    writeFileSync(join(twoCardsRoot, '.deepseek', 'memory', 'records', 'subject.md'), card([
+      '---', 'title: 待互证的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+      'related: "[[peer]]"', 'hook:', '  pattern: shared_guess_pattern',
+      '  verified: single-source', '---', '', '# 内容'
+    ]));
+    const peerReport = buildAuditReport(twoCardsRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+    check('corroboration: another agent-written CARD cannot vouch for a card (two guesses ≠ evidence)',
+      peerReport.sections.corroborated.length === 0
+      && /verified:\s*single-source/.test(readFileSync(join(twoCardsRoot, '.deepseek', 'memory', 'records', 'subject.md'), 'utf8')),
+      JSON.stringify(peerReport.sections.corroborated));
+    rmSync(twoCardsRoot, { recursive: true, force: true });
+  }
   check('corroboration: the upgrade is reported to the user, not applied silently',
     first.human.includes('与他处互证') && first.report.includes('cross-referenced'),
     first.human.slice(0, 200));
@@ -2818,6 +2841,76 @@ check('archive: a real memory card is still archived',
     !second.sections.unverified.some((card) => card.rel.endsWith('corroborated.md')),
     JSON.stringify(second.sections.unverified.map((c) => c.rel)));
   rmSync(corrRoot, { recursive: true, force: true });
+}
+
+// ── methodology that hardened into the RECORD layer (2026-09-18) ─────────────
+// The protocol gives one kind of content two homes: general methodology goes to
+// `inbox/` (injected as 待打磨) or, as "提取到的证明模式", to `records/` as an artifact
+// (injected as settled). Both are legal, so nothing caught the difference. The user's
+// worry is exactly this: an agent's own gloss, possibly slightly off, hardening into
+// "fact" and being reused from there.
+{
+  const mroot = mkdtempSync(join(tmpdir(), 'dsh-methodology-'));
+  mkdirSync(join(mroot, '.deepseek', 'memory', 'records'), { recursive: true });
+  mkdirSync(join(mroot, '笔记'), { recursive: true });
+  // `front` = frontmatter fields (AFTER the opening `---`); `body` = the card's prose.
+  // An earlier version of this helper put the prose INSIDE the frontmatter and left the
+  // body empty, so the "concrete artifact" fixture was itself a formula-less card and
+  // the negative assertion failed for the wrong reason.
+  const record = (front, body) => card(['---', ...front, '---', '', body]);
+  // ① general methodological talk, bound to nothing, no formula → must be reported.
+  writeFileSync(join(mroot, '.deepseek', 'memory', 'records', 'loose.md'), record([
+    'type: artifact', 'status: active', 'updated: 2026-01-01',
+    'title: 一条通用梳理', 'hook:', '  pattern: general_gloss', '  verified: single-source',
+    'source: "[[2026-01-01-ep]]"'
+  ], '# 遇到这类问题可以先看结构再选工具'));
+  // ② same kind of card, but CONCRETE (has a formula) → not reported.
+  writeFileSync(join(mroot, '.deepseek', 'memory', 'records', 'concrete.md'), record([
+    'type: artifact', 'status: active', 'updated: 2026-01-01',
+    'title: 带公式的产物', 'hook:', '  pattern: concrete_one', '  verified: single-source',
+    'source: "[[2026-01-01-ep]]"'
+  ], '# 反例：$f_n(x)=nx$ 在 $[0,1]$ 上不一致收敛'));
+  // ③ bound to a USER NOTE → not reported (it belongs to a problem).
+  mkdirSync(join(mroot, '笔记', '分析'), { recursive: true });
+  writeFileSync(join(mroot, '笔记', '分析', '某题.md'), '# 某题\n');
+  writeFileSync(join(mroot, '.deepseek', 'memory', 'records', 'bound.md'), record([
+    'type: artifact', 'status: active', 'updated: 2026-01-01',
+    'title: 与某题绑定的产物', 'related: "[[笔记/分析/某题]]"', 'hook:',
+    '  pattern: bound_one', '  verified: single-source', 'source: "[[2026-01-01-ep]]"'
+  ], '# 这道题的分解计划'));
+  // ④ a `fact` record with no formula → NOT reported: this check is about the
+  // artifact/methodology route only, and observations are legitimately prose.
+  writeFileSync(join(mroot, '.deepseek', 'memory', 'records', 'observation.md'), card([
+    '---', 'type: fact', 'status: active', 'updated: 2026-01-01', 'title: 一条观察',
+    'hook:', '  pattern: observation_one', '  verified: single-source',
+    'source: "[[2026-01-01-ep]]"', '---', '', '# 用户说他在读 Tao 的实分析第三章'
+  ]));
+  const mreport = buildAuditReport(mroot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const flagged = mreport.sections.methodologyInRecords.map((item) => item.rel);
+  // Assert per FIXTURE, not on the total: the shared audit fixtures above legitimately
+  // contain methodology-shaped artifacts too, so "exactly one finding" would be
+  // asserting a property of the whole test file rather than of this check.
+  check('methodology: general methodology in the RECORD layer is reported',
+    flagged.some((rel) => rel.endsWith('loose.md')),
+    JSON.stringify(flagged));
+  check('methodology: a concrete artifact (has a formula) is NOT reported',
+    !flagged.some((rel) => rel.includes('concrete.md')),
+    JSON.stringify(flagged) + ' | concrete body: ' + JSON.stringify(stripFrontmatter(readFileSync(join(mroot, '.deepseek', 'memory', 'records', 'concrete.md'), 'utf8'))));
+  check('methodology: an artifact bound to a user note is NOT reported',
+    !flagged.some((rel) => rel.includes('bound.md')), JSON.stringify(flagged));
+  check('methodology: a prose `fact` observation is NOT reported (the check knows its scope)',
+    !flagged.some((rel) => rel.includes('observation.md')), JSON.stringify(flagged));
+  // The reason must say WHY, so a reader can disagree with the classification.
+  check('methodology: the finding carries its reason (not an opaque flag)',
+    mreport.sections.methodologyInRecords.every((item) => item.reason.includes('笔记') && item.reason.includes('公式')),
+    JSON.stringify(mreport.sections.methodologyInRecords.map((item) => item.reason)));
+  check('methodology: the finding is explained with the fix, not just listed',
+    mreport.report.includes('落在了记录层') && mreport.report.includes('移进'),
+    mreport.report.slice(0, 160));
+  check('methodology: the user-facing summary says it too',
+    mreport.human.includes('一般性梳理') && mreport.counts.methodologyInRecords === flagged.length,
+    JSON.stringify(mreport.counts.methodologyInRecords));
+  rmSync(mroot, { recursive: true, force: true });
 }
 
 rmSync(root, { recursive: true, force: true });
