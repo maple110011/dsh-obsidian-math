@@ -3,7 +3,7 @@
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、决策、已修坑、未做事项与工作约定。
 > 当前版本：0.7.8
 > （本文件描述**当前**状态；它与 `package.json` 的一致性由 `check-version-consistency.mjs` 守卫）
-> 最后更新：2026-09-18（0.7.8）——**治理闭环 + 记录纪律**：净增益 `gain`、有方向的依据链 `depends_on` 与失效级联、接地门、状态即权限、边界随否决收窄、`decision_guidance`；**体检台账**（`cache/audit-ledger.jsonl`，跨次判定史，"此前已在账"不再当作新问题）、**索引行说明下限**、**卡片尺寸上限**、**预算截断自报**、**破坏性写入原子化 + 失败进报告**、注入预算档位（含设置页入口）。**0.7.7 与它之间没有 Release**：0.7.8 装的是 0.7.7 之后 43 个提交的全部用户可见改动。门禁 38 → **41**，零 token 回归 240 → **375** 项。
+> 最后更新：2026-09-18（0.7.8）——**治理闭环 + 记录纪律**：净增益 `gain`、有方向的依据链 `depends_on` 与失效级联、接地门、状态即权限、边界随否决收窄、`decision_guidance`；**体检台账**（`cache/audit-ledger.jsonl`，跨次判定史，"此前已在账"不再当作新问题）、**索引行说明下限**、**卡片尺寸上限**、**预算截断自报**、**破坏性写入原子化 + 失败进报告**、注入预算档位（含设置页入口）。**0.7.7 与它之间没有 Release**：0.7.8 装的是 0.7.7 之后 43 个提交的全部用户可见改动。门禁 38 → **41**，零 token 回归 240 → **376** 项。
 > 更早：2026-09-15（0.7.7）——用户实测的三处缺陷：**工具返回值不合 schema**（dsh 对成功返回值也严格校验 + `additionalProperties: false`，坑 75）、**`note_recall` 遇到边界卡直接抛异常**（`entry.doc.X` 形状错误，零覆盖分支，坑 76）、**链接跳转的端口/令牌不稳定 + 点链接弹外部网页**（`target="_blank"` 与跨源导航，坑 77）。门禁 35 → **38**。此前的 2026-09-14（0.7.6）：「新建会话」静默失效的根因与修复（agent preset 的 persona 字段 `text`→`prefix`，见坑 70）+ 卡顿随文档规模增长的实测（坑 71、`sidebar-performance.md` §0.3）。更早的 2026-08 大改收尾——仓库文档大改 + 文献库子系统 + 记忆系统强化（两轮）+ Phase 1 解耦 + Phase 2a/2b dsh web 面板 + 面板方案 A（两实例）。**0.7.2 时**（记忆纠错与确定性自维护落地，见 `self-correction.md`；上一版 0.7.1 = 2026-08-26）。0.7.1 新增 **dsh-native 分发重构**（bundle + `dsh plugin add` 原生安装、`--direct` 离线拷贝、owner marker 冲突解决、对称 `uninstall`；功能无变化，仅优化安装方式），详见 `docs/dsh-native-refactor.md` 与 `docs/installation.md`。
 
 ## 1. 项目是什么
@@ -37,7 +37,7 @@
 | `docs/dsh-panel-research.md` | dsh web 面板机制调研（客户端契约 / settings.section 槽位 / profile 装配名单 / 宿主路由） |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
-| `scripts/test-memory.mjs` | 零 token 记忆回归（375 项断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 记忆回归（376 项断言，进 `npm test`） |
 | `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（47 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、四条写入型端点；进 `npm test`） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 项：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写回归） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 项，对真实 dsh；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
@@ -272,7 +272,7 @@
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 375 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
+npm test                        # 376 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile

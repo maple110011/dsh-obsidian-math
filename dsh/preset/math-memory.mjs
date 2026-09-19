@@ -1724,6 +1724,11 @@ function noteLinkTarget(raw) {
  */
 function listVaultNotes(root, maxFiles = 4000) {
   const out = [];
+  // Protocol/scaffold files are not the user's notes: `AGENTS.md` documents the marker
+  // vocabulary (it writes 待补 in backticks as an INSTRUCTION), so scanning it produced
+  // a phantom "gap" in the vault's own protocol file — caught by running the scan on the
+  // real vault before shipping. Same exclusion as `classifyVaultDoc`.
+  const SKIP_FILES = new Set(["AGENTS.md", "vault-AGENTS.md"]);
   const walk = (rel) => {
     if (out.length >= maxFiles) return;
     const absolute = rel === "" ? root : join(root, rel);
@@ -1741,6 +1746,7 @@ function listVaultNotes(root, maxFiles = 4000) {
         if (name.startsWith(".")) continue;
         walk(rel === "" ? name : rel + "/" + name);
       } else if (entry.isFile() && name.toLowerCase().endsWith(".md")) {
+        if (SKIP_FILES.has(name)) continue;
         out.push(rel === "" ? name : rel + "/" + name);
       }
     }

@@ -2946,6 +2946,13 @@ check('archive: a real memory card is still archived',
   check('notation: the 记号 hygiene scan and the gap scan share one pass',
     hyg.gaps.some((g) => g.rel === '笔记/收敛.md' && g.count === 1),
     JSON.stringify(hyg.gaps));
+  // The protocol file documents the marker vocabulary (`待补` appears in backticks as an
+  // instruction), so scanning it invented a gap in the vault's own AGENTS.md — found by
+  // running this scan on the real vault before shipping.
+  writeFileSync(join(nroot, 'AGENTS.md'), '# 协议\n\n- 结论：标注未闭合点（`待补：…`）\n');
+  check('notation: the protocol file is not treated as a note (no phantom gap in AGENTS.md)',
+    !scanNoteHygiene(nroot).gaps.some((g) => g.rel === 'AGENTS.md'),
+    JSON.stringify(scanNoteHygiene(nroot).gaps.map((g) => g.rel)));
 
   const nreport = buildAuditReport(nroot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
   const notationText = readFileSync(join(nroot, '.deepseek', 'memory', 'notation.md'), 'utf8');
