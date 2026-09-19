@@ -17,7 +17,7 @@
 
 /** Human label for a card status. */
 export function statusLabel(status) {
-  const map = { 'to-process': '待转换', 'unread': '未读', 'reading': '研读中', 'distilled': '已蒸馏', 'archived': '已归档' };
+  const map = { 'to-process': '待转换', 'unread': '未读', 'reading': '研读中', 'distilled': '已蒸馏', 'archived': '已归档', 'superseded': '已取代' };
   return map[status] || status;
 }
 
@@ -62,6 +62,51 @@ export function isStalled(status, days) {
 export function statusCell(status, days) {
   const label = statusLabel(status);
   return isStalled(status, days) ? label + '（已停 ' + days + ' 天）' : label;
+}
+
+/** Lowercase, strip everything that is not a letter or a digit. */
+export function normKey(s) {
+  return String(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/**
+ * Warn — never silently proceed — when a run would create a SECOND card for a paper
+ * the library already holds under a DIFFERENT citekey.
+ *
+ * Why this exists (2026-09-18): dedup in the importer is by citekey only. So the
+ * ordinary workflow "import the web/abstract source now, add the PDF + MinerU full
+ * text later" produces two cards for one paper — the Danus case, where
+ * `.index.json` ended up holding two entries with an identical `doi` and the index
+ * showed the same title twice.
+ *
+ * The fix is deliberately NOT automatic dedup: choosing which card survives (and what
+ * to do with the other) needs a judgement, and silently merging would throw away
+ * whichever provenance is weaker. So the importer builds the card as usual and says
+ * so loudly; the convention for resolving it lives in `literature/README.md`.
+ *
+ * Matching is on DOI (exact, normalized) or on the normalized title, checked against
+ * the library's existing index entries AND against the other entries in this same run
+ * (so a duplicate appearing twice inside one bib is caught too). Lives here, not in the
+ * importer, so a gate can assert it IN-PROCESS: this repository's sandbox forbids
+ * capturing a child process's output.
+ *
+ * @param {{key: string, fields: Record<string, string>}} entry incoming BibTeX entry
+ * @param {Array<{citekey: string, doi?: string, title?: string}>} indexEntries already in the library
+ * @param {Array<{key: string, fields: Record<string, string>}>} siblings other entries of this run
+ * @returns {Array<{citekey: string, because: string}>} per-hit reason, [] when unique
+ */
+export function findDuplicateEntries(entry, indexEntries, siblings = []) {
+  const doi = normKey(entry.fields?.doi || '');
+  const title = normKey(entry.fields?.title || '');
+  const hits = [];
+  const consider = (citekey, otherDoi, otherTitle) => {
+    if (!citekey || citekey === entry.key) return;
+    if (doi !== '' && normKey(otherDoi || '') === doi) hits.push({ citekey, because: `同一 DOI ${entry.fields.doi}` });
+    else if (title !== '' && normKey(otherTitle || '') === title) hits.push({ citekey, because: '标题相同' });
+  };
+  for (const other of Array.isArray(indexEntries) ? indexEntries : []) consider(other.citekey, other.doi, other.title);
+  for (const other of Array.isArray(siblings) ? siblings : []) consider(other.key, other.fields?.doi, other.fields?.title);
+  return hits;
 }
 
 /** Render the generated index table (plus a staleness note when anything stalled). */

@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, stat
 import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { cardProgress, renderIndexBlock } from './lib/lit-index.mjs';
+import { cardProgress, renderIndexBlock, findDuplicateEntries } from './lib/lit-index.mjs';
 
 const log = (...a) => console.log(...a);
 const warn = (...a) => console.error('WARN', ...a);
@@ -401,6 +401,25 @@ function main() {
   const report = [];
   const missingPdf = [], missingMd = [];
   const jsonEntries = [];
+  const duplicateFindings = [];
+
+  // Loaded ONCE: the duplicate check below compares every incoming entry against the
+  // library's existing index, and re-reading the file per entry would be pointless IO.
+  const priorIndexEntries = loadJson(join(out, '.index.json'), { entries: [] }).entries ?? [];
+
+  /**
+   * Say out loud (never silently) that this run adds a SECOND card for a paper the
+   * library already holds. Kept as a closure because both the dry-run and the real
+   * run must report it, and a dry-run that stays quiet about duplicates would defeat
+   * the purpose of running it first.
+   */
+  const reportDuplicates = () => {
+    if (duplicateFindings.length === 0) return;
+    for (const finding of duplicateFindings) {
+      warn(`重复条目：${finding.citekey} 与已有条目 ${finding.dupes.map((d) => d.citekey).join(', ')} 是同一条文献（${finding.dupes[0].because}），但 citekey 不同 ⇒ 本库会因此出现同一文献的两张卡。`);
+    }
+    log('⚠ 重复条目 ' + duplicateFindings.length + ' 条（导入器按 citekey 去重，不按 DOI/标题去重）。处置约定见 literature/README.md「同一篇论文不建两张卡」：保留信息更全的那张，另一张标 status: superseded 并指向它，不删除。');
+  };
 
   for (const e of entries) {
     const c = e.key;
@@ -418,6 +437,12 @@ function main() {
 
     const rawDir = join(out, '.raw', c);
     const status = (pdfPath && mineruPath) ? 'unread' : 'to-process';
+
+    // Duplicate check against what the library ALREADY holds (by DOI / title), not
+    // just against this run's citekeys. Reported, never auto-merged — see the
+    // function's comment.
+    const dupes = findDuplicateEntries(e, priorIndexEntries, entries.filter((other) => other.key !== c));
+    if (dupes.length > 0) duplicateFindings.push({ citekey: c, dupes });
     const meta = {
       citekey: c,
       bibType: e.type,
@@ -473,6 +498,7 @@ function main() {
     for (const r of report) log('  ' + r.citekey + '  [' + r.status + ']  pdf=' + (r.pdf || '✗') + '  mineru=' + (r.mineruDir ? '✓' : '✗') + '  card=' + r.card);
     log('缺 PDF: ' + (missingPdf.length ? missingPdf.join(', ') : '无'));
     log('缺 MinerU: ' + (missingMd.length ? missingMd.join(', ') : '无'));
+    reportDuplicates();
     return;
   }
 
@@ -520,13 +546,17 @@ function main() {
   writeJson(join(out, '.manifest.json'), {
     generatedAt: new Date().toISOString(), source, out, bibPath,
     entries: mergedManifestEntries,
-    warnings: { missingPdf, missingMd }
+    // Duplicates are a WARNING on the import (a fact about this run), distinct from
+    // missingPdf/missingMd which say the source was incomplete. Both belong in the
+    // machine-side record so a later reader can see why two cards share a paper.
+    warnings: { missingPdf, missingMd, duplicateEntries: duplicateFindings }
   });
 
   log('完成：' + report.length + ' 条文献 → ' + out);
   log('  cards 新建 ' + report.filter(r => r.card === 'created').length + ' / 保留 ' + report.filter(r => r.card === 'kept').length);
   if (missingPdf.length) warn('缺 PDF（bib 有但源目录没有）: ' + missingPdf.join(', '));
   if (missingMd.length) warn('缺 MinerU 全文（待转换）: ' + missingMd.join(', '));
+  reportDuplicates();
 }
 
 main();

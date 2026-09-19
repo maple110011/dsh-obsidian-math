@@ -20,9 +20,13 @@
  *   - make `isStalled` return false always
  *     → the two staleness checks fail;
  *   - drop the `cardText.includes` style date guard (return a day count when no date
- *     matched) → "a card with no date is NOT flagged" fails.
+ *     matched) → "a card with no date is NOT flagged" fails;
+ *   - remove the `'superseded': '已取代'` entry from `statusLabel`'s map
+ *     → the superseded-label check fails (2026-09-18, done);
+ *   - make `findDuplicateEntries` return `[]` unconditionally
+ *     → both duplicate-entry checks fail (2026-09-18, done).
  */
-import { cardProgress, renderIndexBlock, statusCell, statusLabel, isStalled, STALE_DAYS } from './lib/lit-index.mjs';
+import { cardProgress, renderIndexBlock, statusCell, statusLabel, isStalled, STALE_DAYS, findDuplicateEntries } from './lib/lit-index.mjs';
 
 let failed = 0;
 let total = 0;
@@ -43,6 +47,12 @@ check('status: the card status is read, not the machine default',
 check('status: the label maps a known status to Chinese',
   statusLabel('distilled') === '已蒸馏' && statusLabel('reading') === '研读中',
   statusLabel('distilled'));
+// 2026-09-18: `superseded` became a real literature-card status (one paper imported
+// twice — web source first, PDF+full text later — keeps the older card as a pointer).
+// Without this mapping the index would print the raw English token in a Chinese table.
+check('status: superseded (a card replaced by a fuller one) is labelled, not printed raw',
+  statusLabel('superseded') === '已取代',
+  statusLabel('superseded'));
 
 // ── staleness: flagged when genuinely old, and never invented ───────────────
 const reading = cardProgress(card(['status: reading', '- 状态：reading', `- 状态更新：${OLD}`]));
@@ -84,6 +94,28 @@ check('index: the staleness note appears only when something stalled',
   block.split('\n').filter((l) => l.includes('陈旧提醒')).join(' / '));
 check('index: an author list of more than one gets the 等 suffix',
   block.includes('乙 等'), block.split('\n')[3] || '');
+
+// ── duplicate entries: one paper, two citekeys (2026-09-18) ─────────────────
+// The real case: the Danus paper was imported as a web source first
+// (`danusFactGraphMemory2026`), then again once the PDF + MinerU full text arrived
+// (`liuDanusOrchestratingMathematical2026`). Dedup is by citekey, so both survived and
+// the index listed the paper twice. The importer must SAY so rather than build the
+// second card silently.
+const incoming = { key: 'liuDanusOrchestratingMathematical2026', fields: { doi: '10.48550/arXiv.2607.06447', title: 'Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory' } };
+const onDisk = [{ citekey: 'danusFactGraphMemory2026', doi: '10.48550/arXiv.2607.06447', title: 'Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory' }];
+const dupeHits = findDuplicateEntries(incoming, onDisk, []);
+check('duplicate: the same DOI under a different citekey is reported, with the reason',
+  dupeHits.length === 1 && dupeHits[0].citekey === 'danusFactGraphMemory2026' && dupeHits[0].because.includes('10.48550/arXiv.2607.06447'),
+  JSON.stringify(dupeHits));
+check('duplicate: a genuinely different paper is NOT reported (no false alarm)',
+  findDuplicateEntries(incoming, [{ citekey: 'other', doi: '10.1000/xyz', title: 'Something Else' }], []).length === 0,
+  JSON.stringify(findDuplicateEntries(incoming, [{ citekey: 'other', doi: '10.1000/xyz', title: 'Something Else' }], [])));
+check('duplicate: a repeat INSIDE the same run is caught too (no existing index needed)',
+  findDuplicateEntries(incoming, [], [{ key: 'samePaperOtherKey', fields: { doi: '10.48550/arXiv.2607.06447' } }]).length === 1,
+  JSON.stringify(findDuplicateEntries(incoming, [], [{ key: 'samePaperOtherKey', fields: { doi: '10.48550/arXiv.2607.06447' } }])));
+check('duplicate: the entry itself is never reported as its own duplicate',
+  findDuplicateEntries(incoming, [onDisk[0], { citekey: incoming.key, doi: incoming.fields.doi }], []).length === 1,
+  JSON.stringify(findDuplicateEntries(incoming, [onDisk[0], { citekey: incoming.key, doi: incoming.fields.doi }], [])));
 
 if (failed > 0) {
   console.log(`\n${failed}/${total} checks failed`);
