@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-17T18:30:35.142Z",
+  "generatedAt": "2026-09-18T15:45:30.393Z",
   "source": "D:\\临时\\agent记忆",
   "out": "literature",
   "bibPath": "D:\\临时\\agent记忆\\导出的条目.bib",
@@ -183,6 +183,34 @@
       "citekey": "tangWikiSkillCompilingAgent2026",
       "pdf": "tang et al. - 2026 - wikiskill compiling agent experience into persistent knowledge for skill evolution.pdf",
       "mineruDir": "Tang et al. - 2026 - WikiSkill Compiling Agent Experience into Persistent Knowledge for Skill Evolution.pdf-438b8827-4bdc-44ff-acc0-f86c0f4cae6d",
+      "status": "unread",
+      "card": "kept"
+    },
+    {
+      "citekey": "liuDanusOrchestratingMathematical2026",
+      "pdf": "liu et al. - 2026 - danus orchestrating mathematical reasoning agents with fact-graph memory.pdf",
+      "mineruDir": "Liu et al. - 2026 - Danus Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory.pdf-e97a1c8d-d87b-49b8-9217-3a0391a73499",
+      "status": "unread",
+      "card": "kept"
+    },
+    {
+      "citekey": "patelLeanTutorVerifiedAI2026",
+      "pdf": "patel et al. - 2026 - leantutor towards a verified ai mathematical proof tutor.pdf",
+      "mineruDir": "Patel et al. - 2026 - LeanTutor Towards a Verified AI Mathematical Proof Tutor.pdf-40e8671a-4bab-4541-8e8d-c48f3acd8ba3",
+      "status": "unread",
+      "card": "kept"
+    },
+    {
+      "citekey": "liuSafeEnhancingMathematical2025",
+      "pdf": "liu et al. - 2025 - safe enhancing mathematical reasoning in large language models via retrospective step-aware formal verification.pdf",
+      "mineruDir": "Liu et al. - 2025 - Safe Enhancing Mathematical Reasoning in Large Language Models via Retrospective Step-aware Formal Verification.pdf-4f0a2db4-a187-46f1-839a-3dfa2bd8ab8a",
+      "status": "unread",
+      "card": "kept"
+    },
+    {
+      "citekey": "yangLeanDojoTheoremProving2023",
+      "pdf": "yang et al. - 2023 - leandojo theorem proving with retrieval-augmented language models.pdf",
+      "mineruDir": "Yang et al. - 2023 - LeanDojo Theorem Proving with Retrieval-Augmented Language Models.pdf-197d7056-69e0-4e02-b7f4-c7fc7b032afc",
       "status": "unread",
       "card": "kept"
     }

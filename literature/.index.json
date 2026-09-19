@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-17T18:30:35.140Z",
-  "count": 26,
+  "generatedAt": "2026-09-18T15:45:30.391Z",
+  "count": 30,
   "entries": [
     {
       "citekey": "gaoLeanSearchV2Global2026",
@@ -574,6 +574,103 @@
       "card": "cards/tangWikiSkillCompilingAgent2026.md",
       "fullText": ".raw/tangWikiSkillCompilingAgent2026/full.md",
       "pdf": ".raw/tangWikiSkillCompilingAgent2026/source.pdf"
+    },
+    {
+      "citekey": "liuDanusOrchestratingMathematical2026",
+      "title": "Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory",
+      "shorttitle": "Danus",
+      "authors": [
+        "Liu, Jihao",
+        "Gao, Guoxiong",
+        "Sun, Zeming",
+        "Wu, Bin",
+        "Liu, Shurui",
+        "Jiang, Jiedong",
+        "Ju, Haocheng",
+        "Chen, Leheng",
+        "Cheng, Ronnie",
+        "Zhang, Xiping",
+        "Dong, Bin"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Computation and Language, Computer Science - Multiagent Systems",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2607.06447",
+      "url": "http://arxiv.org/abs/2607.06447",
+      "card": "cards/liuDanusOrchestratingMathematical2026.md",
+      "fullText": ".raw/liuDanusOrchestratingMathematical2026/full.md",
+      "pdf": ".raw/liuDanusOrchestratingMathematical2026/source.pdf"
+    },
+    {
+      "citekey": "patelLeanTutorVerifiedAI2026",
+      "title": "LeanTutor: Towards a Verified AI Mathematical Proof Tutor",
+      "shorttitle": "LeanTutor",
+      "authors": [
+        "Patel, Manooshree",
+        "Bhattacharyya, Rayna",
+        "Lu, Thomas",
+        "Mehta, Arnav",
+        "Voss, Niels",
+        "Norouzi, Narges",
+        "Ranade, Gireeja"
+      ],
+      "year": "2026",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.1609/aaai.v40i47.41514",
+      "url": "https://ojs.aaai.org/index.php/AAAI/article/view/41514",
+      "card": "cards/patelLeanTutorVerifiedAI2026.md",
+      "fullText": ".raw/patelLeanTutorVerifiedAI2026/full.md",
+      "pdf": ".raw/patelLeanTutorVerifiedAI2026/source.pdf"
+    },
+    {
+      "citekey": "liuSafeEnhancingMathematical2025",
+      "title": "Safe: Enhancing Mathematical Reasoning in Large Language Models via Retrospective Step-aware Formal Verification",
+      "shorttitle": "Safe",
+      "authors": [
+        "Liu, Chengwu",
+        "Yuan, Ye",
+        "Yin, Yichun",
+        "Xu, Yan",
+        "Xu, Xin",
+        "Chen, Zaoyu",
+        "Wang, Yasheng",
+        "Shang, Lifeng",
+        "Liu, Qun",
+        "Zhang, Ming"
+      ],
+      "year": "2025",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.18653/v1/2025.acl-long.594",
+      "url": "https://aclanthology.org/2025.acl-long.594/",
+      "card": "cards/liuSafeEnhancingMathematical2025.md",
+      "fullText": ".raw/liuSafeEnhancingMathematical2025/full.md",
+      "pdf": ".raw/liuSafeEnhancingMathematical2025/source.pdf"
+    },
+    {
+      "citekey": "yangLeanDojoTheoremProving2023",
+      "title": "LeanDojo: Theorem Proving with Retrieval-Augmented Language Models",
+      "shorttitle": "LeanDojo",
+      "authors": [
+        "Yang, Kaiyu",
+        "Swope, Aidan",
+        "Gu, Alex",
+        "Chalamala, Rahul",
+        "Song, Peiyang",
+        "Yu, Shixing",
+        "Godil, Saad",
+        "Prenger, Ryan J.",
+        "Anandkumar, Animashree"
+      ],
+      "year": "2023",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.52202/075280-0944",
+      "url": "https://proceedings.neurips.cc/paper_files/paper/2023/hash/4441469427094f8873d0fecb0c4e1cee-Abstract-Datasets_and_Benchmarks.html?utm_source=chatgpt.com",
+      "card": "cards/yangLeanDojoTheoremProving2023.md",
+      "fullText": ".raw/yangLeanDojoTheoremProving2023/full.md",
+      "pdf": ".raw/yangLeanDojoTheoremProving2023/source.pdf"
     }
   ]
 }

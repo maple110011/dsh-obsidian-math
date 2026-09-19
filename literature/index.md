@@ -33,10 +33,14 @@
 | 已蒸馏 | [GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory](cards/liGraphMemixQueryAwareEvidence2026.md) | Li, Geng 等 | 2026 | Computer Science - Computation and Language |
 | 已蒸馏 | [MemForest: Efficient Agent Memory Management via EventTree Partitioning and Progressive Merging](cards/wangMemForestEfficientAgent2026.md) | Wang, Junxi 等 | 2026 | Computer Science - Artificial Intelligence |
 | 已蒸馏 | [From Memory to Skills: Evidence-Grounded Co-Evolution Governance for Long-Horizon LLM Agents](cards/tangMemorySkillsEvidenceGrounded2026.md) | Tang, Bo 等 | 2026 | Computer Science - Computation and Language |
-| 已蒸馏 | [Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory](cards/danusFactGraphMemory2026.md) | Liu, Jihao 等 | 2026 | Computer Science - Artificial Intelligence |
+| 已取代 | [Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory](cards/danusFactGraphMemory2026.md) | Liu, Jihao 等 | 2026 | Computer Science - Artificial Intelligence |
 | 已蒸馏 | [OptSkills: Learning Generalizable Optimization Skills from Problem Archetypes via Cluster-Based Distillation](cards/yangOptSkillsLearningGeneralizable2026.md) | Yang, Haochen 等 | 2026 | Computer Science - Artificial Intelligence |
 | 已蒸馏 | [Co-Mathematician: A repository-backed mathematical research workspace for coding agents](cards/verymathCoMathematician2026.md) | VeryMath | 2026 | Computer Science - Artificial Intelligence |
 | 已蒸馏 | [WikiSkill: Compiling Agent Experience into Persistent Knowledge for Skill Evolution](cards/tangWikiSkillCompilingAgent2026.md) | Tang, Liyan 等 | 2026 | Computer Science - Artificial Intelligence |
+| 已蒸馏 | [Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory](cards/liuDanusOrchestratingMathematical2026.md) | Liu, Jihao 等 | 2026 | Computer Science - Artificial Intelligence |
+| 已蒸馏 | [LeanTutor: Towards a Verified AI Mathematical Proof Tutor](cards/patelLeanTutorVerifiedAI2026.md) | Patel, Manooshree 等 | 2026 | — |
+| 已蒸馏 | [Safe: Enhancing Mathematical Reasoning in Large Language Models via Retrospective Step-aware Formal Verification](cards/liuSafeEnhancingMathematical2025.md) | Liu, Chengwu 等 | 2025 | — |
+| 已蒸馏 | [LeanDojo: Theorem Proving with Retrieval-Augmented Language Models](cards/yangLeanDojoTheoremProving2023.md) | Yang, Kaiyu 等 | 2023 | — |
 <!-- END AUTO-INDEX -->
 
 ## 使用

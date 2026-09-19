@@ -416,3 +416,87 @@ version: 1},
 	keywords = {Computer Science - Artificial Intelligence, Computer Science - Computation and Language},
 	file = {Preprint PDF:D\:\\Zotero论文数据库\\storage\\RBKMA6PB\\Tang et al. - 2026 - WikiSkill Compiling Agent Experience into Persistent Knowledge for Skill Evolution.pdf:application/pdf;Snapshot:D\:\\Zotero论文数据库\\storage\\KET8D2BV\\2608.html:text/html},
 }
+
+@misc{liuDanusOrchestratingMathematical2026,
+	title = {Danus: {Orchestrating} {Mathematical} {Reasoning} {Agents} with {Fact}-{Graph} {Memory}},
+	shorttitle = {Danus},
+	url = {http://arxiv.org/abs/2607.06447},
+	doi = {10.48550/arXiv.2607.06447},
+	abstract = {Recent LLM-based mathematical reasoning agents have begun to tackle research-level problems and, in several cases, have contributed to the resolution of open problems. However, scaling and orchestrating such agents effectively remains challenging, due to the difficulty of coordinating parallel proof search while keeping intermediate claims organized and reliable. In this paper, we propose Danus, an orchestration system for research-level mathematical reasoning centered on a shared fact graph as a global memory-management mechanism. Danus consists of a main agent that performs planning and coordination, multiple worker agents that carry out proof search in parallel, and a stateless verifier that checks proposed mathematical claims before they are admitted into the fact graph. Each verified fact is stored together with its proof and logical dependencies, allowing the system to build long arguments incrementally while keeping the shared proof state organized. The main agent periodically summarizes the evolving proof state, redirects workers across promising directions, and supports interaction with human mathematicians through progress reports. We evaluate Danus through six research-level case studies in algebraic geometry, singularity theory, and combinatorics, illustrating how the fact-graph memory mechanism enables Danus to construct long, detailed mathematical proofs. Our results suggest that fact-graph-based orchestration provides an effective route toward scaling mathematical reasoning agents for long-horizon research problems. Danus is open source at https://github.com/frenzymath/Danus.},
+	urldate = {2026-07-09},
+	publisher = {arXiv},
+	author = {Liu, Jihao and Gao, Guoxiong and Sun, Zeming and Wu, Bin and Liu, Shurui and Jiang, Jiedong and Ju, Haocheng and Chen, Leheng and Cheng, Ronnie and Zhang, Xiping and Dong, Bin},
+	month = jul,
+	year = {2026},
+	note = {arXiv:2607.06447 [cs.AI]},
+	keywords = {Computer Science - Artificial Intelligence, Computer Science - Computation and Language, Computer Science - Multiagent Systems},
+	file = {Preprint PDF:D\:\\Zotero论文数据库\\storage\\W9JQQMNS\\Liu et al. - 2026 - Danus Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory.pdf:application/pdf;Snapshot:D\:\\Zotero论文数据库\\storage\\4B5WDYNE\\2607.html:text/html},
+}
+
+@article{patelLeanTutorVerifiedAI2026,
+	title = {{LeanTutor}: {Towards} a {Verified} {AI} {Mathematical} {Proof} {Tutor}},
+	volume = {40},
+	copyright = {Copyright (c) 2026 Association for the Advancement of Artificial Intelligence},
+	issn = {2374-3468},
+	shorttitle = {{LeanTutor}},
+	url = {https://ojs.aaai.org/index.php/AAAI/article/view/41514},
+	doi = {10.1609/aaai.v40i47.41514},
+	abstract = {This paper considers the development of an AI-based
+provably-correct mathematical proof tutor. While Large
+Language Models (LLMs) allow seamless communication in
+natural language, they are error prone. Theorem provers
+such as Lean allow for provable-correctness, but these are
+hard for students to learn. We present a proof-of-concept
+system (LeanTutor) by combining the complementary strengths
+of LLMs and theorem provers. LeanTutor is composed of three
+modules: (i) an autoformalizer/proof-checker, (ii) a
+next-step generator, and (iii) a natural language feedback
+generator. To evaluate the system, we introduce PeanoBench,
+a dataset of 371 Peano Arithmetic proofs in human-written
+natural language and formal language, derived from the
+Natural Numbers Game.},
+	language = {en},
+	number = {47},
+	urldate = {2026-09-18},
+	journal = {Proceedings of the AAAI Conference on Artificial Intelligence},
+	author = {Patel, Manooshree and Bhattacharyya, Rayna and Lu, Thomas and Mehta, Arnav and Voss, Niels and Norouzi, Narges and Ranade, Gireeja},
+	month = mar,
+	year = {2026},
+	pages = {40670--40678},
+	file = {Full Text PDF:D\:\\Zotero论文数据库\\storage\\NWP64NTQ\\Patel et al. - 2026 - LeanTutor Towards a Verified AI Mathematical Proof Tutor.pdf:application/pdf},
+}
+
+@inproceedings{liuSafeEnhancingMathematical2025,
+	address = {Vienna, Austria},
+	title = {Safe: {Enhancing} {Mathematical} {Reasoning} in {Large} {Language} {Models} via {Retrospective} {Step}-aware {Formal} {Verification}},
+	isbn = {979-8-89176-251-0},
+	shorttitle = {Safe},
+	url = {https://aclanthology.org/2025.acl-long.594/},
+	doi = {10.18653/v1/2025.acl-long.594},
+	abstract = {Chain-of-Thought (CoT) prompting has become the de facto method to elicit reasoning capabilities from large language models (LLMs). However, to mitigate hallucinations in CoT that are notoriously difficult to detect, current methods such as process reward models (PRMs) or self-consistency operate as opaque boxes and do not provide checkable evidence for their judgments, possibly limiting their effectiveness. To address this issue, we draw inspiration from the idea that “the gold standard for supporting a mathematical claim is to provide a proof”. We propose a retrospective, step-aware formal verification framework Safe. Rather than assigning arbitrary scores, we strive to articulate mathematical claims in formal mathematical language Lean 4 at each reasoning step and provide formal proofs to identify hallucinations. We evaluate our framework Safe across multiple language models and various mathematical datasets, demonstrating a significant performance improvement while offering interpretable and verifiable evidence. We also propose FormalStep as a benchmark for step correctness theorem proving with 30,809 formal statements. To the best of our knowledge, our work represents the first endeavor to utilize formal mathematical language Lean 4 for verifying content generated by LLMs, aligning with the reason why formal mathematical languages were created in the first place: to provide a robust foundation for hallucination-prone human-written proofs.},
+	urldate = {2026-09-18},
+	booktitle = {Proceedings of the 63rd {Annual} {Meeting} of the {Association} for {Computational} {Linguistics} ({Volume} 1: {Long} {Papers})},
+	publisher = {Association for Computational Linguistics},
+	author = {Liu, Chengwu and Yuan, Ye and Yin, Yichun and Xu, Yan and Xu, Xin and Chen, Zaoyu and Wang, Yasheng and Shang, Lifeng and Liu, Qun and Zhang, Ming},
+	editor = {Che, Wanxiang and Nabende, Joyce and Shutova, Ekaterina and Pilehvar, Mohammad Taher},
+	month = jul,
+	year = {2025},
+	pages = {12171--12186},
+	file = {Full Text PDF:D\:\\Zotero论文数据库\\storage\\R4BW7EQA\\Liu et al. - 2025 - Safe Enhancing Mathematical Reasoning in Large Language Models via Retrospective Step-aware Formal Verification.pdf:application/pdf},
+}
+
+@article{yangLeanDojoTheoremProving2023,
+	title = {{LeanDojo}: {Theorem} {Proving} with {Retrieval}-{Augmented} {Language} {Models}},
+	volume = {36},
+	shorttitle = {{LeanDojo}},
+	url = {https://proceedings.neurips.cc/paper_files/paper/2023/hash/4441469427094f8873d0fecb0c4e1cee-Abstract-Datasets_and_Benchmarks.html?utm_source=chatgpt.com},
+	doi = {10.52202/075280-0944},
+	language = {en},
+	urldate = {2026-09-18},
+	journal = {Advances in Neural Information Processing Systems},
+	author = {Yang, Kaiyu and Swope, Aidan and Gu, Alex and Chalamala, Rahul and Song, Peiyang and Yu, Shixing and Godil, Saad and Prenger, Ryan J. and Anandkumar, Animashree},
+	month = dec,
+	year = {2023},
+	pages = {21573--21612},
+	file = {Full Text PDF:D\:\\Zotero论文数据库\\storage\\6ECCTALB\\Yang et al. - 2023 - LeanDojo Theorem Proving with Retrieval-Augmented Language Models.pdf:application/pdf},
+}

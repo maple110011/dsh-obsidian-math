@@ -3,6 +3,28 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-18 · 文献库第六批（验证类 4 篇）+ 一个"同一论文两张卡"的重复条目 + 数学笔记验证机制评估
+
+**起因**：用户提出一个设计问题——「我在笔记里写的定理和方法是错的怎么办？靠让 AI 审查会有细节错漏吗？有没有稳健的审查方法？」并给了 4 篇验证类文献（Danus / SAFE / LeanTutor / LeanDojo）与真实笔记库路径。要求按仓库文献处理流程研读记录，并评估如何改进。
+
+**改动**：
+
+1. **导入并蒸馏 4 篇**（`lit-import.mjs --source "D:\临时\agent记忆" --bib "…/导出的条目.bib"`，dry-run 先核对；4 篇 `full.md` 均洁净，`<sub>` 计数 ≤2）：`liuDanusOrchestratingMathematical2026` / `liuSafeEnhancingMathematical2025` / `patelLeanTutorVerifiedAI2026` / `yangLeanDojoTheoremProving2023`，各配 14 节研读记录（共 1,243 行）。
+2. **`docs/literature.md` 的篇数 26 → 30**（`.raw/` 实际目录数，`check-doc-constants.mjs` 当场报红——它锚的正是这个数）。
+3. **发现并处置一个真实的重复条目**：Danus 在 2026-09-17 已作为**网页源**导入（`danusFactGraphMemory2026`），本批拿到 PDF/全文后又按 citekey 生成了新卡。**根因：`lit-import.mjs` 按 citekey 去重、不按 DOI/标题去重**（`.index.json` 里两条记录 `doi` 完全相同）。处置：旧卡标 `status: superseded` + 正文顶部加指向新卡的说明（**不删除**——它保留了全文没有的网页来源与 pin commit 证据；`note_recall` 默认排除 superseded）。逐条差异（12 条证实 / 10 条需补精确 / 16 条新增）见 `reading/liuDanusOrchestratingMathematical2026.md` §13.1。
+4. **`status: superseded` 现在是一个真实的文献卡状态**，因此 `scripts/lib/lit-index.mjs` 的 `statusLabel()` 补了映射（否则中文索引表会直接印出英文 token）。断言 10 → 11，**并做了变异验证**（撤掉映射 ⇒ 新断言红，恢复 ⇒ 11/11）。
+5. **评估文档两篇**：`literature/notes/verification-design-2026-09-18.md`（机制设计：四态 × 五级瀑布、claim 台账、缝检查、落地清单 V0–V9）与 `literature/notes/math-note-fault-taxonomy-2026-09-18.md`（对真实 vault 的只读实证：7 类笔记、12 类错误形态、逐条文件+行号+计数）。
+
+**评估给出的、值得记下来的三条**：
+
+- **缺口是"范围"而非"没有机制"**：`AUDIT_CARD_DIRS` 只含 `records/templates/strategy`，`theorems/index.md` 与用户笔记**既不入体检也不入级联**（`math-memory.mjs:155, 1939-1943`）——而它们恰是唯一没有 verifier 的写入者。
+- **实测里最贵的错不是算错，是"等级盖错章"**：`theorems/index.md` 把 Cramér–Rao 记为 `状态:已证`，而载体文件自称"由 AI 依口述骨架撰写……不是我的原稿"、正文标注"请勿当作已证"。**文内警告挡不住下游按索引使用**；这类错纯文本可查。
+- **两个"机制存在但从未运行"的实例**：`notation.md` 三张表全是「（示例）」占位行（而协议举的冲突示例在库内出现 0 次）；体检记录停在两天前、`unverified = 0`。⇒ 修法必须是"体检多一段报告"的被动形状，不能是"每轮必做"（用户已在 `docs/handoff.md` §5 否决后者）。
+
+**验证与覆盖范围**：`npm test` = **39/41**（211.9s）。**两条红都是环境结果，不是本次回归**——① `test: link server port+token stability`：前 15 项全 ok，红在无头浏览器 CDP 的 `timeout Page.enable`（本机无浏览器环境）；② `test: agent preset mounts (real dsh, no tokens)`：6/7，唯一红项是"dsh 启动并打印启动地址"（本机子进程/端口环境）。两条**单独重跑均复现同一错误**，且本次改动**不含任何代码路径**（`git diff` 只有 markdown/JSON 与一处 `lit-index.mjs` 映射 + 一处断言）。定向复核：`run-gates --only doc` 4/4 绿（含 doc-constants 的篇数锚）、`--only lit-import` 2/2 绿（11/11）。
+
+**未做（留给下一轮，均已写进评估文档 §7 并带判据）**：V1/V2（等级章对账、体检纳入笔记层）、V3–V5（级联穿笔记、内容指纹作废、断链扩到笔记且把过滤规则本身当被测对象）、V6（初始化 `notation.md`）、导入器的 DOI/标题去重检查。
+
 ## 2026-09-18 · 更新说明改回"用户视角"：正文只写摘要（用户明确要求）
 
 **起因**：用户读 0.7.8 的 Release 正文后指出——段首那段「本版是 0.7.7 之后累积的全部用户可见改动（43 个提交）。0.7.7 发布时 `[Unreleased]` 是空的，其后的两批……都没进过任何 Release，所以这些能力是你升级到 0.7.8 才会第一次拿到的」**不需要**；更新说明**只要一段"本版主要包含哪些方面"的摘要**。

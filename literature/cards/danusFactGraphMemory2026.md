@@ -4,7 +4,7 @@ title: "Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memor
 shorttitle: "Danus"
 authors: "Liu, Jihao; Gao, Guoxiong; Sun, Zeming; Wu, Bin; Liu, Shurui; Jiang, Jiedong; Ju, Haocheng; Chen, Leheng; Cheng, Ronnie; Zhang, Xiping; Dong, Bin"
 year: 2026
-status: distilled
+status: superseded
 doi: "10.48550/arXiv.2607.06447"
 url: "http://arxiv.org/abs/2607.06447"
 keywords: "Computer Science - Artificial Intelligence, Computer Science - Computation and Language, Computer Science - Multiagent Systems"
@@ -15,7 +15,13 @@ pdf: ""
 
 # Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory
 
-> **一句话**：研究级数学推理的编排系统——主 agent 规划调度、多个 worker 并行搜索证明、**无状态验证器是正确性的唯一权威**；只有通过验证的断言才进入**内容寻址的事实图**，而事实图**是整个系统唯一的事实来源**（"三层记忆，一条正确性边界：只有经验证器门控的事实图是真相，全局记忆只是认知 awareness"）。**对我们的价值：它是"权限强制（角色门控工具表）而非提示词约束"与"内容寻址 + 级联撤销"这两个我们尚未具备的机制的一手范本。**
+> ⚠️ **本卡已被取代（2026-09-18）：请读 `cards/liuDanusOrchestratingMathematical2026.md`。**
+>
+> **原因**：本卡是 2026-09-17 的**网页源**卡片（arXiv 摘要 + pin 到 commit `7a51336…` 的仓库 README），自述"**未逐字通读论文正文**"。2026-09-18 拿到了同一篇论文（arXiv:2607.06447）的 PDF 与 MinerU 全文，已按同一 citekey 体系建了**新的全文本卡**（`liuDanusOrchestratingMathematical2026`）。导入器**按 citekey 去重、不按 DOI/标题去重**，所以同一篇论文出现了两张卡。
+>
+> **审计结论（2026-09-18，逐条见 `reading/liuDanusOrchestratingMathematical2026.md` §13.1）**：本卡的**结论方向全部正确、没有一条被全文否证**；需要修正的只有四处措辞——① "无状态"还需补一个限定（验证器**被允许读事实图**，无状态指不保留跨提交记忆）；② "验证器什么都不写"要精确到工具级（它有 `Matlas` 文献检索 + 读图，**没有**任何写工具）；③ "内容寻址"是**仓库 README 用语**，论文正文说的是**逻辑依赖入边**；④ "几乎不产生 false positive"必须带上下文引（它指代的是**漏放**：接受含少量跳步的证明、以及**因为把被引用文献当作正确**而接受依赖错误引用的证明）。全文另有 16 条本卡没有的机制，最重要的两条是**二阶（论文级）验证**与**"memory 不是真相"的分层语义**。
+>
+> **本卡为何不删除**：它保留了**网页来源与 pin commit 证据**（`danus-helper-dsh` 安装技能、运行姿态警告、运维教训），这些是全文里没有的；且本仓库的既定纪律是**"superseded 而非删除"**（被取代的记忆是证据，不是可抹掉的历史——见 `docs/memory/design.md` §2.1）。`note_recall` 默认排除 `superseded` 卡，所以它不会与新的全文本卡争夺检索位次。本卡正文以下部分**按原样保留**（来自网页源的事实）。
 
 ## 摘要
 
