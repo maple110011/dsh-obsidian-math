@@ -349,6 +349,12 @@ const RECALL_HARD_MAX_RESULTS = 50;
 const RECALL_BM25_WEIGHT = 0.75;
 const RECALL_CJK_WEIGHT = 0.10;
 const RECALL_PRIOR_WEIGHT = 0.15;
+// Multiplier applied to score for ARCHIVED material when a caller explicitly asks for
+// it (`note_recall({ includeArchived: true })`). Archives exist so nothing is lost;
+// they must not compete with live knowledge at equal relevance, so recovered evidence
+// is demoted hard (roughly "one tier down" in the blended score) AND labelled in the
+// rendered result. Zero would make the feature pointless; 1 would defeat the point.
+const ARCHIVE_RECALL_WEIGHT = 0.5;
 
 /**
  * Whether a vault doc may compete in note_recall ranking. Superseded cards and
@@ -661,8 +667,8 @@ export function rankStrategyCards(cards, query, options = {}) {
  * re-implement the score formula; it silently diverged when the hook prior
  * landed — docs/project-assessment-2026-09-10.md §2 P1-4.)
  */
-export function buildRecallDoc(rel, raw) {
-  const kind = classifyVaultDoc(rel);
+export function buildRecallDoc(rel, raw, options = {}) {
+  const kind = classifyVaultDoc(rel, options);
   if (kind === "skip") return null;
   const { frontmatter, body } = splitFrontmatter(raw);
   const name = rel.split("/").at(-1) ?? rel;
@@ -670,6 +676,10 @@ export function buildRecallDoc(rel, raw) {
   return {
     kind,
     rel,
+    // Archived material, when a caller asked for it. Carried here so the ranker can
+    // demote it and the renderer can LABEL it: recovered evidence must never read
+    // like current knowledge.
+    archived: rel.startsWith(".deepseek/archive/"),
     title: titleFromDoc(frontmatter, body, name),
     tags: kind === "note" ? noteTags({ frontmatter, body }) : [],
     topic: metaScalar(frontmatter, "topic") ?? "",
@@ -800,7 +810,10 @@ export function rankRecallDocuments(docs, query, options = {}) {
     i,
     score: (RECALL_BM25_WEIGHT * (rawScores[i] / maxScore)
       + RECALL_CJK_WEIGHT * cjkBonus[i]
-      + RECALL_PRIOR_WEIGHT * priorOf(doc)) * (KIND_CORPUS_WEIGHT[doc.kind] ?? 1),
+      + RECALL_PRIOR_WEIGHT * priorOf(doc)) * (KIND_CORPUS_WEIGHT[doc.kind] ?? 1)
+      // Archive demotion: archived evidence is RETAINED for retrieval, but it must
+      // never outrank live material at equal relevance (`ARCHIVE_RECALL_WEIGHT`).
+      * (doc.archived === true ? ARCHIVE_RECALL_WEIGHT : 1),
     operatorMatch: operatorMatch(doc)
   }));
 
@@ -849,7 +862,11 @@ export function rankRecallDocuments(docs, query, options = {}) {
       path: doc.rel,
       kind: doc.kind,
       title: doc.title,
-      snippet: snippetForPassage(passages[i], queryTokens),
+      // The label rides on the snippet because the output schema is
+      // `additionalProperties: false` on match items too: adding an `archived` field
+      // would fail dsh's strict validation and kill the whole call (the 2026-09-14
+      // failure). A prefix is visible to the reader AND schema-safe.
+      snippet: (doc.archived === true ? "［已归档·未被删，可在面板恢复］ " : "") + snippetForPassage(passages[i], queryTokens),
       verified: typeof doc.hook?.verified === "string" ? doc.hook.verified : null,
       hookOperator: typeof doc.hook?.operator === "string" ? doc.hook.operator : null,
       uses: Math.max(0, Math.trunc(hookNumber(doc.hook, "uses", 0))),
@@ -879,7 +896,7 @@ export function rankRecallDocuments(docs, query, options = {}) {
  * machine files return "skip"; raw episode bodies are skipped too (evidence
  * is reached via grep/read — only their index lines join the corpus).
  */
-export function classifyVaultDoc(rel) {
+export function classifyVaultDoc(rel, options = {}) {
   // The vault's working protocol is instructions, not note content — excluded
   // under BOTH names it can have: `AGENTS.md` is what the installer writes, and
   // `vault-AGENTS.md` is the repo's own template-source name (a vault can carry
@@ -890,7 +907,34 @@ export function classifyVaultDoc(rel) {
   if (rel === ".deepseek/capture-policy.md" || rel === ".deepseek/memory/profile.md") return "skip";
   if (rel === ".deepseek/working.md") return "skip"; // scratch draft, not part of the retrieval corpus
   if (rel.startsWith(".deepseek/cache")) return "skip";
-  if (rel.startsWith(".deepseek/archive")) return "skip"; // archived = evidence only (self-correction.md P3)
+  // Archived material is skipped BY DEFAULT ("evidence only") — but that default was
+  // the whole bug: `archive/` is excluded from the corpus AND from the injected
+  // timeline, so anything archived became invisible in practice. Archiving meant
+  // forgetting something that might still be useful, which is exactly the loss the
+  // user named. So the ordinary corpus still excludes it, and `note_recall` can ask
+  // for it explicitly (`includeArchived`). An archived card classifies as its
+  // UNDERLYING kind (`.deepseek/archive/records/x.md` → `record`), not as a new
+  // kind, so every existing consumer (passage composition, hooks, gates) keeps
+  // working unchanged; `buildRecallDoc` records the archive fact in `doc.archived`.
+  if (rel.startsWith(".deepseek/archive/")) {
+    if (options.includeArchived !== true) return "skip";
+    const bare = rel.slice(".deepseek/archive/".length);
+    const slash = bare.indexOf("/");
+    if (slash <= 0) return "skip";
+    const layer = bare.slice(0, slash);
+    const rest = bare.slice(slash + 1);
+    // An archived card's LIVE home is not always guessable from the path: `records`,
+    // `templates`, `topics` and `inbox` live under `.deepseek/memory/<layer>/`, while
+    // `strategy` lives directly under `.deepseek/`. Trying only `.deepseek/<layer>/`
+    // fell through to `note` for records (caught by the gate assertion), and trying
+    // only `.deepseek/memory/<layer>/` did the same for strategy — so try each
+    // candidate and keep the first that resolves to something other than `note`.
+    for (const candidate of [".deepseek/memory/" + layer + "/" + rest, ".deepseek/" + layer + "/" + rest]) {
+      const kind = classifyVaultDoc(candidate);
+      if (kind !== "skip" && kind !== "note") return kind;
+    }
+    return "note";
+  }
   if (rel.startsWith(".deepseek/memory/episodes/")) {
     return rel.endsWith("/index.md") ? "episode-index" : "skip";
   }
@@ -1420,7 +1464,8 @@ export async function apply(ctx, config) {
       query: { type: "string", required: true, description: "Distilled search query: the reasoning challenge plus candidate technique keywords, e.g. '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli'." },
       operator: { type: "string", description: `Optional stage-1 hard filter, one of ${[...HOOK_OPERATORS].join("/")}. Only hook cards with a matching operator are scored; when none matches, all docs are scored and mode reports the fallback.` },
       tag: { type: "string", description: "Optional tag filter (user notes only), without leading '#'." },
-      maxResults: { type: "integer", description: `Optional cap on matches; defaults to ${RECALL_DEFAULT_MAX_RESULTS}, maximum ${RECALL_HARD_MAX_RESULTS}.` }
+      maxResults: { type: "integer", description: `Optional cap on matches; defaults to ${RECALL_DEFAULT_MAX_RESULTS}, maximum ${RECALL_HARD_MAX_RESULTS}.` },
+      includeArchived: { type: "boolean", description: "Also search ARCHIVED memory (`.deepseek/archive/`), which is excluded by default so it is not mistaken for live knowledge. Use it when the ordinary search comes up empty but you suspect the vault once held something relevant: archived cards are demoted in the ranking and their snippets are prefixed ［已归档］. Archive is a MOVE, not a deletion — anything found this way can be restored by the user in the memory panel." }
     },
     output: {
       schema: {
@@ -1469,6 +1514,12 @@ export async function apply(ctx, config) {
       },
       render: (_args, value) => {
         const withheld = value.excluded.length === 0 ? "" : `\n另有 ${value.excluded.length} 条因**适用边界**被排除（不是"没找到"；若确实需要，先读原文判断边界是否真的成立）：\n${value.excluded.map((item) => `- ${item.title} (${item.path}) — 命中边界「${item.boundaryHits.join("、")}」`).join("\n")}`;
+        // Say out loud that archived material is in this result set. A reader who is
+        // not told would treat recovered evidence as current knowledge.
+        const recovered = value.matches.filter((match) => match.snippet.startsWith("［已归档")).length;
+        const archivedNote = recovered === 0
+          ? ""
+          : `\n其中 ${recovered} 条来自 **归档**（曾被判低效用而移动，未被删除）：归档内容**降权**排列，且只应作为"以前记过、供参考"的线索，不要当作当前有效的技巧引用；如果它其实仍然有用，请在记忆面板里恢复它。`;
         if (value.matches.length === 0) {
           return [{ type: "text", text: `No relevant content found — treat this as a signal to reformulate the query or change approach.${withheld}` }];
         }
@@ -1484,7 +1535,7 @@ export async function apply(ctx, config) {
           return `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path}) score ${match.score.toFixed(3)}${extra === "" ? "" : " · " + extra}\n  ${match.snippet}`;
         });
         const weak = value.matches.filter((match) => match.coverage < 0.35).length;
-        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实适用性后再使用——相关 + 已验证 ≠ 适用于本题；${weak} 条 coverage<0.35 属弱信号，多为词面巧合）:\n${lines.join("\n")}${withheld}` }];
+        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实适用性后再使用——相关 + 已验证 ≠ 适用于本题；${weak} 条 coverage<0.35 属弱信号，多为词面巧合）:\n${lines.join("\n")}${archivedNote}${withheld}` }];
       }
     },
     isConcurrencySafe: () => true,
@@ -1503,6 +1554,7 @@ export async function apply(ctx, config) {
         throw new Error(`note_recall: maxResults must be a positive integer`);
       }
       const limit = Math.min(requested, RECALL_HARD_MAX_RESULTS);
+      const includeArchived = args.includeArchived === true;
 
       // One walk covers notes AND memory (no .deepseek exclusion here).
       const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns);
@@ -1510,7 +1562,7 @@ export async function apply(ctx, config) {
       for (const note of notes) {
         const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
         if (raw === null) continue;
-        const doc = buildRecallDoc(note.path, raw);
+        const doc = buildRecallDoc(note.path, raw, { includeArchived });
         if (doc !== null) docs.push(doc);
       }
 

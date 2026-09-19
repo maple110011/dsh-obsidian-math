@@ -695,6 +695,42 @@ check('eligible: superseded card excluded', isRecallEligible('superseded', '') =
 check('eligible: duplicate_of card excluded', isRecallEligible('active', '[[rec-b]]') === false);
 check('eligible: normal card eligible', isRecallEligible('active', '') === true && isRecallEligible('', '') === true);
 check('classify: archive tree skipped', classifyVaultDoc('.deepseek/archive/records/rec-x.md') === 'skip');
+// ── archive is a MOVE, not a deletion (2026-09-18) ─────────────────────────
+// The default above was the whole bug: `archive/` is out of the corpus AND out of
+// the injected timeline, so archiving meant forgetting. Recovered evidence has to
+// keep its UNDERLYING kind (so passages/hooks/gates keep working) and be reachable
+// on request.
+check('archive: an archived card classifies as its underlying kind when asked for',
+  classifyVaultDoc('.deepseek/archive/records/rec-x.md', { includeArchived: true }) === 'record'
+  && classifyVaultDoc('.deepseek/archive/strategy/s.md', { includeArchived: true }) === 'strategy',
+  classifyVaultDoc('.deepseek/archive/records/rec-x.md', { includeArchived: true }));
+check('archive: asking for archives does NOT change the default (skip stays skip)',
+  classifyVaultDoc('.deepseek/archive/records/rec-x.md') === 'skip'
+  && classifyVaultDoc('.deepseek/archive/records/rec-x.md', {}) === 'skip');
+{
+  // Retrieval level: an archived card is returned only with includeArchived, carries
+  // the visible marker, and is demoted below a live card of equal relevance.
+  const archivedDoc = buildRecallDoc('.deepseek/archive/records/arch.md', card([
+    '---', 'title: 归档的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'hook:', '  operator: probability', '  pattern: archived_pattern_here',
+    '  verified: single-source', '---', '', '# 归档内容 borel cantelli'
+  ]), { includeArchived: true });
+  const liveDoc = buildRecallDoc('.deepseek/memory/records/live.md', card([
+    '---', 'title: 在用的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'hook:', '  operator: probability', '  pattern: archived_pattern_here',
+    '  verified: single-source', '---', '', '# 在用内容 borel cantelli'
+  ]));
+  check('archive: the archived doc is built (not skipped) when explicitly included',
+    archivedDoc !== null && archivedDoc.archived === true && liveDoc.archived === false,
+    JSON.stringify({ archived: archivedDoc?.archived, live: liveDoc?.archived }));
+  const withoutFlag = rankRecallDocuments([archivedDoc, liveDoc], 'archived_pattern_here', {});
+  check('archive: an archived card never outranks a live card of the same relevance',
+    withoutFlag.matches.findIndex((m) => m.path.includes('live.md')) < withoutFlag.matches.findIndex((m) => m.path.includes('arch.md')),
+    JSON.stringify(withoutFlag.matches.map((m) => m.path)));
+  check('archive: the recovered snippet is LABELLED, so evidence is not read as current knowledge',
+    withoutFlag.matches.some((m) => m.path.includes('arch.md') && m.snippet.startsWith('［已归档')),
+    withoutFlag.matches.find((m) => m.path.includes('arch.md'))?.snippet.slice(0, 30) ?? '');
+}
 
 // P4: duplicate_of written deterministically on the redundant side (rec-c is
 // the lower-uses side of the rec-b/rec-c pair detected in section 4).
