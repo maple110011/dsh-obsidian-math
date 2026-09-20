@@ -165,6 +165,7 @@ updated: 2026-08-24
 
 1. **候选产生**：三写时模型把「本轮用到的困难→策略」写进 `strategy/`（初始 `verified: single-source`、`uses: 0`），或只在 episode 留一句。**候选来源不止 hook 字段**——用户真实笔记里，技巧往往**内嵌在正文**（抄书笔记的 `>[!tip] 紧性证明技巧`、备忘的「关注对立性质的运用」这类 bullet）；体检/模型提炼时应把「内嵌技巧 callout + 用户备忘 bullet」也当候选源，而不只扫 hook 字段。
 2. **确定性 promote**：每日体检统计同一「difficulty + move」的 `uses` 与 `success_rate`；`uses ≥ 3` 且 `success_rate ≥ 0.6` → 保持正式卡；未达标的留在候选区（`status: candidate`）。
+   - **⚠️ 现状缺口（2026-09-20 只读核对，未修）**：上面这句描述的"统计 uses"目前对**候选卡不成立**。候选卡只出现在 `note_strategy` 的 `candidates` 桶，而用量统计只记 `matches` 桶（`dsh/preset/note-tools.mjs` 的 `recordRetrievalStats(rootPath, top…)`，`top` 来自 `ranked.matches`）；`note_recall` 那边又只对**带 `hook:` 块的卡**记命中。因此**一张没有 hook 块的候选卡，被检索多少次 `uses` 都是 0**，永远达不到 `uses ≥ 3`。真实 vault 的实证：唯一方法卡 `strat-ot-structure-proof`（`status: candidate`、`uses: 0`）被 `note_strategy` 命中时只进 candidates。**它是「路径存在但没人测量」的同族缺陷**，但**是否该把候选命中计入 `uses` 尚未决定**——样本只有 1 次调用 / 1 张卡，先把观察写在这里，判据与复查条件见 `docs/handoff.md` §7「note 工具族的使用程度与候选卡自锁」。
 3. **确定性 demote**：连续失败 3 次 → 体检 flag「建议补 `not_applicable_when` 或降级」。
 4. **审计驱动词表演进**（§8）：体检统计 `difficulty` / `move` / `retrieve` 的实际使用频率，作为「该加/该减枚举值」「某困难缺策略卡」的被动信号。
 
