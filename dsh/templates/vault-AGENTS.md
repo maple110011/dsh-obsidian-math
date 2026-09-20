@@ -11,13 +11,14 @@
 
 - 你只有文件读写/搜索工具、专用笔记工具（`note_recall` / `note_strategy` / `note_search` / `note_create` / `note_links`）和 ask_user 提问工具；所有读写限定在本 vault 内。
 - 专用工具纪律：**找相关内容一律优先 `note_recall`**（统一检索：笔记 + 全部记忆层一次查清，返回 kind/验证等级/分数）；**先读命中前 2-3 篇全文、逐条判适用性，再用**；精确 tag 过滤用 `note_search`（仅用户笔记）；新建笔记用 `note_create`（**拒绝覆盖已有笔记**，改已有笔记必须先读再用 edit/write）；查“哪些笔记引用了某篇”用 `note_links`；**证明/构造类问题先用 `note_strategy`**（方法层：困难 → 策略 → 去哪找），再按它给的 move→retrieve 清单走 `note_recall`。
+- **检索发现与精确定位的分工（2026-09-20 写死）**：**找内容 = `note_recall`（方法层再叠 `note_strategy`）**，这是唯一的内容发现入口；**grep 不是检索器**——它只用于「`note_recall`（或 `note_search`）已经定位到某个文件之后」，在该文件的窄范围内核对**原话、字面字符串、行号**（例如「这句话到底写没写」）。**禁止**用 grep/glob 对 vault 或 `.deepseek` 做全库正则/关键词扫描来找内容——那既慢又漏（grep 默认跳过 `.obsidian` 之类的点目录），而且绕开了 hook 加权、coverage 弱信号、验证等级与适用边界这些只有 `note_recall` 才有的信号；一次没搜到也不要马上换 grep，先按 §5 改写查询重试一次。
 - 先读再答，禁止臆造；保留并**协助打磨**用户记号/术语/写作风格（记号体系见 §2 末），修改用最小 diff。
 - 用户是数学背景，笔记可能涉及数学、统计学、R 语言、LaTeX。
 - **永不申请权限升级**：遇到 `[sandbox: file access denied ...]` 即视为禁止——停止重试，报告原因，不要使用 `sandbox_permissions`。需要写 vault 外的文件时，请用户自行处理。
 
 ## 1. 会话开始
 
-系统提示已注入：画像、主题索引、记录索引、备忘录清单、事件时间线、最近问答线索、记忆体检报告（插件每日确定性扫描）。细节按第 5 节路由读文件，不要只凭注入摘要回答细节问题。
+系统提示已注入：画像、主题索引、记录索引、备忘录清单、事件时间线、最近问答线索、记忆体检报告（插件每日确定性扫描）。细节按第 5 节路由读文件，不要只凭注入摘要回答细节问题；**需要找内容时用专用笔记工具（先是 `note_recall`），不要用裸 grep 当检索器**（分工见 §0）。
 
 ## 2. 记忆结构（五层）与三写
 
@@ -124,17 +125,17 @@
 | **方法 / 策略类（证明 / 构造）** | `note_strategy`（困难 → 策略 → 检索目标）→ 按 move→retrieve 清单逐步 `note_recall` |
 | 精确 tag 过滤 | `note_search`（仅用户笔记，不含 `.deepseek` 记忆树） |
 | 反链 / 顺链扩读 | `note_links(note)`；读到的笔记/卡沿 related/source 链扩一步 |
-| 精确事实 / 用户原话 / 日期数字 | grep `memory/episodes/` → 读命中文件 |
+| 精确事实 / 用户原话 / 日期数字 | `note_recall` 先定位（记忆卡 / episode 索引 / 主题）→ 读命中文件；确认「某文件里是否真有这句话」时才在该文件上 grep |
 | 类型化原子事实 | `note_recall` 命中 record 卡（或看 `memory/records/index.md`）→ 读卡 → `source` 回原始证据 |
 | 相关定理 / 命题 / 引理 | `note_recall` 命中 theorems/index 或笔记 → 展开定义、核对适用性 → 读证明提取技巧 |
 | 同类题型 / 解法模式 | 问题蒸馏成“挑战描述 + 候选技巧” → `note_recall`（可带 operator 过滤）→ 读命中核对 source → 查 `memory/templates/index.md` 与关联定理（去重聚合） |
 | 稳定偏好 / 记号 / 授权 | 读 `memory/profile.md` |
 | 主题来龙去脉 | `note_recall` 命中 topic（或读 `topics/<slug>.md`）与相关笔记 |
 | “当前最新状态” | 比较 frontmatter `updated` / 最新 episode 时间戳 |
-| 跨会话分散证据 | `note_recall` + grep episodes/records + index 时间线索汇聚 |
+| 跨会话分散证据 | `note_recall` 先粗后细（含 episode 索引与 `includeArchived` 兜底）+ 读命中文件的 `source` 链 + index 时间线索汇聚 |
 | 综合问题 | `note_recall` 先粗后细，命中按时间排好证据再答 |
 
-**精读纪律**：证明/构造类问题一轮最多 1 次 `note_strategy` + 最多 4 步内容检索（每步 `note_recall` 一次 + 读 ≤2 篇全文，每步产出喂下一步）；简单查询一轮最多 1 次 `note_recall`。命中带 `coverage`（查询词覆盖率）——score 高但 coverage < 0.35 的多为词面巧合，按弱命中处理；检索不到就明说“记忆里没有”，不要编造。**粒度纪律**：默认先粗后细（策略 → 导航/索引 → 卡片 → 全文），能用 `note_recall` 不用裸 grep。
+**精读纪律**：证明/构造类问题一轮最多 1 次 `note_strategy` + 最多 4 步内容检索（每步 `note_recall` 一次 + 读 ≤2 篇全文，每步产出喂下一步）；简单查询一轮最多 1 次 `note_recall`。命中带 `coverage`（查询词覆盖率）——score 高但 coverage < 0.35 的多为词面巧合，按弱命中处理；**但「弱信号」不等于「库里没有」**：**整批都标弱**时先读排第一的那篇全文核实（长查询或中英混排会把 coverage 整体压低），核实不适用再改写查询，最多重试一次；检索不到就明说“记忆里没有”，不要编造，**也不要改用 grep 全库搜**。**粒度纪律**：默认先粗后细（策略 → 导航/索引 → 卡片 → 全文），**能 `note_recall` 就不换工具**——grep 只做「已定位文件的字面核对」，不做内容发现（见 §0 分工）。
 
 **边界排除的读法**：`note_recall` / `note_strategy` 的结果里可能有一行「另有 N 条因**适用边界**被排除」——这**不是**"库里没有"，而是这些卡自己声明了「这种情况下别用我」。需要时点开对应卡读 `not_applicable_when`，判断边界在当前问题里是否真的成立。
 

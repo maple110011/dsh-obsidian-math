@@ -3,6 +3,30 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-20 · 检索分工写死：grep 从「备用检索」降为「已定位文件的字面核对」
+
+**起因**：用户观察——「笔记助手模式有时候还是会调用 grep，它不应该只调用 `note_recall` 吗？毕竟这个专门做了 BM25 等优化」。要判断这是"模型不听话"还是"协议就是这么写的"，所以先去读**真实会话日志**再动手。
+
+**排查（只读真实 vault 会话日志）**：**32 个会话**出现过检索类工具调用（`note_recall` 25 次、`note_search` 16 次、**grep 50 次**，其中 14 个会话用过 grep；样本含探针/基准残留会话，按会话去重、v2/v3 双份日志只取 v3）。关键结论有三条，都推翻了"grep 在抢答"的直觉：
+
+1. **近期没有一场是 grep 起手的**。8 场"grep 先于一切检索工具"的会话**全部是 2026-08-15/16 的**——那时 `note_recall` 统一入口尚未上线（检索 v3 之前），所以那不是当前形态的回归。最近的会话（09-07 起）形态固定为「`note_recall` → 读命中 → **grep 按正则/行号在已知文件或已知层里定位**」：例如 09-16 那场先 `note_search` 命中了目标文件，再 grep 该文件里的具体句子。
+2. **一次真实的空转出现在 2026-09-20**：查询「高维空间距离集中 欧氏距离失效 最近邻 相对对比度 维数灾难 concentration of distances」→ `note_recall` 返回 15 条，**排第一的就是正确笔记**（`1备忘录合集/待整理或扩展杂记.md`，score 0.902），但**15 条的 coverage 全 < 0.35**，于是工具在结果头上写「15 条 coverage<0.35 属弱信号，多为词面巧合」，模型据此判定"弱命中"，接着用 grep 扫了三遍（`.deepseek` → episodes → 该笔记）。
+3. **根因是"协议与工具描述在多个位置暗示 grep 也是检索路径"**，不是模型无视纪律：`AGENTS.md` 路由表有两行直接写「grep `memory/episodes/`」「`note_recall` + grep episodes/records」，§0 只说"能用 `note_recall` 不用裸 grep"（暗示 grep 可用）；`math-memory.mjs` 每轮的注入段里同样有「先 grep episodes/」「再 grep 笔记全文」「细节请 grep episodes」；`note-tools.mjs` 的系统提示段写着「ordinary file read/write/edit/glob/grep … keep using the generic file tools」，`note_search` 的 description 还写着「use grep/read for memory files」。
+
+**改动（A 方案：收紧协议 + 改工具描述，检索实现不动）**：
+
+1. `dsh/templates/vault-AGENTS.md`：§0 新增一条**写死的分工**——「找内容 = `note_recall`（方法层再叠 `note_strategy`），是唯一的内容发现入口；**grep 不是检索器**，只在『已定位到某个文件之后』核对该文件的**原话/字面字符串/行号**；**禁止**用 grep/glob 对 vault 或 `.deepseek` 做全库扫描找内容（既慢又漏——grep 默认跳过点目录——且绕开 hook 加权、coverage、验证等级、适用边界这些只有 `note_recall` 才有的信号）；一次没搜到不要马上换 grep，先按 §5 改写查询重试一次。」§1 会话开始处补一句同向提示；§5 路由表两行改写（精确事实/用户原话 → `note_recall` 先定位再读命中，**确认某文件里是否真有这句话时**才在该文件上 grep；跨会话分散证据 → `note_recall` 先粗后细 + `includeArchived` 兜底 + 读 `source` 链）；精读纪律补上**「整批 coverage 都弱 ≠ 库里没有」**（长查询/中英混排会把覆盖率整体压低，先读排第一的那篇全文核实），并把"能用 `note_recall` 不用裸 grep"改成"能 `note_recall` 就不换工具"。
+2. `dsh/preset/math-memory.mjs`（系统提示的每轮注入段）：三条 grep 路由改成 `note_recall` 起手，段首新增一条与 §0 同义的分工句；「近期跨会话问答线索（细节请 grep episodes）」改为「细节请 `note_recall` 定位后读文件，必要时再 grep 该文件」。两处注释同步（`grep/read` → `note_recall` 发现 + 定向 grep/read 核验）。
+3. `dsh/preset/note-tools.mjs`：系统提示段把「glob/grep 继续用通用文件工具」改成**明确的分工句**（grep 是"已知路径后核对字面字符串/行号"的精确工具，glob 只管按路径模式找文件，都不做内容发现）；`note_search` 的 description 去掉「use grep/read for memory files」，改为「记忆内容用 `note_recall` / `note_strategy`」；`note_recall` 的 description 去掉"prefer it over grep"这种**并列比较**（那读起来像两个可选检索器），改成「这是**找内容**的入口，grep 不是发现工具」。
+4. **`note_recall` 结果头里的"整批弱信号"改为有条件措辞**（这是把模型推出 recall 的直接诱因）：coverage 按**全部查询 token**算，一条长查询或中英混排会**同时**压低所有命中，而旧文案对"15 条全弱"和"3 条里 1 条弱"用的是同一句"多为词面巧合"。现在整批都弱时改说「多为长查询/中英混排把覆盖率整体压低，不等于库里没有：先读排第一的那篇全文核实，再决定是否改写查询（**不要改用 grep 全库搜**）」，只有部分弱时才保留原判断。
+5. `main.js` 重建（内嵌 preset 与全部模板；未改版本号，等发版）。
+
+**验证与覆盖范围**：`node scripts/build-obsidian.mjs` → `check-bundle-freshness` **逐字节**与全新构建一致；`check-agent-instructions` 1 个自动注入文件（仍是根 `AGENTS.md`，未新增/改名模板）；`check-doc-counts` 82 条陷阱 + 41 条门禁自洽。`npm test` = **39/41**，两条红**与本次改动无关**，且做了 A/B 基线：把改动 `git stash` 后在 HEAD `834357a` 上**单独重跑这两条门禁，复现完全相同的错误**——① `test: link server port+token stability`：前 15 项全 ok，红在无头浏览器 CDP 的 `timeout Page.enable`；② `test: agent preset mounts (real dsh, no tokens)`：6/7，唯一红项「dsh 启动并打印了带 token 的启动地址」。两条都是环境结果（本机浏览器/子进程环境），不是本次回归。**覆盖范围的边界**：本次改的是**文本（协议 + 工具描述 + 一处渲染文案）**，没有代码路径可被单测覆盖；"模型下次真的少用 grep"只能靠真实会话观察，或烧 token 的 `npm run qa:e2e`（本次未跑，按仓库纪律需先问用户）。
+
+**刻意没做**：① 没有把 grep 从工具面摘掉（那会失去"核对某文件是否真有某句话/行号定位"这类合法用途，且 `tool-fs-search` 里 grep 与 glob 是同一个插件、无单独开关，摘 grep 得自写一个只为 glob 的本地插件）；② 没有改 `coverage` 的算法本身（那是 B 方案的活：只按"库里存在的 token"计算，属检索实现改动，风险与验收面都更大）；③ 没有同步 `scripts/qa/benchmark-vault/vault-AGENTS.md`——它是**冻结的基准语料**（`handoff.md` §7 明确"一次有意的刷新 + 新 baseline"才能动），顺手改会改变基准所测的东西。
+
+**实测数据的口径（写给复核者）**：会话日志是 `session[.v3].jsonl.zstd`，**多帧 zstd**，逐帧解压；同一会话目录可能同时存在 v2 与 v3 两份（v3 是迁移产物、v2 被保留），统计时**优先 v3**否则会双计；真实工具调用是 `{"type":"tool/call","data":{"name",…,"arguments"}}`，按 `"note_recall"` 之类的字符串在整行里 grep 会把**系统提示与工具描述里的提及**也算进去，必须按事件类型过滤。
+
 ## 2026-09-18 · 文献库第六批（验证类 4 篇）+ 一个"同一论文两张卡"的重复条目 + 数学笔记验证机制评估
 
 **起因**：用户提出一个设计问题——「我在笔记里写的定理和方法是错的怎么办？靠让 AI 审查会有细节错漏吗？有没有稳健的审查方法？」并给了 4 篇验证类文献（Danus / SAFE / LeanTutor / LeanDojo）与真实笔记库路径。要求按仓库文献处理流程研读记录，并评估如何改进。

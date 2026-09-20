@@ -1231,16 +1231,16 @@ export async function apply(ctx, config) {
     order: 103,
     text:
       "Use the dedicated Obsidian note tools for note-level operations: " +
-      "note_recall (PRIMARY entry — unified relevance-ranked search over user notes AND all memory layers with BM25 + hook signals; use it whenever you need to find relevant content, then read the top 2-3 matches in full before using them; an empty result is a signal to reformulate the query), " +
+      "note_recall (PRIMARY retrieval entry — unified relevance-ranked search over user notes AND all memory layers with BM25 + hook signals; use it whenever you need to FIND relevant content, then read the top 2-3 matches in full before using them; an empty result is a signal to reformulate the query), " +
       "note_search (text and/or tag filter over user notes only), " +
       "note_create (new note only — it refuses to overwrite an existing note), and note_links (which notes link to a note). " +
-      "For ordinary file read/write/edit/glob/grep inside the vault keep using the generic file tools."
+      "Keep the generic file tools for read/write/edit. Do NOT use grep as a discovery tool: it is a precision tool for verifying an exact string or line inside a file whose path you already know (found via note_recall / note_search); glob is for locating a file by path pattern, not for searching content."
   });
 
   // ── note_search ────────────────────────────────────────────────────────
   ctx.tools.register(defineTool({
     name: "note_search",
-    description: `Search the Obsidian vault for markdown notes whose title or body contains a query string, optionally filtered by a tag. Returns up to ${DEFAULT_MAX_RESULTS} matches by default, each with vault-relative path, title, tags, and a text snippet. Prefer this over raw grep when the user asks to find notes by topic, keyword, or tag. The hidden .deepseek memory tree is excluded — use grep/read for memory files.`,
+    description: `Search the Obsidian vault for markdown notes whose title or body contains a query string, optionally filtered by a tag. Returns up to ${DEFAULT_MAX_RESULTS} matches by default, each with vault-relative path, title, tags, and a text snippet. Use it for substring/tag lookup over user notes and as the route to a specific note whose title you already know; when the need is "find whatever is relevant", note_recall is the primary entry. The hidden .deepseek memory tree is excluded — for memory content use note_recall / note_strategy (grep only verifies an exact string in a file you already know).`,
     parameters: {
       query: { type: "string", description: "Case-insensitive substring matched against note titles and bodies. Omit to search by tag only." },
       tag: { type: "string", description: "Optional tag filter without leading '#' (e.g. \"analysis\" also matches nested tag \"math/analysis\")." },
@@ -1289,7 +1289,8 @@ export async function apply(ctx, config) {
       const limit = Math.min(requested, HARD_MAX_RESULTS);
 
       // note_search is user-note scoped: the hidden .deepseek memory tree is
-      // excluded (memory files are reached via grep/read per the routing rules).
+      // excluded (memory content is reached through note_recall / note_strategy;
+      // grep is a precision tool, not a discovery route).
       const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns, [".deepseek"]);
       const matches = [];
       for (const note of notes) {
@@ -1459,7 +1460,7 @@ export async function apply(ctx, config) {
   // ── note_recall (memory v3 S1: unified entry) ─────────────────────────────
   ctx.tools.register(defineTool({
     name: "note_recall",
-    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry — prefer it over grep and over per-layer routes whenever you need to find relevant content; it answers in one call what previously took several. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high). Snippets are short WINDOWS around the query terms, not the full card. Then READ the top 2-3 matches in full and RE-EVALUATE whether each actually fits the CURRENT query before using them — a relevant, verified, high-score hit is a candidate, not a mandate (a previously-successful technique can be a fixation trap on a slightly-different instance). An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards.`,
+    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry — the way to FIND content: prefer it over grep, over note_search and over per-layer routes; it answers in one call what previously took several. grep is not a discovery tool (use it only to verify an exact string or line number inside a file whose path is already known). Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high; a long or bilingual query depresses coverage across the WHOLE list, so when everything looks weak read the top hit in full before concluding the vault is empty). Snippets are short WINDOWS around the query terms, not the full card. Then READ the top 2-3 matches in full and RE-EVALUATE whether each actually fits the CURRENT query before using them — a relevant, verified, high-score hit is a candidate, not a mandate (a previously-successful technique can be a fixation trap on a slightly-different instance). An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards.`,
     parameters: {
       query: { type: "string", required: true, description: "Distilled search query: the reasoning challenge plus candidate technique keywords, e.g. '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli'." },
       operator: { type: "string", description: `Optional stage-1 hard filter, one of ${[...HOOK_OPERATORS].join("/")}. Only hook cards with a matching operator are scored; when none matches, all docs are scored and mode reports the fallback.` },
@@ -1535,7 +1536,17 @@ export async function apply(ctx, config) {
           return `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path}) score ${match.score.toFixed(3)}${extra === "" ? "" : " · " + extra}\n  ${match.snippet}`;
         });
         const weak = value.matches.filter((match) => match.coverage < 0.35).length;
-        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实适用性后再使用——相关 + 已验证 ≠ 适用于本题；${weak} 条 coverage<0.35 属弱信号，多为词面巧合）:\n${lines.join("\n")}${archivedNote}${withheld}` }];
+        // A blanket weak verdict is usually an artifact, not a finding: coverage is
+        // computed over ALL query tokens, so one long or bilingual query depresses
+        // every hit at once. Saying only "弱信号，多为词面巧合" per list here is what
+        // pushed the model out of note_recall and into raw grep discovery; when the
+        // whole list is weak, point at the ranking instead (see the tool description).
+        const weakNote = weak === 0
+          ? ""
+          : weak === value.matches.length
+            ? `全部 ${weak} 条 coverage<0.35——多为「长查询/中英混排把覆盖率整体压低」的表现，不等于库里没有：先读排第一的那篇全文核实，再决定是否改写查询（不要改用 grep 全库搜）`
+            : `${weak} 条 coverage<0.35 属弱信号，多为词面巧合（优先信排名靠前且分数高的那几条）`;
+        return [{ type: "text", text: `${value.matches.length} 条候选（读前 2-3 条全文核实适用性后再使用——相关 + 已验证 ≠ 适用于本题；${weakNote}）:\n${lines.join("\n")}${archivedNote}${withheld}` }];
       }
     },
     isConcurrencySafe: () => true,

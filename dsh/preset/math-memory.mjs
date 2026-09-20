@@ -74,7 +74,8 @@ const DIALOGUE_INDEX_VERSION = 2;
 const LOG_SUFFIX = ".jsonl.zstd";
 const MAX_LOG_FILES = 20;
 // Layered injection budget (arXiv:2606.24775): the prompt carries navigation
-// layers only; raw evidence lives on disk and is reached via grep/read.
+// layers only; raw evidence lives on disk and is reached through note_recall
+// (discovery) plus read/grep (precision, see the routing lines below).
 // Slimmed static budgets (retrieval v3 S5): the injected layers are navigation
 // only — a topic/records/templates/episodes map that tells the agent what
 // exists. Relevant CONTENT is pulled on demand through note_recall instead of
@@ -3612,7 +3613,8 @@ function templateIndexDigest(root, maxChars) {
  *
  * Layout follows the paper's routing philosophy: stable semantics + topic
  * navigation + inbox/episode timelines are always injected (coarse layers);
- * raw episodic evidence is left on disk for grep/read (fine layer). Past
+ * raw episodic evidence is left on disk for note_recall discovery and targeted
+ * grep/read verification (fine layer). Past
  * dialogue cues are capped at a few Q/A pairs to keep the prompt bounded.
  * `context.agent` supplies the current session id so the live conversation is
  * never duplicated into the "past dialogue" index.
@@ -3632,9 +3634,10 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     "records=类型化原子记录层，episodes=原始证据层，inbox=想法层；另有三个在五层之后长出来的检索面：" +
     "theorems=定理索引（个人 Matlas）、templates=问题模板库、strategy=策略层（方法卡：困难 → 策略 → 检索目标）。" +
     "以下内容用于“知道去哪找”，不要当作完整证据。回答细节问题时必须按路由规则读文件：",
-    "- 精确事实 / 用户原话 / 日期数字 → 先 grep `.deepseek/memory/episodes/` 再读命中文件；",
-    "- 类型化原子事实（fact/event/instruction/preference）→ 先看 `.deepseek/memory/records/index.md`，再 grep/读具体记录，记录里的 source 可回原始证据；",
-    "- 相关定理 / 命题 / 引理 → 先看 `.deepseek/memory/theorems/index.md`，再 grep 笔记全文并核对适用性；",
+    "- 找内容一律先用 `note_recall`（内容发现的唯一入口），命中后读前 2-3 篇全文核实；`grep` **不是检索器**，只在「已经知道是哪个文件、要核对原话/字面字符串/行号」时用，不得用它对 vault 或 `.deepseek` 做全库扫描找内容；",
+    "- 精确事实 / 用户原话 / 日期数字 → `note_recall` 先定位（记忆卡 / episode 索引 / 主题），再读命中文件；确认某文件里是否真有这句话时才在该文件上 grep；",
+    "- 类型化原子事实（fact/event/instruction/preference）→ 先看 `.deepseek/memory/records/index.md`，再 `note_recall`（或读）具体记录，记录里的 source 可回原始证据；",
+    "- 相关定理 / 命题 / 引理 → 先看 `.deepseek/memory/theorems/index.md`，再 `note_recall` 命中相关笔记并核对适用性；",
     "- 同类题型 / 解法模式 → `memory/templates/index.md` 与关联定理（去重聚合）；",
     "- 方法 / 策略类问题（证明、构造）→ 先用 `note_strategy` 取方法卡（困难 → 策略 → 检索目标），再按 move→retrieve 清单走 `note_recall`；",
     "- 主题来龙去脉 → 先读 `.deepseek/memory/topics/index.md` 定位，再读 `topics/<slug>.md` 或相关笔记；",
@@ -3770,7 +3773,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
       used += budget;
     }
     if (cues.length > 0) {
-      lines.push("", "### 近期跨会话问答线索（最多 6 组，细节请 grep episodes）", "");
+      lines.push("", "### 近期跨会话问答线索（最多 6 组，细节请 note_recall 定位后读文件，必要时再 grep 该文件）", "");
       let lastSessionId;
       for (const entry of cues) {
         if (entry.sessionId !== lastSessionId) {
