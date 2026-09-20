@@ -5,8 +5,9 @@
 #   - tool-fs-search   search/glob inside the vault
 #   - tool-ask-user    ask before capturing key ideas, big edits, etc.
 #   - note-tools   dedicated note tools: note_recall (unified ranked search
-#                      over notes + memory), note_search (tag filtering),
-#                      note_create (refuses overwrite), note_links (backlinks)
+#                      over notes + memory, incl. tag-only enumeration),
+#                      note_strategy (method layer), note_create (refuses
+#                      overwrite), note_links (backlinks)
 #                      (applied by math-memory below, which always updates)
 # Everything else (shell, web, subagents, workflows, goals, todo, ...) is
 # deliberately NOT mounted in this preset.

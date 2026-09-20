@@ -22,7 +22,7 @@
 | 路径 | 职责 |
 |---|---|
 | `dsh/preset/math-memory.mjs` | 记忆注入引擎：五层导航摘要、体检、dialogue index、memo 提醒、`config.md` 开关解析 |
-| `dsh/preset/note-tools.mjs` | 笔记工具：note_recall/note_search/note_create/note_links + BM25 + `resolveWorkspaceRoot` + `hookPrior` |
+| `dsh/preset/note-tools.mjs` | 笔记工具：note_recall（含 tag-only 枚举）/note_strategy/note_create/note_links + BM25 + `resolveWorkspaceRoot` + `hookPrior`（`note_search` 2026-09-20 退役，见 `docs/memory/retrieval-v3.md` §5.1） |
 | `dsh/preset/hook-frontmatter.mjs` | **共享 hook 块解析器**（单一事实源；+ `HOOK_SCHEMA_VERSION`；被 ESM import + 插件嵌入 loader 双路加载） |
 | `dsh/preset/agent.cordis.yml` | preset 装配：最小工具面 + 记忆开关（`enabled`/`dialogueIndex`/`reminders`/`audit`） |
 | `dsh/preset/preset.yml` | preset 元信息（显示名「数学笔记助手」） |
@@ -84,7 +84,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：82
+> 陷阱条数：84
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -251,6 +251,14 @@
     - **最刺的地方**：`docs/memory/benchmark.md` §5 恰好把"tokens 从 `assistant/chunk` 的 usage 里取"写成了成本记录的**设计**。也就是说文档与代码在同一个错误上互相印证，而**没有任何门禁会发现"计量恒为 0"**——0 是一个合法数字，不会让任何断言失败。
     - **纪律**：① **一个没有测量脚本绑定的数字，不配进验收记录**——它无法重跑、无法验证，只会在文档里独立腐烂（本条正是它的下场）；② 量成本的产物里如果出现**恒为 0 或恒定不变**的字段，先怀疑**它读的事件还在不在**，而不是去解释那个 0；③ 归档"停用口径"的测量时，把**证据边界**一起存档（本次存进 `docs/archive/cost-benchmark-2026-08.md` §4），否则下一个人会把旧数字重新抄回文档。
 
+83. **★ 「迁移」只迁了职责、没摘旧工具 ⇒ 一个能力留下多个入口，模型就自己挑**（2026-09-20 查清）。
+    - **经过**：用户问「grep 是不是和 note_search 重复了」。核对后发现 `note_search` **两边都重复**——tag 过滤与 `note_recall` 用的是同一套 `noteTags`/`matchesTagFilter`，字面文本查找又与 grep 重叠（且是不排序的子串，精度更低）。更要紧的是 `docs/memory/retrieval-v3.md` §5 当初就写着「search 取代 note_search 与 note_retrieve 的查询职责」、§6 也把 `note_retrieve` 标成已退役，**但 `note_search` 这个工具本身没被摘掉**。于是 vault 里长期并存三个"找东西"的入口（`note_recall` / `note_search` / grep），模型自己挑；同一天排查的"grep 被当检索器用"正是同一病根的另一面（协议在多个位置把 grep 写成可选检索路径）。
+    - **为什么长期没人发现**：没有任何门禁会因为"多一个入口"报错——工具数、schema、fixture 全都自洽。真实会话日志里 `note_search` 15 次调用**全部带 `query`、0 次只按 tag**，也就是说它唯一不可替代的能力（按 tag 枚举）其实没人在用，而它被当成"低精度字面搜索"，看起来还能用。
+    - **纪律**：① **迁移一个接口时，旧接口要么当场摘掉，要么在工具面之外显式标成"已退役"并留一条守卫**——"职责迁走了"不等于"入口没了"；② 判断两个工具是否重复**不要凭印象**：把能力逐项列出来、对照代码（本例是"同名的 tag 匹配函数"这一条把结论钉死的）；③ 摘工具前先量一次**真实调用分布**（`note_search` 的 15/0 就是"可以摘"的证据），否则会把偶尔有用的能力一起删掉。
+84. **★ 冻结的 fixture 会让你以为"顺手同步"是安全的**（2026-09-20，同一次改动）。
+    - **形态**：`scripts/qa/benchmark-vault/` 是**冻结的基准语料**（`handoff.md` §7 已登记、`check-rename.mjs` 也按目录前缀豁免）。本轮改了 vault 协议（`vault-AGENTS.md`）后，它那份**故意停留在旧措辞**（还写着 `note_search` 与「grep episodes」路由）。
+    - **纪律**：改协议模板时**先确认哪些副本是"生成的"、哪些是"冻结的"**——生成的要重建（`main.js`），冻结的**不要顺手改**，它的更新方式是"一次有意的刷新 + 新 baseline"，并且必须在改动记录里写明"刻意没同步它、为什么"。
+
 ## 5. 用户决策记录（不要推翻）
 
 - **单仓**（不拆双 git 仓库），两个产物独立分发（npm 包 + Obsidian 插件）+ 仓库内文献库/面板子系统。
@@ -321,7 +329,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **发布物里的本机路径（P2-2）** | ✅ 已修（2026-09-11）：先**证伪**——npm 只发 `dsh/` + 3 个根文件，Release 只附 Obsidian 三件，唯一的硬编码本机路径在 gitignore 的 `scripts/deploy-local.mjs`，**报告描述的泄漏在当前树上不可达**。但"可达"只靠两个清单没人改，故新增 `scripts/check-release-paths.mjs`（第 **31** 个门禁）：**发布集 pin 住**（改 `package.json` 的 `files` 必须改守卫并写理由）+ **发布面扫描**本机标识与通用绝对路径。三项变异验证。同处把 `main.template.js` 里一句像真路径的注释示例改成中性写法 | 完成 |
 | **`baseline.json` 是死产物，去留待定** | `e2e.mjs` 会写 `scripts/qa/runs/*/baseline.json`（已提交 3 份），但**没有任何代码读它** ⇒ `testing.md` 的「CI 可比对基线」是目标而非现状。两条路：① **让守卫真的消费它**（比对阈值 / 回归门禁，需要先定义"退步"的判据）；② **移出 git**（当作本机运行产物）。在此之前不要在文档里声称"可比对"。已提交的证据不删，等决定 | 中 |
 | **自指式期望与脆弱断言（审查 P3）** | ① `test-memory.mjs` 断言 `navSection.length <= MAX_TOTAL_MEMORY_CHARS`，而该常量**从被测模块 import**；另一处断言模块自己的 `HOOK_SCHEMA_VERSION > 0`——**改大常量即可让断言永远成立**。② 47 处 `includes('中文文案')` 断言（改文案即红，属维护成本而非缺陷）。③ 无锚点魔法数（`posture.length === 9`、`r.files === 5`、反代 31）。修法方向：自指项改成**独立推导的期望值**（或把常量从夹具注入）；魔法数改成**从清单/代码推出**。同族坑 68 | 低 |
-| **`engine-probe.mjs` 的 ground truth 绑定私有 vault** | 期望路径指向维护者的真实 vault（`数学/Picard-Banach定理.md` 等），与 `testing.md` 声称的"合成夹具探针"不符 ⇒ 真实语料上的排序结论在别的机器与 CI 上**不可复现**。修法需要一次"夹具化 ground truth"的设计（把真实用例抽象成合成 vault 里的等价语料），并保留现有真实 vault 探针作为本机验收 | 中 |
+| **`engine-probe.mjs` 的 ground truth 绑定私有 vault** | 期望路径指向维护者的真实 vault（`数学/Picard-Banach定理.md` 等），与 `testing.md` 声称的"合成夹具探针"不符 ⇒ 真实语料上的排序结论在别的机器与 CI 上**不可复现**。修法需要一次"夹具化 ground truth"的设计（把真实用例抽象成合成 vault 里的等价语料），并保留现有真实 vault 探针作为本机验收。**2026-09-20 实测的新证据**：本机跑成 **11/12**，唯一红项「定理索引命中」（期望 `.deepseek/memory/theorems/index.md`）在 `git stash` 到 HEAD 后**复现同一红** ⇒ 这是 vault 内容漂移，不是检索回归；两侧都红也说明这条 ground truth 需要随 vault 维护或夹具化 | 中 |
 | **记忆引擎去重（P0-3 的目标态）** | `dsh/preset/math-memory.mjs` 与 `dsh/host/memory-admin.mjs` 仍有 22 个同名符号、其中 6 个已实质偏离（`check-engine-sync.mjs` 已逐条登记理由）。彻底做法是把共享引擎抽成一个模块、两边各自薄封装——现在至少有守卫，不会再静默漂移 | 中 |
 | **大函数拆分** | `buildAuditReport`(582 行) / `MemoryView`(537) / `apply`(471) / `DshWebProxy`(387) / `DshObsidianSettingTab`(298)（审查报告 P1-5） | 低 |
 | **可溯源（source 链 + 引用次数）** | `control-panel.md` §2.3 要求的「每条记忆显示 source 证据链与引用次数」**仍未交付**：`collectMemoryState` 至今不解析 `source`，两个面板都没有 | 中 |

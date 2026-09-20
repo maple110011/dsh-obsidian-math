@@ -1,7 +1,7 @@
 /**
  * math-memory — cross-session memory injection for the `obsidian` dsh
  * agent preset. It also applies the sibling note-tools.mjs plugin on the
- * same context, which registers note_recall / note_search / note_create / note_links.
+ * same context, which registers note_recall / note_strategy / note_create / note_links.
  *
  * What it does, on every system-prompt assembly for this agent:
  *   1. Reads the vault's durable memory files (`.deepseek/memory/*` and a
@@ -4089,8 +4089,8 @@ export async function apply(ctx, config) {
   // (the assemble trigger only fires once a session actually starts).
   setTimeout(() => engine.captureNow(), 0);
 
-  // Apply the dedicated note tools (note_search / note_create / note_links /
-  // note_recall) on the same context — reuse the module imported above.
+  // Apply the dedicated note tools (note_recall / note_strategy / note_create /
+  // note_links) on the same context — reuse the module imported above.
   // This file is always refreshed on upgrade, so existing installations pick
   // the tools up even though agent.cordis.yml preserves user edits. The
   // sibling module resolves `defineTool` through the harness loader, so it

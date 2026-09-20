@@ -3,6 +3,40 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-20 · `note_search` 退役：它和 `note_recall`、grep 都重复
+
+**起因**：用户读了上一节的改动后问——「grep 是不是和 note_search 工具重复了」。这是个该被问的问题：如果 grep 与 `note_search` 重复，那上一节把 grep 降为"核对工具"就等于**留下一半的重复没处理**。
+
+**核对（读代码，不凭印象）**：
+
+| 能力 | `note_search` | `note_recall` | grep |
+|---|---|---|---|
+| tag 过滤 | 有 | **同一套实现**（`noteTags` / `matchesTagFilter`，含 `math/analysis` 嵌套匹配） | 做不到 |
+| 文本查找 | 字面子串（不排序） | BM25 排序 | 正则/字面，任意文件 |
+| 语料 | 仅用户笔记（刻意排除 `.deepseek`） | 笔记 + 全部记忆层 | 任意文件/目录 |
+| 只按 tag 枚举 | **可以**（`query` 可省） | **原先不行**（`query` 必填） | 做不到 |
+
+⇒ 结论：重复是真的，而且是**两边都重复**——tag 过滤与 `note_recall` 完全重合，字面文本查找与 grep 重合。它唯一不可替代的能力是「只按 tag 枚举」。
+
+**更关键的一处历史事实（这决定了处置方式）**：`docs/memory/retrieval-v3.md` §5 原本就写着迁移方案——「**search 取代 note_search 与 note_retrieve 的查询职责**」，§6 的 S3 也把 `note_retrieve` 标成「已退役」。也就是说 **`note_search` 当初就是要退役的**，只是它的"查询职责"迁进了 `note_recall`、**工具本身没被摘掉**，于是 vault 里同时留着三个"找东西"的入口（`note_recall` / `note_search` / grep）。上一节的 grep 问题与这一节是同一个病根的两面：**同一件事有多个入口，模型就会自己挑**。
+
+**真实用法佐证它没在被当回事用**：本机真实 vault 会话里 `note_search` 共 15 次调用，**15 次都带 `query`、0 次只按 tag**。它实际被当成"低精度的字面子串搜索"在用——而 `note_recall` 是 BM25 排序，字面命中反而更弱（`docs/memory/assessment.md` §5 早就记过"纯子串对 LaTeX/中文同义改写命中差"）。
+
+**改动**：
+
+1. **`note_recall` 新增 tag-only 枚举模式**（承接 `note_search` 唯一不可替代的能力）：`query` 改为可选，**只给 `tag` 不给 `query`** ⇒ `rankRecallDocuments` 走枚举分支——不评分、不算 coverage，按 frontmatter `updated` 降序（无日期排最后，并列按路径字典序稳定排序），`mode: "enumeration"`、`score: 0`、`coverage: 0`。渲染时**不打印 score、`覆盖:—（枚举模式不计分）`**，并在结果头写明"这是枚举不是相关性排序，需要找相关内容请带 query 再检索"——**不能让它看起来像一次排序检索**。枚举模式**不做适用边界门控**（那套判据依赖查询词），也**不写 hook 命中统计**（枚举不是"为某个查询取回了卡"）。
+2. **摘掉 `note_search` 的注册**（不保留同名壳工具；老会话/旧基线里的历史记录不需要兼容），原位留下一段注记说明"为什么退役、验过什么、替代路径是什么"。
+3. 同步：`vault-AGENTS.md`（§0 工具清单与分工、§5 路由表"精确 tag 过滤"行）、`math-memory.mjs`/`agent.cordis.yml`/`cordis.patch.yml`/`preset.yml` 的注释与描述、两个 README 的"检索"与"安全/工具面"两节、`design.md`（检索路由 + 工具面计数）、`ARCHITECTURE.md` §2 文件地图、`handoff.md` §2 文件地图、`scripts/fixtures/tool-outputs.json`（删 `note_search` 两项、给 `note_recall` 补一条枚举 fixture）。
+4. `main.js` 重建（未改版本号）。
+
+**验证与覆盖范围**：① 用一个只调真管线的临时探针跑枚举分支：3 篇带 `math/analysis` 的笔记 → 顺序为 `updated` 降序（09-19 → 01-05 → 无日期）、无日期的排最后、`.deepseek/memory/records/*.md` **不出现**（枚举只返回 `kind: "note"`）、嵌套 tag `math/analysis` 同样命中 3 篇、带 `query`+`tag` 时仍是排序检索且 tag 仍限制语料——**这条是变异可验的**：去掉枚举分支，同样的输入会按语料顺序返回并给出伪造的 score/coverage。② 枚举请求在 `query` 为空时**必须报错**（工具边界保留 `provide query, tag, or both`）。③ `test-tool-schemas` 22/22、`test-tool-shape` 11/11（工具数从源码自动发现，删工具后 fixture 与 schema 同步一致）。④ `check-doc-constants` 由红转绿——它自己报出三处"claims 5 note tools, but registers 4"，我按它指的位置逐条改（这正是"锚点在代码、不在记忆"的价值）。⑤ `npm test` 见下节记录。
+
+**刻意没做**：① 不给枚举模式加 `operator`/`kind` 之类的额外过滤参数（用不上就先不加，`operator` 目前只在评分路径里被消费）；② 不把 grep 从工具面摘掉——它仍能干 tag 覆盖不到的事（非 markdown、点目录、`.deepseek` 深层、正则），只是被限制在"已知文件后核对"这一种用法；③ 不动 `scripts/qa/benchmark-vault/vault-AGENTS.md`（**冻结基准语料**，仍需一次有意的刷新 + 新 baseline）。
+
+**验证与覆盖范围**：① 用一个只调真管线的临时探针跑枚举分支：3 篇带 `math/analysis` 的笔记 → 顺序为 `updated` 降序（09-19 → 01-05 → 无日期）、无日期排最后、`.deepseek/memory/records/*.md` **不出现**（枚举只返回 `kind: "note"`）、嵌套 tag `math/analysis` 同样命中 3 篇、带 `query`+`tag` 时仍是排序检索且 tag 仍限制语料——**这条是变异可验的**：去掉枚举分支，同样的输入会按语料顺序返回并给出伪造的 score/coverage。② 枚举模式在 `query` 为空、`tag` 也为空时**仍然报错**（工具边界保留 `provide query, tag, or both`）。③ `test-tool-schemas` 22/22、`test-tool-shape` 11/11（工具数从源码自动发现，删工具后 fixture 与 schema 同步一致）。④ `check-doc-constants` 由红转绿——它自己报出三处「claims 5 note tools, but registers 4」，按它指的位置逐条改（这正是"锚点在代码、不在记忆"的价值）；`check-readme-pair` 也红了一次并指出**两侧 README 都被改过**，确认结构对齐（14 节 / 29 条目 / 3 围栏一致）后 `--write` 重新记录。⑤ `npm test` = **39/41**，两条红是**与本次无关的环境结果**：`link server`（无头浏览器 CDP `timeout Page.enable`）与 `agent preset mounts`（dsh 未打印带 token 的启动地址）——上一节已用 A/B 基线证过它们在 HEAD 上同样红。⑥ 零 token 探针：`npm run qa` 的 seed-probe **8/8**；真实 vault 的 engine-probe **11/12**，唯一红项「定理索引命中」是**既有的 vault 漂移**（`git stash` 后在 HEAD 上复现同一红：期望 `.deepseek/memory/theorems/index.md`，而该文件不在真实 vault 里——探针的 ground truth 绑定本机 vault，需随 vault 变化维护，见 `retrieval-v3.md` §6 末）。未跑 `qa:e2e`（烧 token，按纪律先问用户）。
+
+**记录**：新增 `docs/handoff.md` 陷阱 83（"迁移只迁职责、没摘旧工具 ⇒ 一个能力多个入口"）与 84（"冻结 fixture 不能顺手同步"），陷阱条数 82 → **84**；`AGENTS.md` §1/§6 两处引用由 `check-doc-counts` 逼着一起改——它当场报出「claims 82 traps, but §4 holds 84」。
+
 ## 2026-09-20 · 检索分工写死：grep 从「备用检索」降为「已定位文件的字面核对」
 
 **起因**：用户观察——「笔记助手模式有时候还是会调用 grep，它不应该只调用 `note_recall` 吗？毕竟这个专门做了 BM25 等优化」。要判断这是"模型不听话"还是"协议就是这么写的"，所以先去读**真实会话日志**再动手。

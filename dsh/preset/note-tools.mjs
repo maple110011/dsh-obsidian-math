@@ -4,8 +4,11 @@
  *   - note_recall    unified BM25-ranked recall over notes + memory layers
  *                    (retrieval v3 primary entry; hook-field weighting, CJK
  *                    char containment, success-rate prior, coverage weak-signal
- *                    indicator; hit stats land in .deepseek/cache/retrieval-stats.json)
- *   - note_search    full-text / tag-filtered search across user notes only
+ *                    indicator; hit stats land in .deepseek/cache/retrieval-stats.json).
+ *                    Also the tag-only enumeration mode: omit `query` and pass
+ *                    `tag` to list user notes carrying that tag by `updated` desc.
+ *                    This absorbed the retired `note_search` (retrieval-v3.md §5.1):
+ *                    the vault has ONE content-discovery entry, not three.
  *   - note_create    create a new note; refuses to overwrite an existing one
  *   - note_links     backlink (wikilink) queries
  *
@@ -188,7 +191,7 @@ function splitFrontmatter(raw) {
 export { parseHookFrontmatter };
 
 // ── incremental note-text cache (memory v2 perf, D) ─────────────────────────
-// note_search / note_links previously read every .md on every call. This cache
+// note_recall / note_links previously read every .md on every call. This cache
 // reuses the raw text while a file's mtime+size stay unchanged: per call the
 // cost drops to a metadata stat plus reading only files that actually changed.
 const NOTE_CACHE_LIMIT = 5000;
@@ -739,6 +742,12 @@ const KIND_CORPUS_WEIGHT = { "episode-index": 0.4, "theorem-index": 0.7 };
  * {@link buildRecallDoc} results; pass `passages`/`docTokens` to reuse a corpus
  * across queries.
  *
+ * An EMPTY `query` with a non-empty `tag` is the **tag-only enumeration** branch:
+ * relevance scoring is skipped on purpose (there is no query to be relevant to),
+ * so the result is the note list carrying that tag, ordered by `updated` desc,
+ * with `score: 0` and `coverage: 0`. Reporting 0 rather than a fabricated
+ * similarity is the point — the renderer shows a dash for it (retrieval-v3.md §5.1).
+ *
  * @returns `{ mode, operator, matches, passages, docTokens }`
  */
 export function rankRecallDocuments(docs, query, options = {}) {
@@ -755,8 +764,62 @@ export function rankRecallDocuments(docs, query, options = {}) {
 
   const passages = givenPassages ?? kept.map((doc) => composePassage(doc.kind, doc));
   const docTokens = givenTokens ?? passages.map((passage) => tokenize(passage));
-  const corpusStats = computeCorpusStats(docTokens);
   const docTokenSets = docTokens.map((tokens) => new Set(tokens));
+  const shape = (entry, score) => ({
+    path: entry.doc.rel,
+    kind: entry.doc.kind,
+    title: entry.doc.title,
+    verified: typeof entry.doc.hook?.verified === "string" ? entry.doc.hook.verified : null,
+    hookOperator: typeof entry.doc.hook?.operator === "string" ? entry.doc.hook.operator : null,
+    uses: Math.max(0, Math.trunc(hookNumber(entry.doc.hook, "uses", 0))),
+    successRate: Number.isFinite(Number(entry.doc.hook?.success_rate)) ? Number(entry.doc.hook.success_rate) : null,
+    score,
+    // The label rides on the snippet because the output schema is
+    // `additionalProperties: false` on match items too: adding an `archived` field
+    // would fail dsh's strict validation and kill the whole call (the 2026-09-14
+    // failure). A prefix is visible to the reader AND schema-safe.
+    snippet: (entry.doc.archived === true ? "［已归档·未被删，可在面板恢复］ " : "") + snippetForPassage(passages[entry.i], queryTokens),
+    // Enumeration reports 0, not the formula's "no tokens ⇒ 1": a tag listing has
+    // no query, so a coverage of 1 would claim perfect lexical coverage of nothing
+    // (and the renderer prints a dash for it either way).
+    coverage: queryTokens.length === 0 ? 0 : Number(queryCoverage(queryTokens, docTokenSets[entry.i]).toFixed(2))
+    // 注意：这里**不要**再加 `hook` / `boundary` 之类的内部字段。dsh ≥0.1.5 会对成功
+    // 返回值做严格校验，而 note_recall 的 output schema 是 `additionalProperties: false`
+    // ⇒ 多一个字段 = 整次工具调用失败（ToolOutputError）。曾经的 `hook: doc.hook,
+    // boundary: doc.boundary ?? ""` 就是这样把 note_recall 打死的（2026-09-14）。
+    // 需要 rich 值的是**调用方**：`rankRecallDocuments` 的返回值里仍然带着它们。
+  });
+
+  // ── tag-only enumeration ────────────────────────────────────────────────
+  // No scoring, no coverage: ordering is `updated` desc (undated last), path as
+  // the deterministic tiebreak. The applicability gate is NOT applied here — it
+  // is keyed on query phrases, and an enumeration has no query to key on.
+  if (queryTokens.length === 0 && tag !== "") {
+    const entries = kept.map((doc, i) => ({ doc, i, score: 0 }));
+    entries.sort((a, b) => {
+      const ua = String(a.doc.updated ?? "").trim();
+      const ub = String(b.doc.updated ?? "").trim();
+      if (ua !== ub) {
+        if (ua === "") return 1;
+        if (ub === "") return -1;
+        return ua < ub ? 1 : -1;
+      }
+      return a.doc.rel < b.doc.rel ? -1 : a.doc.rel > b.doc.rel ? 1 : 0;
+    });
+    const top = entries.slice(0, safeLimit);
+    return {
+      mode: "enumeration",
+      operator,
+      viewPool: "bag",
+      passages,
+      docTokens,
+      docTokenSets,
+      matches: top.map((entry) => shape(entry, 0)),
+      excluded: []
+    };
+  }
+
+  const corpusStats = computeCorpusStats(docTokens);
   // Multi-view max-pool (experimental, GraphMemix §multi-view): score every named
   // view with its own length statistics and keep the best one per document, so a
   // short exact-title match is not diluted by a long body. IDF still comes from
@@ -796,7 +859,11 @@ export function rankRecallDocuments(docs, query, options = {}) {
   const rawScores = maxPooled === null
     ? kept.map((doc, i) => bm25Score(queryTokens, docTokens[i], corpusStats))
     : maxPooled.raw;
-  const maxScore = Math.max(1e-9, ...rawScores);
+  // NOT `Math.max(1e-9, ...rawScores)`: the spread pushes every score onto the
+  // stack, so a vault that enumerates a few hundred thousand docs would die with
+  // a RangeError instead of returning a ranking.
+  let maxScore = 1e-9;
+  for (const value of rawScores) if (value > maxScore) maxScore = value;
   const priorOf = (doc) => hookPrior(doc.hook, doc.updated);
   const operatorMatch = (doc) => operator === null || (doc.hook !== null && normalizeOperator(doc.hook.operator) === operator);
   // BM25 (dominant, semantic/lexical) + CJK char containment (bridges
@@ -858,27 +925,7 @@ export function rankRecallDocuments(docs, query, options = {}) {
     passages,
     docTokens,
     docTokenSets,
-    matches: top.map(({ doc, score, i }) => ({
-      path: doc.rel,
-      kind: doc.kind,
-      title: doc.title,
-      // The label rides on the snippet because the output schema is
-      // `additionalProperties: false` on match items too: adding an `archived` field
-      // would fail dsh's strict validation and kill the whole call (the 2026-09-14
-      // failure). A prefix is visible to the reader AND schema-safe.
-      snippet: (doc.archived === true ? "［已归档·未被删，可在面板恢复］ " : "") + snippetForPassage(passages[i], queryTokens),
-      verified: typeof doc.hook?.verified === "string" ? doc.hook.verified : null,
-      hookOperator: typeof doc.hook?.operator === "string" ? doc.hook.operator : null,
-      uses: Math.max(0, Math.trunc(hookNumber(doc.hook, "uses", 0))),
-      successRate: Number.isFinite(Number(doc.hook?.success_rate)) ? Number(doc.hook.success_rate) : null,
-      score: Number(score.toFixed(4)),
-      coverage: Number(queryCoverage(queryTokens, docTokenSets[i]).toFixed(2))
-      // 注意：这里**不要**再加 `hook` / `boundary` 之类的内部字段。dsh ≥0.1.5 会对成功
-      // 返回值做严格校验，而 note_recall 的 output schema 是 `additionalProperties: false`
-      // ⇒ 多一个字段 = 整次工具调用失败（ToolOutputError）。曾经的 `hook: doc.hook,
-      // boundary: doc.boundary ?? ""` 就是这样把 note_recall 打死的（2026-09-14）。
-      // 需要 rich 值的是**调用方**：`rankRecallDocuments` 的返回值里仍然带着它们。
-    })),
+    matches: top.map((entry) => shape(entry, Number(entry.score.toFixed(4)))),
     // Boundary-excluded cards, with the phrase that triggered the exclusion. The
     // caller reports them; it must not silently pretend they do not exist.
     // 这四个键就是 output schema 声明的全部（多一个都会被 dsh 的严格校验判失败）。
@@ -1231,99 +1278,24 @@ export async function apply(ctx, config) {
     order: 103,
     text:
       "Use the dedicated Obsidian note tools for note-level operations: " +
-      "note_recall (PRIMARY retrieval entry — unified relevance-ranked search over user notes AND all memory layers with BM25 + hook signals; use it whenever you need to FIND relevant content, then read the top 2-3 matches in full before using them; an empty result is a signal to reformulate the query), " +
-      "note_search (text and/or tag filter over user notes only), " +
+      "note_recall (PRIMARY retrieval entry — unified relevance-ranked search over user notes AND all memory layers with BM25 + hook signals; use it whenever you need to FIND relevant content, then read the top 2-3 matches in full before using them; an empty result is a signal to reformulate the query. Pass `tag` without `query` to enumerate user notes carrying that tag, newest first), " +
+      "note_strategy (method layer for proof/construction problems), " +
       "note_create (new note only — it refuses to overwrite an existing note), and note_links (which notes link to a note). " +
-      "Keep the generic file tools for read/write/edit. Do NOT use grep as a discovery tool: it is a precision tool for verifying an exact string or line inside a file whose path you already know (found via note_recall / note_search); glob is for locating a file by path pattern, not for searching content."
+      "Keep the generic file tools for read/write/edit. Do NOT use grep as a discovery tool: it is a precision tool for verifying an exact string or line inside a file whose path you already know (found via note_recall); glob is for locating a file by path pattern, not for searching content. There is no separate note_search tool — note_recall answers query and tag lookups."
   });
 
-  // ── note_search ────────────────────────────────────────────────────────
-  ctx.tools.register(defineTool({
-    name: "note_search",
-    description: `Search the Obsidian vault for markdown notes whose title or body contains a query string, optionally filtered by a tag. Returns up to ${DEFAULT_MAX_RESULTS} matches by default, each with vault-relative path, title, tags, and a text snippet. Use it for substring/tag lookup over user notes and as the route to a specific note whose title you already know; when the need is "find whatever is relevant", note_recall is the primary entry. The hidden .deepseek memory tree is excluded — for memory content use note_recall / note_strategy (grep only verifies an exact string in a file you already know).`,
-    parameters: {
-      query: { type: "string", description: "Case-insensitive substring matched against note titles and bodies. Omit to search by tag only." },
-      tag: { type: "string", description: "Optional tag filter without leading '#' (e.g. \"analysis\" also matches nested tag \"math/analysis\")." },
-      maxResults: { type: "integer", description: `Optional cap on matches; defaults to ${DEFAULT_MAX_RESULTS}, maximum ${HARD_MAX_RESULTS}.` }
-    },
-    output: {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          matches: {
-            type: "array",
-            required: true,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                path: { type: "string", required: true },
-                title: { type: "string", required: true },
-                snippet: { type: "string", required: true },
-                tags: { type: "array", required: true, items: { type: "string" } }
-              }
-            }
-          }
-        }
-      },
-      render: (_args, value) => [{
-        type: "text",
-        text: value.matches.length === 0
-          ? "No matching notes found."
-          : value.matches.map((match) => `- ${match.title} (${match.path})${match.tags.length > 0 ? ` [${match.tags.join(", ")}]` : ""}\n  ${match.snippet}`).join("\n")
-      }]
-    },
-    isConcurrencySafe: () => true,
-    async execute(args, exec) {
-      const { rootPath, rootTarget } = await resolveVault(ctx, exec, cfg);
-      const query = typeof args.query === "string" ? args.query.trim().toLowerCase() : "";
-      const tag = normalizeTagFilter(args.tag);
-      if (query === "" && tag === "") {
-        throw new Error("note_search: provide query, tag, or both");
-      }
-      const requested = Number(args.maxResults ?? cfg.maxSearchResults);
-      if (!Number.isInteger(requested) || requested < 1) {
-        throw new Error(`note_search: maxResults must be a positive integer`);
-      }
-      const limit = Math.min(requested, HARD_MAX_RESULTS);
-
-      // note_search is user-note scoped: the hidden .deepseek memory tree is
-      // excluded (memory content is reached through note_recall / note_strategy;
-      // grep is a precision tool, not a discovery route).
-      const notes = await listNotes(ctx, rootTarget, exec?.signal, cfg.excludePatterns, [".deepseek"]);
-      const matches = [];
-      for (const note of notes) {
-        if (matches.length >= limit) break;
-        const raw = await readNoteTextCached(ctx, rootPath, note, exec?.signal);
-        if (raw === null) continue; // unreadable note is skipped, not a search failure
-        const { frontmatter, body } = splitFrontmatter(raw);
-        const tags = noteTags({ frontmatter, body });
-        if (tag !== "" && !matchesTagFilter(tags, tag)) continue;
-        if (query !== "") {
-          const haystack = `${note.name}\n${raw}`;
-          const lower = haystack.toLowerCase();
-          const index = lower.indexOf(query);
-          if (index < 0) continue;
-          matches.push({
-            path: note.path,
-            title: note.name,
-            snippet: makeSnippet(haystack, index, query.length),
-            tags
-          });
-        } else {
-          matches.push({
-            path: note.path,
-            title: note.name,
-            snippet: makeSnippet(body, 0, 0),
-            tags
-          });
-        }
-      }
-      return { matches };
-    },
-    presentCall: (args) => ({ card: "generic", title: "Search notes", kind: "search", rawInput: args.query ?? args.tag })
-  }));
+  // ── note_search: RETIRED (2026-09-20) ──────────────────────────────────
+  // The tool used to live here and is deliberately NOT registered any more. Its
+  // query duty was already absorbed by note_recall in retrieval v3 (S1–S3), but
+  // the tool itself was left behind, so the vault had three "find something"
+  // entries (note_recall / note_search / grep) and the model picked among them —
+  // the same defect family as the grep-as-retrieval routing cleaned up the same
+  // day (docs/changelog.md 2026-09-20). Its one capability note_recall lacked —
+  // "list by tag without a query word" — is now note_recall's tag-only
+  // enumeration mode (mode: "enumeration"). Verified before deleting: all 15
+  // recorded real calls passed a `query` and none was tag-only, and no test or
+  // script referenced the tool except its own fixture (removed from
+  // scripts/fixtures/tool-outputs.json). See docs/memory/retrieval-v3.md §5.1.
 
   // ── note_create ────────────────────────────────────────────────────────
   ctx.tools.register(defineTool({
@@ -1460,11 +1432,11 @@ export async function apply(ctx, config) {
   // ── note_recall (memory v3 S1: unified entry) ─────────────────────────────
   ctx.tools.register(defineTool({
     name: "note_recall",
-    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry — the way to FIND content: prefer it over grep, over note_search and over per-layer routes; it answers in one call what previously took several. grep is not a discovery tool (use it only to verify an exact string or line number inside a file whose path is already known). Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high; a long or bilingual query depresses coverage across the WHOLE list, so when everything looks weak read the top hit in full before concluding the vault is empty). Snippets are short WINDOWS around the query terms, not the full card. Then READ the top 2-3 matches in full and RE-EVALUATE whether each actually fits the CURRENT query before using them — a relevant, verified, high-score hit is a candidate, not a mandate (a previously-successful technique can be a fixation trap on a slightly-different instance). An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards.`,
+    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry and the ONLY content-discovery tool — grep is not a discovery tool (use grep only to verify an exact string or line number inside a file whose path is already known), and there is no separate note_search. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high; a long or bilingual query depresses coverage across the WHOLE list, so when everything looks weak read the top hit in full before concluding the vault is empty). Snippets are short WINDOWS around the query terms, not the full card. Then READ the top 2-3 matches in full and RE-EVALUATE whether each actually fits the CURRENT query before using them — a relevant, verified, high-score hit is a candidate, not a mandate (a previously-successful technique can be a fixation trap on a slightly-different instance). An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards. Enumerate by tag when you need "which notes carry this tag" rather than "what is relevant": pass tag and OMIT query.`,
     parameters: {
-      query: { type: "string", required: true, description: "Distilled search query: the reasoning challenge plus candidate technique keywords, e.g. '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli'." },
+      query: { type: "string", description: "Distilled search query: the reasoning challenge plus candidate technique keywords, e.g. '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli'. OMIT it to enumerate by tag instead (then `tag` is required)." },
       operator: { type: "string", description: `Optional stage-1 hard filter, one of ${[...HOOK_OPERATORS].join("/")}. Only hook cards with a matching operator are scored; when none matches, all docs are scored and mode reports the fallback.` },
-      tag: { type: "string", description: "Optional tag filter (user notes only), without leading '#'." },
+      tag: { type: "string", description: "Tag filter, without leading '#' (nested tags match: \"analysis\" also matches \"math/analysis\"). With a query it restricts the corpus to those notes; WITHOUT a query it is the tag-only enumeration mode — user notes carrying the tag, ordered by frontmatter `updated` descending (undated last), with no relevance score and no coverage." },
       maxResults: { type: "integer", description: `Optional cap on matches; defaults to ${RECALL_DEFAULT_MAX_RESULTS}, maximum ${RECALL_HARD_MAX_RESULTS}.` },
       includeArchived: { type: "boolean", description: "Also search ARCHIVED memory (`.deepseek/archive/`), which is excluded by default so it is not mistaken for live knowledge. Use it when the ordinary search comes up empty but you suspect the vault once held something relevant: archived cards are demoted in the ranking and their snippets are prefixed ［已归档］. Archive is a MOVE, not a deletion — anything found this way can be restored by the user in the memory panel." }
     },
@@ -1474,7 +1446,7 @@ export async function apply(ctx, config) {
         additionalProperties: false,
         properties: {
           query: { type: "string", required: true },
-          mode: { type: "string", required: true, enum: ["unified", "fallback"] },
+          mode: { type: "string", required: true, enum: ["unified", "fallback", "enumeration"] },
           operator: { oneOf: [{ type: "string" }, { type: "null" }], required: true },
           matches: {
             type: "array",
@@ -1525,16 +1497,25 @@ export async function apply(ctx, config) {
           return [{ type: "text", text: `No relevant content found — treat this as a signal to reformulate the query or change approach.${withheld}` }];
         }
         const kindLabel = { note: "笔记", record: "记忆卡", template: "模板", memo: "备忘录", topic: "主题", "episode-index": "事件", "theorem-index": "定理" };
+        // Tag-only enumeration has no relevance score and no coverage (there was no
+        // query to score against), so it must not print a fabricated 覆盖:0.00 next
+        // to results the reader would then rank by it. It says what it is instead.
+        const enumeration = value.mode === "enumeration";
         const lines = value.matches.map((match) => {
           const extra = [
             match.verified === null ? "" : { "user-confirmed": "✅", "cross-referenced": "⚖️", "single-source": "❓" }[match.verified] ?? match.verified,
             match.hookOperator === null ? "" : `算子:${match.hookOperator}`,
             `uses:${match.uses}`,
             match.successRate === null ? "" : `成功率:${match.successRate}`,
-            `覆盖:${match.coverage}`
+            enumeration ? "覆盖:—（枚举模式不计分）" : `覆盖:${match.coverage}`
           ].filter((part) => part !== "").join(" · ");
-          return `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path}) score ${match.score.toFixed(3)}${extra === "" ? "" : " · " + extra}\n  ${match.snippet}`;
+          return enumeration
+            ? `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path})${extra === "" ? "" : " · " + extra}`
+            : `- [${kindLabel[match.kind] ?? match.kind}] ${match.title} (${match.path}) score ${match.score.toFixed(3)}${extra === "" ? "" : " · " + extra}\n  ${match.snippet}`;
         });
+        if (enumeration) {
+          return [{ type: "text", text: `${value.matches.length} 条笔记带此 tag（**枚举模式**：按 frontmatter updated 降序，不是相关性排序；没有查询词就没有 score/coverage 可报，需要找"相关内容"请带 query 再检索一次）:\n${lines.join("\n")}${archivedNote}` }];
+        }
         const weak = value.matches.filter((match) => match.coverage < 0.35).length;
         // A blanket weak verdict is usually an artifact, not a finding: coverage is
         // computed over ALL query tokens, so one long or bilingual query depresses
@@ -1580,8 +1561,12 @@ export async function apply(ctx, config) {
       const ranked = rankRecallDocuments(docs, query, { tag, operator, limit });
 
       // Hook stats migration (memory v3): the unified entry records hits for
-      // hook cards; the daily audit merges them back into uses/last_used.
-      recordRetrievalStats(rootPath, ranked.matches.filter((match) => match.hook !== null).map((match) => match.path), query);
+      // hook cards; the daily audit merges them back into uses/last_used. A hit
+      // count is a claim that this call RETRIEVED the card for a query, so
+      // enumeration (no query) records nothing — a tag listing is not a hit.
+      if (query !== "") {
+        recordRetrievalStats(rootPath, ranked.matches.filter((match) => match.hook !== null).map((match) => match.path), query);
+      }
 
       return { query, mode: ranked.mode, operator: ranked.operator, matches: ranked.matches, excluded: ranked.excluded };
     },

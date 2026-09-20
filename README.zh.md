@@ -29,7 +29,7 @@
 - **`note_recall` 统一检索**：一次 BM25 排序覆盖用户笔记 + 全部记忆层（记忆卡带 hook 字段加权、备忘录、主题、定理/事件索引）；Unicode 连字符归一 + 中文字符包含桥接词形差异；命中带 **coverage**（查询词覆盖率，<0.35 视为词面巧合弱信号）。
 - **精读挑选协议**：蒸馏查询（挑战描述 + 候选技巧）→ 读前 2-3 篇全文逐条判适用 → 空结果改写重试一次 → 仍无则明说「库里没有」，不编造；同一轮 ≤2 次检索、≤3 篇全文。
 - **导航式注入**：系统提示只注入导航层（画像/记号/主题/记录/模板/事件索引），相关内容按需拉取——每轮注入有硬上限（≤18000 字符；各层预算见 [docs/memory/design.md](docs/memory/design.md) §3）。
-- `note_search`（用户笔记 tag 过滤）、`note_links`（反链/顺链扩读）、`note_create`（拒绝覆盖）配合使用。
+- `note_strategy`（证明/构造类问题的方法层）、`note_links`（反链/顺链扩读）、`note_create`（拒绝覆盖）配合使用。**按 tag 枚举合并进了 `note_recall`**（只给 `tag`、不给 `query`）：列出带该 tag 的笔记，按 `updated` 降序、不计相关性分数。`note_search` 已退役——只保留一个内容发现入口。
 
 ### 记忆（五层 + 维护闭环）
 - **五层记忆**：profile（语义层）/ topics（导航）/ records（类型化原子卡，带 hook 检索特征与验证等级 ✅⚖️❓）/ episodes（原始证据，append-only）/ inbox（想法备忘录，inbox→polishing→done）。
@@ -46,7 +46,7 @@
 - **默认不挂载 `@linxin666` UI 插件（独立性）**：profile 只 bundle `dsh-web-app` 以嵌入聊天 UI，**默认不挂载** `@linxin666/dsh-web-all` 聚合的那一族 UI 插件（皮肤中心/任务看板/SSH/aionui 面板/git-graph/宠物/统计等）——因此没有 `@linxin666` UI 包需要解析，有/无 `web` profile 都能干净启动。**皮肤中心**（皮肤选择 + 背景透明度）可在插件设置里选择性开启，需本机存在 `web` profile 以镜像 `@linxin666` 皮肤包；若该 `web` profile 装的是 `@linxin666/dsh-web-all` 聚合包（0.3.20 起聚合包已自带皮肤中心行），这个开关在功能上是冗余的——它仍覆盖「有皮肤包但没有聚合包」的机器。
 
 ### 安全（fail-closed）
-- 工具面：文件读写/搜索 + 五个笔记工具（`note_recall` / `note_strategy` / `note_search` / `note_create` / `note_links`）+ ask_user；无 shell/web/子代理/删除工具。**不挂载任何 `@linxin666` UI 插件**——保持最小 agent 工具面。
+- 工具面：文件读写/搜索 + 四个笔记工具（`note_recall` / `note_strategy` / `note_create` / `note_links`）+ ask_user；无 shell/web/子代理/删除工具。**不挂载任何 `@linxin666` UI 插件**——保持最小 agent 工具面。
 - 写操作限定 vault（workspace-write）；交互式提权默认禁用（`approval: never`）；`DSH_PERMISSION_MODE=danger-full-access` 仅重开提权询问、沙箱不变。
 - 记忆全部是 vault 内 markdown；归档代替删除；模型不得修改策略/统计字段。
 

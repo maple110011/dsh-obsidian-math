@@ -108,11 +108,11 @@
 
 粗到细的路由规则，核心是“注入的是导航，证据在磁盘”：
 
-- 关键词/tag 找笔记 → `note_search`；反链 → `note_links`；
+- 关键词/tag 找笔记 → `note_recall`（带 `query`+`tag` = 在带该 tag 的笔记里排序检索；**只给 `tag` 不给 `query`** = 枚举该 tag 下的笔记，按 `updated` 降序、不计相关性）；反链 → `note_links`；（`note_search` 已于 2026-09-20 退役，详见 retrieval-v3.md §5.1）
 - v3（检索重构，见 retrieval-v3.md）：统一入口 `note_recall`——BM25 对笔记+全部记忆层一次排序，kind-aware passage，空结果/重试协议；hook 命中带 verified/success_rate/uses + 新近度先验（promote/demote + recency，`hookPrior`）；注入层只保留导航（S5 已移除逐轮召回段）；
 - 策略层（见 strategy-layer.md）：`note_strategy`——方法层检索（difficulty 主匹配 + BM25 对 difficulty/move/abstraction 打分），证明/构造类问题先查策略卡拿到「困难→策略→检索目标」清单，再按清单逐步 `note_recall`（iterative retrieval，≤4 步）；
 - **隐藏目录限制**：Obsidian 的 vault 索引排除所有点号开头的路径段（已核对 1.13.7 源码），`.deepseek` 文件无法经 openLinkText/TFile 打开——记忆面板点击卡片走插件内预览 Modal。
-- 精确事实/原话/日期 → grep episodes → 读命中文件；
+- 精确事实/原话/日期 → `note_recall` 先定位（记忆卡/episode 索引/主题）再读命中文件；确认「某文件里是否真有这句话」时才在该文件上 grep；
 - 类型化事实 → records/index → grep/读记录 → `source` 回证据；
 - 定理 → theorems/index → grep 全文 → 展开定义、核对适用性；
 - 同类题型 → 问题蒸馏 → templates/index → 读模板卡与关联定理（去重聚合）。
@@ -269,7 +269,7 @@
 
 ## 9. 安全边界（fail-closed）
 
-- 工具面：文件读写/搜索 + 五个笔记工具（note_recall / note_strategy / note_search / note_create / note_links）+ ask_user；无 shell/web/subagent；
+- 工具面：文件读写/搜索 + 四个笔记工具（note_recall / note_strategy / note_create / note_links）+ ask_user；无 shell/web/subagent；
 - 写操作被 workspace-write 沙箱限制在 vault 内，交互提权默认禁用（`approval: never`）；
 - 插件自身唯一写的文件在 `cache/`；一切记忆变更走 ctx.fs，无裸 fs 旁路。
 

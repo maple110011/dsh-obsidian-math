@@ -33,6 +33,26 @@
           "boundaryHits": ["有限维"]
         }
       ]
+    },
+    {
+      "query": "",
+      "mode": "enumeration",
+      "operator": null,
+      "matches": [
+        {
+          "path": "数学/泛函分析.md",
+          "kind": "note",
+          "title": "泛函分析",
+          "snippet": "凸共轭的定义",
+          "verified": null,
+          "hookOperator": null,
+          "uses": 0,
+          "successRate": null,
+          "score": 0,
+          "coverage": 0
+        }
+      ],
+      "excluded": []
     }
   ],
   "note_strategy": [
@@ -84,14 +104,6 @@
       "matches": [],
       "candidates": [],
       "excluded": []
-    }
-  ],
-  "note_search": [
-    { "matches": [] },
-    {
-      "matches": [
-        { "path": "数学/泛函分析.md", "title": "泛函分析", "snippet": "凸共轭的定义", "tags": ["math/analysis", "凸分析"] }
-      ]
     }
   ],
   "note_links": [
