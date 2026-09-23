@@ -3,6 +3,40 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-21 · 回复里的记忆引用点不开：两处根因，一处从未登记
+
+**起因**：用户问「dsh 回复里引用了它自己记忆库里的东西，似乎无法在 Obsidian 中打开查看」。取证后确认这不是一个 bug，而是**两个独立缺口叠在一起**，而且第二个从未被登记、也**不可能被现有测试发现**。
+
+**根因 ①（缺陷）：`/open` 把 `.deepseek/**` 交给了对它无效的 API。**
+
+`obsidian/main.template.js` 的 `/open` 分支无条件执行 `app.workspace.openLinkText(notePath, '', openInNewPane)`。而 Obsidian 的 vault 索引**排除所有以 `.` 开头的路径段**——插件自己在 `MemoryPreviewModal` 的注释里早就写明了这条（「so .deepseek files cannot be opened through openLinkText or any TFile-based API」），`/feedback` 也早就绕开了（面板走 node `fs` 直读 + 预览 Modal），**只有 `/open` 没有**。真实症状记在 `docs/changelog.md` 另一处：「点击会变成"创建文件"→ `Folder already exists`」。而且失败**全程静默**：注入的拦截脚本把点击改成 `fetch(...).catch(function(){})`，`/open` 成功也只回 204。
+
+**根因 ②（缺口）：协议层从没给记忆卡一个「可打开」的链接模板。**
+
+注入里的链接模板只教了「引用**笔记**用 `/open`」；对**记忆卡**只给了 `/feedback`（✅/❌）与验证徽标。于是模型引用卡时只有两条路，两条都不通：
+- 写纯文本/反引号路径 → dsh 前端不可点（`chatFileMentions` 只收录本轮 `write`/`edit` 成功产出的路径 + `present` 申报，只读出来的卡永远不进词表）；
+- 把笔记规则推广成 `/open?path=.deepseek/…` → 撞上根因 ①，静默失效。
+后者比前者更糟：**看起来可点**。
+
+**为什么长期潜伏（两条都要记）**：
+1. `docs/handoff.md` §7（唯一权威未做清单）**没有这一条**——它是未登记的缺口；
+2. `scripts/test-link-server.mjs` 的 `/open` 用例**全部只用普通笔记路径**，而假 workspace 的 `openLinkText` 是一个**永远成功的桩**，`.deepseek` 只出现在 `/feedback` 用例里 ⇒ 这个缺陷在该套件里**结构上不可能被发现**（与本仓库坑 69「守卫 exit 0 不代表它比过」、坑 81「断言在变异下照样通过」同族）。
+
+**改动**（`obsidian/main.template.js` + `dsh/preset/math-memory.mjs` + `vault-AGENTS.md`）：
+
+1. **抽出 `normalizeVaultRelPath`**，`/open` 与 `/feedback` 共用。它原来是 `/feedback` 的行内逻辑，两条路由各写一份正是它们此前漂移的形态。顺带修掉一个**判断对象错误**：`..` 原来在**规范化之前**的字符串上判，于是 `a/../b.md` 被当成"段里没有 `..`"放行——检查的路径与实际解析的路径不是同一个。
+2. **`/open` 对 `.deepseek/` 前缀分流**到 `plugin.openMemoryPreview(rel)`（与记忆面板点卡片**同一个 Modal**）。分派只认这个前缀：索引内的普通笔记保持"在编辑器里打开"的既有语义，不让 `/open` 变成一个语义含糊的万能入口。文件不存在时回 **404**（不再静默）。
+3. **预览能力搬到插件上**（`DshObsidianMathPlugin.openMemoryPreview`）。原因是结构性的：`LinkServer` 够不到 `MemoryView` 实例（面板是用户打开时才创建的），而把读取逻辑在 `LinkServer` 里复制一份，就是把「隐藏文件只能 node fs 直读」这条规则变成两份——正是根因 ① 的成因本身。`MemoryView.openNote` 保留为面板入口（留住"保存后重渲染"的行为）并补上同一条路径校验。
+4. **协议补上卡的 `/open` 模板**：系统提示与 `vault-AGENTS.md` 各加一句「卡标题也写成可点击链接」，并要求末尾反馈行里的卡标题用链接而不是纯文本。顺手统一了 `vault-AGENTS.md` 里互相打岔的两句（回复正文用 `/open` vs 写进文件用 `[[wikilink]]`）——现在写成一条「两种场合不要混用」。
+
+**验证与覆盖范围**：
+- `test-link-server.mjs` 新增 **6 项**（§④b，共 22 → 28 项）：记忆卡 `/open` → 204；**走插件预览而不是 `openLinkText`**；`openLinkText` 没有被 `.deepseek` 路径碰到；不存在的卡 → 404；`.deepseek/../../etc/passwd` 被拒且**没有真的去开文件**；普通笔记的穿越也被同一条规则拦住。
+- **夹具加固（这是本轮的元教训）**：假 workspace 的 `openLinkText` 从「永远成功」改成**对 `.deepseek` 路径留痕**，`existsSync` 从恒真改成**真查磁盘**（并为此建一个用完即删的真夹具文件），`pathInside` 从恒真换成真实现。理由：**夹具在证明一个不存在的场景是对的**——它此前正是这样放走了根因 ①。
+- **变异验证**：把 `/open` 的 `.deepseek` 分派去掉（`if (false && …)`）→ 3 项立刻红，失败信息里直接打出 `{"path":".deepseek/…","impossible":true}`，即"它确实把记忆卡交给了那个对它无效的 API"。
+- `test-memory.mjs` 新增 **2 项**（卡 `/open` 模板存在、反馈行要求用链接），共 384 → 386 项。
+
+**刻意没做**：不动 dsh 前端、不给 `notes-assistant` preset 挂 `present`。理由：`present` 的定义是「交付本轮**产出**」，把"读过的卡"申报成交付会污染每个 turn 的 deliverables 行，而且它打开的是 dsh 右栏预览而**不是 Obsidian**——与用户诉求不符。完整的方案对比与三处否决见 `docs/design-intake-2026-09-21.md` §2.2/§3。
+
 ## 2026-09-21 · 注入的截断方向是反的：最新的内容先被砍掉
 
 **起因**：用户问「记忆系统的上下文注入是怎么做的，能不能专门优化」。取证时顺手量了一下真实输入，结果与预期相反：**这个缺陷有两个独立成因，而且现有测试结构上不可能发现它。**

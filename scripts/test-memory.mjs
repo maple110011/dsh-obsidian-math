@@ -485,6 +485,15 @@ const linkSection = buildMemorySection(
 check('links: /open template carries t=', linkSection.includes('/open?path=<vault 相对路径，原样放入>&t=test-token-42)'));
 check('links: /feedback confirm carries t=', linkSection.includes('action=confirm&t=test-token-42)'));
 check('links: /feedback wrong carries t=', linkSection.includes('action=wrong&t=test-token-42)'));
+// 记忆卡也需要一个「可打开」的模板（2026-09-21）。此前只教了「笔记」用 /open，对记忆卡只给
+// /feedback 链接，于是模型引用卡时要么写纯文本（点不开）、要么把笔记规则推广成
+// `/open?path=.deepseek/…`（在 Obsidian 里静默失败）。这条断言钉住那个缺口：
+check('links: memory cards get an /open template too (not just notes)',
+  linkSection.includes('/open?path=<卡路径>&t=test-token-42)'),
+  linkSection.slice(linkSection.indexOf('记忆卡'), linkSection.indexOf('记忆卡') + 200));
+check('links: the card feedback row is told to link the card title, not write a bare path',
+  linkSection.includes('把「依据的记忆：」后面的卡标题写成上面那个链接'),
+  linkSection.slice(linkSection.indexOf('依据的记忆'), linkSection.indexOf('依据的记忆') + 160));
 if (prevLinkUrl === undefined) delete process.env.DSH_OBSIDIAN_LINK_URL; else process.env.DSH_OBSIDIAN_LINK_URL = prevLinkUrl;
 if (prevFeedbackToken === undefined) delete process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN; else process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = prevFeedbackToken;
 

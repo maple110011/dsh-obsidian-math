@@ -3715,6 +3715,14 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
       "  点击即可在 Obsidian 中打开对应笔记。笔记文件内部仍写 [[wikilink]]，两者不要混用。",
       `- 引用记忆卡时标注验证等级徽标：✅用户确认（hook.verified=user-confirmed）/ ⚖️互证（cross-referenced）/ ❓单源（single-source 或缺失）。`,
       "  两个徽标都是「这张卡本身可信吗」的信号，不是你这一轮用得对不对。",
+      // Memory cards need an OPEN template too (2026-09-21). The note template above
+      // only ever covered notes, so a model that referenced a card either wrote a bare
+      // path (unclickable) or generalised the note rule into
+      // `/open?path=.deepseek/…` (silently dead: the vault index excludes dot-folders,
+      // so openLinkText cannot resolve it). The plugin now routes `.deepseek/` to its
+      // in-panel preview, and this line is what makes the model actually emit it.
+      `- 引用记忆卡时，**卡标题同样写成可点击链接**：[卡标题](${linkBaseUrl}/open?path=<卡路径>${tokenSuffix})（与笔记同一种写法）；点击会在 Obsidian 里用记忆预览打开该卡。`,
+      "  末尾的反馈行也请用它：把「依据的记忆：」后面的卡标题写成上面那个链接，而不是纯文本路径——纯文本在回复里点不开，用户只能自己去找。",
       // One line PER CARD, and the card's title must be in the line: the old row
       // emitted N identical `[✅ 这条对]` links whose only difference was the
       // path inside the URL, and 「这条」 read as "this answer was right" while

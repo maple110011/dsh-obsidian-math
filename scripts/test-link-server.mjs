@@ -13,7 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync, readFileSync as read } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync as read } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -45,23 +45,57 @@ function classSource(name) {
   throw new Error(`unbalanced braces for ${name}`);
 }
 
+/** 按大括号配平切出一个顶层 `function X(…) { … }`（LinkServer 依赖它）。 */
+function functionSource(name) {
+  const at = template.indexOf(`function ${name}(`);
+  if (at < 0) throw new Error(`function ${name} not found`);
+  const braceStart = template.indexOf('{', at);
+  let depth = 0;
+  for (let i = braceStart; i < template.length; i += 1) {
+    if (template[i] === '{') depth += 1;
+    else if (template[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return template.slice(at, i + 1);
+    }
+  }
+  throw new Error(`unbalanced braces for ${name}`);
+}
+
+// 真实的路径规范化器，从模板源码里取（不是测试自己复刻一份——复刻的那份一旦与
+// 产品漂移，测的就是测试自己的实现，坑 29 的同族）。
+const normalizeVaultRelPath = new Function(`${functionSource('normalizeVaultRelPath')}\nreturn normalizeVaultRelPath;`)();
+
+// `existsSync` 必须是**真的**：记忆卡分派里有一条 "文件不在 → 404 而不是静默" 的契约，
+// 而恒真桩会让那条断言永远通过（这正是本套件此前放走 .deepseek 缺陷的同一种错法）。
 const constants = {
   FEEDBACK_ACTIONS: new Set(['confirm', 'wrong', 'inapplicable', 'stale', 'forget']),
-  resolve: (base, ...rest) => [base, ...rest].join('/'),
-  existsSync: () => true,
-  pathInside: () => true,
+  resolve: (...parts) => parts.join('/'),
+  existsSync,
+  // 真实的包含判定；用恒真桩会让"路径穿越"断言永远通过。
+  pathInside: (base, target) => {
+    const norm = (s) => String(s).replace(/\\/g, '/').toLowerCase();
+    const b = norm(base).replace(/\/+$/, '');
+    const t = norm(target);
+    return t === b || t.startsWith(`${b}/`);
+  },
   existsSyncNode: existsSync
 };
 const LinkServer = new Function(
-  'createServer', 'randomBytes', 'resolve', 'existsSync', 'pathInside', 'FEEDBACK_ACTIONS', 'openNote',
+  'createServer', 'randomBytes', 'resolve', 'existsSync', 'pathInside', 'FEEDBACK_ACTIONS', 'normalizeVaultRelPath', 'openNote',
   `${classSource('LinkServer')}\nreturn LinkServer;`
-)(createServer, randomBytes, constants.resolve, constants.existsSync, constants.pathInside, constants.FEEDBACK_ACTIONS, () => {});
+)(createServer, randomBytes, constants.resolve, constants.existsSync, constants.pathInside, constants.FEEDBACK_ACTIONS, normalizeVaultRelPath, () => {});
 
-/** 最小插件替身：只需要 settings / saveSettings / service.appendLog / app。 */
+/**
+ * 最小插件替身：只需要 settings / saveSettings / service.appendLog / app。
+ *
+ * `openMemoryPreview` 记录调用（记忆文件的预览入口在插件上，见下面 ④ 的说明）。
+ */
 function makePlugin(settings) {
   const saved = [];
   return {
     settings,
+    previews: [],
+    openMemoryPreview(rel) { this.previews.push(rel); return true; },
     savedCount: () => saved.length,
     saveSettings: async () => { saved.push({ ...settings }); },
     service: { appendLog: () => {} },
@@ -105,7 +139,16 @@ await new Promise((resolve) => blocker.close(resolve));
 // ④ 两个端点都受令牌保护（CSRF），且各自的状态码符合契约。
 const pluginD = makePlugin({ linkServerPort: 39302, linkServerToken: 'abc123' });
 const openedWith = [];
-pluginD.app.workspace = { openLinkText: (path, source, newLeaf) => { openedWith.push({ path, source, newLeaf }); } };
+pluginD.app.workspace = {
+  openLinkText: (path, source, newLeaf) => {
+    openedWith.push({ path, source, newLeaf });
+    // ⚠️ 这个桩曾经是「永远成功」，于是**结构上不可能发现** /open 对 .deepseek 无效
+    //    （2026-09-21 之前的所有 /open 用例都只用普通笔记路径，而 .deepseek 只出现在
+    //    /feedback 用例里）。真实 Obsidian 对点目录会给不出 TFile、走「创建文件」分支；
+    //    这里至少要让 .deepseek 路径**留下痕迹**，否则夹具在证明一个不存在的场景是对的。
+    if (String(path).startsWith('.deepseek/')) openedWith.push({ path, source, newLeaf, impossible: true });
+  }
+};
 const d = new LinkServer(pluginD);
 d.start();
 await sleep(400);
@@ -132,6 +175,46 @@ const feedbackBadToken = await get('/feedback?path=.deepseek/memory/records/a.md
 check('④ /feedback 令牌不对 → 403', feedbackBadToken.status === 403, `status=${feedbackBadToken.status}`);
 const feedbackTraversal = await get('/feedback?path=' + encodeURIComponent('.deepseek/../secret.md') + '&action=confirm&t=abc123');
 check('④ /feedback 路径穿越 → 400/403', feedbackTraversal.status === 400 || feedbackTraversal.status === 403, `status=${feedbackTraversal.status}`);
+
+// ④b 记忆卡引用必须能打开（2026-09-21 修）。
+//
+// WHY：Obsidian 的 vault 索引排除点目录，`.deepseek/**` **不能**经 openLinkText 打开
+// （插件自己在 MemoryPreviewModal 的注释里写明了这条，但只对面板卡片绕开，没管 /open）。
+// 而协议层恰恰教模型把记忆卡也写成引用 ⇒ "点记忆引用没反应"是必然结果。
+// 这组用例就是那个缺口的回归：**断言它不走 openLinkText，而走插件预览**。
+//
+// 夹具是一个**真的存在的**文件：分派里有 "不存在 → 404" 的契约，而这一层此前正是因为
+// "桩永远成功 + 只用普通笔记路径"而无人覆盖。用完即删。
+const memFixtureDir = join(root, '.deepseek', 'memory', 'records');
+const memFixture = join(memFixtureDir, 'rec-link-test-fixture.md');
+mkdirSync(memFixtureDir, { recursive: true });
+writeFileSync(memFixture, '---\ntype: memory/record\n---\n\n# 链接回归夹具\n', 'utf8');
+try {
+  const before = { opened: openedWith.length, previews: pluginD.previews.length };
+  const memOk = await get('/open?path=' + encodeURIComponent('.deepseek/memory/records/rec-link-test-fixture.md') + '&t=abc123');
+  check('④b 记忆卡 /open → 204（与笔记同一份契约）', memOk.status === 204 && memOk.body === '', `status=${memOk.status}`);
+  check('④b 记忆卡走插件预览，**不**交给 openLinkText（隐藏目录对它无效）',
+    pluginD.previews.length === before.previews + 1 && pluginD.previews[before.previews] === '.deepseek/memory/records/rec-link-test-fixture.md',
+    JSON.stringify(pluginD.previews));
+  check('④b openLinkText 没有被记忆卡路径碰到（它只会静默失败或尝试建文件）',
+    openedWith.length === before.opened && !openedWith.some((entry) => entry.impossible === true),
+    JSON.stringify(openedWith.slice(before.opened)));
+  const memMissing = await get('/open?path=' + encodeURIComponent('.deepseek/memory/records/does-not-exist.md') + '&t=abc123');
+  check('④b 不存在的记忆卡 → 404（不再静默：用户必须能区分"打不开"与"没有这张卡"）',
+    memMissing.status === 404, `status=${memMissing.status}`);
+  // 穿越的**契约是"不成功"**（400 段非法 / 403 越界），不是某一个具体码：把码钉死会
+  // 在两层守卫之间来回改。承重的是后半句——**预览没有被调用**，即它没有静默地去开文件。
+  const memTraversalBefore = pluginD.previews.length;
+  const memTraversal = await get('/open?path=' + encodeURIComponent('.deepseek/../../etc/passwd') + '&t=abc123');
+  check('④b /open 路径穿越被拒（规范化后判 `..`），且没有真的去开文件',
+    (memTraversal.status === 400 || memTraversal.status === 403) && pluginD.previews.length === memTraversalBefore,
+    `status=${memTraversal.status} previews=${pluginD.previews.length - memTraversalBefore}`);
+  const noteTraversal = await get('/open?path=' + encodeURIComponent('数学/../笔记/x.md') + '&t=abc123');
+  check('④b 普通笔记也没被路径穿越绕过（同一条规范化规则，不是只护 .deepseek 分支）',
+    noteTraversal.status === 400 || noteTraversal.status === 403, `status=${noteTraversal.status}`);
+} finally {
+  try { rmSync(memFixture, { force: true }); } catch { /* 临时夹具，删不掉不判红 */ }
+}
 await d.stop();
 
 // ⑤ 注入的点击拦截脚本：点笔记链接**不能**把 iframe 导航走（否则 SPA 被卸载重载），

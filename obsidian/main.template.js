@@ -207,6 +207,30 @@ const FEEDBACK_MESSAGES = MEMORY_ADMIN.FEEDBACK_MESSAGES;
 const pathInside = MEMORY_ADMIN.pathInside;
 
 /**
+ * Normalize a caller-supplied vault-relative path, or return null when it cannot
+ * name a file inside the vault.
+ *
+ * Shared by every LinkServer route that turns a query parameter into a filesystem
+ * path (2026-09-21). It was `/feedback`'s inline guard only; `/open` took the raw
+ * parameter straight to `openLinkText`. Two reasons it is one function now:
+ *   1. `..` segments must be judged on the NORMALIZED string. Checking the raw one
+ *      means `a/../b.md` is validated as containing no `..` at the segments that
+ *      survive normalization — the check would be inspecting a different path than
+ *      the one actually resolved.
+ *   2. The same 2 KB ceiling and the same rejection of `:` (which is how "C:/…" or
+ *      "scheme:…" arrives) belong on both routes; a second hand-written copy is how
+ *      the two drift apart.
+ */
+function normalizeVaultRelPath(raw) {
+  const rel = String(raw ?? '').trim()
+    .replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
+  if (rel === '' || rel.length > 2000) return null;
+  const parts = rel.split('/');
+  if (parts.some((part) => part === '' || part === '.' || part === '..' || part.includes(':'))) return null;
+  return { rel, parts };
+}
+
+/**
  * Set `field: value` inside a block-style hook block (appends the line when
  * absent). Returns the new frontmatter text, or null when there is no
  * block-style hook (flow-style `hook: { ... }` is left untouched).
@@ -337,18 +361,15 @@ class LinkServer {
         // URIError on any path containing a literal `%` (a math vault has
         // plenty), and because the decode sat outside the try below, the throw
         // escaped the request listener and the click hung with no response.
-        const rawFeedbackPath = url.searchParams.get('path') ?? '';
         const action = url.searchParams.get('action') ?? '';
-        const rel = rawFeedbackPath.trim()
-          .replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
-        const parts = rel.split('/');
-        const bad = rel === '' || rel.length > 2000 || !FEEDBACK_ACTIONS.has(action) ||
-          parts.some((part) => part === '' || part === '.' || part === '..' || part.includes(':')) ||
-          !(rel.startsWith('.deepseek/')) || !rel.toLowerCase().endsWith('.md');
+        const normalized = normalizeVaultRelPath(url.searchParams.get('path') ?? '');
+        const bad = normalized === null || !FEEDBACK_ACTIONS.has(action) ||
+          !(normalized.rel.startsWith('.deepseek/')) || !normalized.rel.toLowerCase().endsWith('.md');
         if (bad) {
           finish(400, 'bad request');
           return;
         }
+        const { rel, parts } = normalized;
         try {
           const vaultPath = this.plugin.app.vault.adapter.getBasePath();
           const target = resolve(vaultPath, ...parts);
@@ -392,9 +413,45 @@ class LinkServer {
       }
       const rawPath = url.searchParams.get('path') ?? url.searchParams.get('note') ?? '';
       // Already percent-decoded by URLSearchParams — see the /feedback note.
-      const notePath = rawPath.trim();
-      if (notePath === '' || notePath.length > 2000) {
+      const normalized = normalizeVaultRelPath(rawPath);
+      if (normalized === null) {
         finish(400, 'missing path');
+        return;
+      }
+      const { rel, parts } = normalized;
+      // 隐藏记忆文件（.deepseek/**）走插件内预览，**不能**交给 openLinkText。
+      //
+      // WHY（2026-09-21 修）。Obsidian 的 vault 索引排除所有以 "." 开头的路径段
+      // （插件在 MemoryPreviewModal 的注释里早已写明，见下面 1900 行附近），所以
+      // openLinkText 解析不到 `.deepseek/**`：它对"不存在的路径"会走**创建文件**分支，
+      // 用户看到的是静默无反应、或一条 `Folder already exists`。而协议层（math-memory
+      // 注入 + vault-AGENTS.md）恰恰教模型把**记忆卡**也写成引用，于是"点记忆引用没反应"
+      // 成了必然结果——面板里的卡片早就绕开了这条限制，只有回复里的链接没有。
+      //
+      // 分派只认 `.deepseek/` 前缀：索引内的普通笔记保持"在编辑器里打开"的既有语义，
+      // 不让这一条把 /open 变成一个语义含糊的万能入口。
+      if (rel.startsWith('.deepseek/')) {
+        try {
+          const vaultPath = this.plugin.app.vault.adapter.getBasePath();
+          const target = resolve(vaultPath, ...parts);
+          if (!pathInside(vaultPath, target)) {
+            finish(403, 'path outside vault');
+            return;
+          }
+          if (!existsSync(target)) {
+            // 明确回执，不再静默：链接指向一个不存在的卡时，用户必须能看出来。
+            finish(404, 'memory file not found');
+            return;
+          }
+          this.plugin.openMemoryPreview(rel);
+        } catch (error) {
+          finish(500, String(error));
+          return;
+        }
+        if (!res.headersSent) {
+          res.writeHead(204, { 'cache-control': 'no-store' });
+          res.end();
+        }
         return;
       }
       try {
@@ -408,7 +465,7 @@ class LinkServer {
           : paneParam === 'new-tab' || paneParam === 'new'
             ? true
             : this.plugin?.settings?.noteLinkPane !== 'current';
-        this.plugin.app.workspace.openLinkText(notePath, '', openInNewPane);
+        this.plugin.app.workspace.openLinkText(rel, '', openInNewPane);
       } catch (error) {
         finish(500, String(error));
         return;
@@ -2360,9 +2417,17 @@ class MemoryView extends ItemView {
   // blank and the container element was passed to openLinkText).
   // Hidden .deepseek files cannot be opened via Obsidian APIs at all, so
   // clicking a card shows an in-panel preview modal instead.
+  //
+  // The reader itself lives on the plugin (2026-09-21): the sidebar's `/open` route
+  // needs the same operation and cannot reach a view instance. This method stays as
+  // the panel's entry point so the panel's "re-render after save" behaviour is kept.
   openNote(rel, title = null) {
     if (typeof rel !== 'string' || rel === '') return;
-    const fullPath = join(this.vaultPath(), ...rel.split('/'));
+    const vaultPath = this.vaultPath();
+    const parts = rel.split('/');
+    if (parts.some((part) => part === '' || part === '.' || part === '..')) return;
+    const fullPath = join(vaultPath, ...parts);
+    if (!pathInside(vaultPath, fullPath)) return;
     try {
       const content = readFileSync(fullPath, 'utf8');
       new MemoryPreviewModal(this.app, title ?? rel, content, fullPath, () => this.render()).open();
@@ -2554,6 +2619,34 @@ class MemoryView extends ItemView {
 // ── plugin ──────────────────────────────────────────────────────────────────
 
 class DshObsidianMathPlugin extends Plugin {
+  /**
+   * Show one memory-layer file in the in-panel preview modal.
+   *
+   * Lives on the PLUGIN, not on `MemoryView` (2026-09-21). The memory panel and the
+   * sidebar's `/open` route both need it, and a panel instance is not guaranteed to
+   * exist — `LinkServer` has no way to reach one (the view is created lazily when the
+   * user opens the panel). Duplicating the reader in `LinkServer` instead would put a
+   * second copy of the "hidden .deepseek files can only be read with node fs" rule in
+   * the file, which is exactly how `/open` and `/feedback` drifted apart before.
+   */
+  openMemoryPreview(rel, title = null) {
+    if (typeof rel !== 'string' || rel === '') return false;
+    const vaultPath = this.app.vault.adapter.getBasePath();
+    const parts = rel.split('/');
+    if (parts.some((part) => part === '' || part === '.' || part === '..')) return false;
+    const fullPath = join(vaultPath, ...parts);
+    if (!pathInside(vaultPath, fullPath)) return false;
+    let content;
+    try {
+      content = readFileSync(fullPath, 'utf8');
+    } catch (error) {
+      new Notice('无法读取该文件：' + String(error));
+      return false;
+    }
+    new MemoryPreviewModal(this.app, title ?? rel, content, fullPath, () => this.refreshViews?.()).open();
+    return true;
+  }
+
   async onload() {
     await this.loadSettings();
     debugVaultPath = this.app.vault.adapter.getBasePath();

@@ -30,6 +30,8 @@
 
 > `t=` 为 CSRF 校验参数（`DSH_MATH_MEMORY_FEEDBACK_TOKEN`，旧名 `DSH_OBSIDIAN_FEEDBACK_TOKEN` 兼容，由系统提示注入进链接模板）；省略会被端点拒绝（403）。`/open` 链接同样带 `t=`。
 
+**卡标题也是 `/open` 链接（2026-09-21）**：记忆卡**不能**用 Obsidian 的编辑器打开——vault 索引排除点目录，`.deepseek/**` 既不在文件树里、也解析不出 `TFile`（`obsidian/main.template.js` 的 `MemoryPreviewModal` 注释里早已写明这条限制）。所以协议让模型把卡标题写成 `[卡标题](<地址>/open?path=<卡路径>&t=<token>)`，而 `/open` 对 `.deepseek/` 前缀**分流到插件内预览弹窗**（与记忆面板点卡片同一个 Modal），而不是交给 `openLinkText`。索引内的普通笔记仍走编辑器；`.deepseek/` 文件不存在时回 404（此前是静默无反应）。
+
 点击后由 Obsidian 插件的 loopback LinkServer 直接、确定性地改写该卡 frontmatter（不经模型、不经 dsh 沙箱）：
 
 | action | 确定性效果 |
