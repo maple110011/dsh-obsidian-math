@@ -81,6 +81,7 @@ const MAX_LOG_FILES = 20;
 // exists. Relevant CONTENT is pulled on demand through note_recall instead of
 // being pushed into every prompt.
 const MAX_PROFILE_CHARS = 4000;
+const MAX_NOTATION_CHARS = 800;
 const MAX_TOPIC_INDEX_CHARS = 1800;
 const MAX_RECORD_INDEX_CHARS = 800;
 const MAX_TEMPLATE_INDEX_CHARS = 600;
@@ -102,11 +103,17 @@ const DEFAULT_MAX_HISTORY_CHARS = 6000;
  * or a slow sidebar; `rich` suits a large window where more navigation is affordable.
  * These are navigation-layer budgets only — evidence still lives on disk and is pulled
  * with note_recall, so raising them costs prompt space, never accuracy of the store.
+ *
+ * `notation` was the one layer missing from this table (it was a hard-coded 800 at its
+ * read site), so the dial silently did not cover it — a tier that claims to size "the
+ * memory section" while one section ignores it is the kind of half-true knob this table
+ * exists to prevent. It joins here with `standard: 800`, which is exactly the value it
+ * had, so nothing changes for anyone who does not pick a tier.
  */
 const BUDGET_TIERS = {
-  compact: { profile: 2500, topics: 1200, records: 500, templates: 400, episodes: 800, inbox: 800, dialogue: 2000 },
-  standard: { profile: MAX_PROFILE_CHARS, topics: MAX_TOPIC_INDEX_CHARS, records: MAX_RECORD_INDEX_CHARS, templates: MAX_TEMPLATE_INDEX_CHARS, episodes: MAX_EPISODE_INDEX_CHARS, inbox: MAX_INBOX_CHARS, dialogue: MAX_DIALOGUE_CHARS },
-  rich: { profile: 6000, topics: 2600, records: 1200, templates: 900, episodes: 1800, inbox: 1800, dialogue: 4000 }
+  compact: { profile: 2500, notation: 500, topics: 1200, records: 500, templates: 400, episodes: 800, inbox: 800, dialogue: 2000 },
+  standard: { profile: MAX_PROFILE_CHARS, notation: MAX_NOTATION_CHARS, topics: MAX_TOPIC_INDEX_CHARS, records: MAX_RECORD_INDEX_CHARS, templates: MAX_TEMPLATE_INDEX_CHARS, episodes: MAX_EPISODE_INDEX_CHARS, inbox: MAX_INBOX_CHARS, dialogue: MAX_DIALOGUE_CHARS },
+  rich: { profile: 6000, notation: 1200, topics: 2600, records: 1200, templates: 900, episodes: 1800, inbox: 1800, dialogue: 4000 }
 };
 
 /**
@@ -460,14 +467,48 @@ function contentText(content) {
  * rather than just that something is.
  */
 /**
+ * Truncate to a budget by keeping BOTH ENDS — and say exactly what was dropped.
+ *
+ * Why both ends (2026-09-21). This used to keep only the head. That is wrong for
+ * every file this section injects, and wrong in a way no existing test could see:
+ * the fixture vaults are all far below every budget, so `clip` never fired
+ * (measured on `scripts/qa/benchmark-vault`: the whole section is 4088 chars and
+ * nothing is truncated). Reconstructed with a growth-shaped fixture, the head-only
+ * rule dropped the NEWEST entries first — `records/index.md` kept `rec-1` and lost
+ * `rec-40`; a 5033-char `topics/index.md` kept `alpha` at the top and lost `omega`
+ * at the bottom.
+ *
+ * Both directions matter and neither dominates:
+ *   · head — profile/notation open with the definitions (identity, symbols) that
+ *     everything after them depends on;
+ *   · tail — these files are append-only with the newest material at the bottom
+ *     (see the notebook write protocol in `vault-AGENTS.md`), so the tail is the
+ *     part that changed since the last read.
+ * Keeping one end is therefore always a silent loss of the other. The marker names
+ * the elided count as well, because "全文 N 字符" alone still left the reader unable
+ * to tell how much was missing.
+ */
+/**
  * Exported so the truncation contract can be asserted directly: the property at
  * stake ("a cut is always announced") is invisible in the assembled prompt when it
  * is broken, because a silently truncated section still looks like a section.
  */
 export function clip(text, maxChars) {
   if (text.length <= maxChars) return text;
-  const kept = text.slice(0, maxChars).replace(/\s+\S*$/, "");
-  return `${kept} … ……［截断：全文 ${text.length} 字符，此处非全文，用 read/grep 取原文件］`;
+  // Split the budget evenly so neither end starves; `Math.max(0, …)` keeps a
+  // nonsensical (negative) budget from slicing backwards.
+  const forContent = Math.max(0, maxChars);
+  const headChars = Math.ceil(forContent / 2);
+  const tailChars = Math.floor(forContent / 2);
+  // Trim to a word boundary, but ONLY when the boundary is ASCII. A math vault's
+  // text is overwhelmingly CJK, which has no word boundaries — trimming there
+  // would silently eat characters out of the middle of a token, i.e. exactly the
+  // "fragment that reads as intact evidence" this marker exists to prevent.
+  const trimHead = (s) => (s === "" || s.charCodeAt(s.length - 1) > 127 ? s : s.replace(/\s+\S*$/, ""));
+  const trimTail = (s) => (s === "" || s.charCodeAt(0) > 127 ? s : s.replace(/^\S*\s+/, ""));
+  const head = trimHead(text.slice(0, headChars));
+  const tail = tailChars === 0 ? "" : trimTail(text.slice(text.length - tailChars));
+  return `${head} … ……［截断：省略 ${text.length - head.length - tail.length} 字符，全文 ${text.length} 字符，此处非全文，用 read/grep 取原文件］${tail}`;
 }
 
 /**
@@ -3553,58 +3594,58 @@ function titleOfMemoryFile(text, fallback) {
   return heading ?? fallback;
 }
 
-/** Episode timeline: keep the newest lines (list items only) within budget. */
-function episodeIndexDigest(root, maxChars) {
-  const path = join(root, MEMORY_DIR, "memory", "episodes", "index.md");
+/**
+ * Digest an append-only `index.md` by keeping the NEWEST list lines within budget.
+ *
+ * Why the tail, and why one helper (2026-09-21). The three layer indexes
+ * (`records/`, `templates/`, `episodes/`) are written the same way — a new line is
+ * appended when a card is created — so "what exists and what changed" is at the
+ * BOTTOM. `episodeIndexDigest` had always kept the tail for exactly this reason,
+ * but `recordIndexDigest` and `templateIndexDigest` clipped the joined lines
+ * head-first, so once a layer outgrew its budget the newest cards vanished from the
+ * injected map while the oldest ones stayed. Measured on a growth-shaped fixture:
+ * 40 record lines against a budget of 800 kept `rec-1` and dropped `rec-40`.
+ *
+ * Three copies of one rule is how the two diverged in the first place, so the rule
+ * lives here once.
+ */
+function appendOnlyIndexDigest(root, relativePath, maxChars) {
+  const path = join(root, ...relativePath);
   if (!existsSync(path)) return "";
   try {
     const text = readFileSync(path, "utf8").trim();
     if (text === "") return "";
     const items = text.split("\n").filter((line) => line.trim().startsWith("-"));
     if (items.length === 0) return clip(text, maxChars);
-    // Index lines are append-only, newest at the bottom: keep the tail.
+    // Newest at the bottom: walk backwards, stop when the next line would not fit.
     const kept = [];
     let used = 0;
-    for (const line of items.reverse()) {
-      const clean = clip(line.trim(), maxChars);
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      const clean = clip(items[i].trim(), maxChars);
       if (used + clean.length > maxChars) break;
       kept.push(clean);
       used += clean.length + 1;
     }
+    if (kept.length === 0) return clip(items[items.length - 1].trim(), maxChars);
     return kept.reverse().join("\n");
   } catch {
     return "";
   }
 }
 
-/** Typed atomic-record digest: keep the index's list lines within budget. */
+/** Episode timeline: keep the newest lines (list items only) within budget. */
+function episodeIndexDigest(root, maxChars) {
+  return appendOnlyIndexDigest(root, [MEMORY_DIR, "memory", "episodes", "index.md"], maxChars);
+}
+
+/** Typed atomic-record digest: keep the newest index lines within budget. */
 function recordIndexDigest(root, maxChars) {
-  const path = join(root, MEMORY_DIR, "memory", "records", "index.md");
-  if (!existsSync(path)) return "";
-  try {
-    const text = readFileSync(path, "utf8").trim();
-    if (text === "") return "";
-    const items = text.split("\n").filter((line) => line.trim().startsWith("-"));
-    if (items.length === 0) return clip(text, maxChars);
-    return clip(items.map((line) => line.trim()).join("\n"), maxChars);
-  } catch {
-    return "";
-  }
+  return appendOnlyIndexDigest(root, [MEMORY_DIR, "memory", "records", "index.md"], maxChars);
 }
 
 /** Problem-template index digest (personal template-theorems graph). */
 function templateIndexDigest(root, maxChars) {
-  const path = join(root, MEMORY_DIR, "memory", "templates", "index.md");
-  if (!existsSync(path)) return "";
-  try {
-    const text = readFileSync(path, "utf8").trim();
-    if (text === "") return "";
-    const items = text.split("\n").filter((line) => line.trim().startsWith("-"));
-    if (items.length === 0) return clip(text, maxChars);
-    return clip(items.map((line) => line.trim()).join("\n"), maxChars);
-  } catch {
-    return "";
-  }
+  return appendOnlyIndexDigest(root, [MEMORY_DIR, "memory", "templates", "index.md"], maxChars);
 }
 
 // ── the section composer ────────────────────────────────────────────────────
@@ -3713,7 +3754,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   // Notation system: always relevant (like the profile), injected bounded.
   // The full ledger lives at .deepseek/memory/notation.md; maintenance rules
   // are in AGENTS.md (收集→统一→维护).
-  const notation = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "notation.md"), 800);
+  const notation = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "notation.md"), budgets.notation);
   if (notation !== "") {
     lines.push("", "### 记号体系（.deepseek/memory/notation.md；收集→统一→维护，回复时遵循已采纳记号，发现不一致按 AGENTS.md 提议统一）", "", notation);
   }

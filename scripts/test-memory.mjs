@@ -261,7 +261,13 @@ check('audit: weak detected', report.counts.weak >= 1);
 check('audit: unused detected', report.counts.unused >= 1);
 check('audit: duplicate pair detected', report.counts.duplicates >= 1);
 check('audit: unverified detected', report.counts.unverified >= 1);
-check('audit: report bounded', report.report.length <= 1200, `len=${report.report.length}`);
+// The bound is on the kept CONTENT; the truncation marker is deliberately NOT counted
+// against it (2026-09-21). `clip` never silently returns "text that happens to be
+// short": if it cut, the marker is there and says so, and the reader is told how much
+// is missing. Asserting `report.length <= 1200` conflated the two and would have gone
+// red for a 12-character LONGER marker even though nothing about the report changed.
+const keptChars = (text) => text.replace(/ … ……［截断：省略 \d+ 字符，全文 \d+ 字符，此处非全文，用 read\/grep 取原文件］/u, "").length;
+check('audit: report bounded', keptChars(report.report) <= 1200, `kept=${keptChars(report.report)} total=${report.report.length}`);
 
 check('audit: antipatterns detected (weak card)', report.counts.antipatterns >= 1);
 check('audit: archive candidates detected', report.counts.archiveCandidates >= 1);
@@ -2146,12 +2152,16 @@ check('archive: a real memory card is still archived',
 // values that existed before tiers did, or merely offering a choice would change
 // behaviour for everyone who does not make one.
 {
-  const OLD_CONSTANTS = { profile: 4000, topics: 1800, records: 800, templates: 600, episodes: 1200, inbox: 1200, dialogue: 3000 };
+  // `notation: 800` joined the table on 2026-09-21 (it had been a hard-coded 800 at
+  // its read site, so the dial did not cover it). It is listed here at exactly the
+  // value it already had, which is the point: adding it to the dial must not change
+  // what anyone who does not pick a tier sees.
+  const OLD_CONSTANTS = { profile: 4000, notation: 800, topics: 1800, records: 800, templates: 600, episodes: 1200, inbox: 1200, dialogue: 3000 };
   check('budget: `standard` is exactly the values that predate tiers',
     JSON.stringify(BUDGET_TIERS.standard) === JSON.stringify(OLD_CONSTANTS),
     JSON.stringify(BUDGET_TIERS.standard));
   const keys = Object.keys(OLD_CONSTANTS);
-  check('budget: all three tiers cover the same seven keys',
+  check('budget: all three tiers cover the same eight keys',
     ['compact', 'standard', 'rich'].every((t) => keys.every((k) => Number.isFinite(BUDGET_TIERS[t][k]))),
     JSON.stringify(Object.keys(BUDGET_TIERS)));
   check('budget: compact < standard < rich on every key (the dial actually turns)',
@@ -2534,18 +2544,99 @@ check('archive: a real memory card is still archived',
 // (the audit's own human lines do), so "ends with …" cannot distinguish "budget cut
 // this" from "the text is like that". WikiSkill (arXiv:2608.27454 Appendix C) caps
 // every injected log at 15,000 characters and writes an explicit truncation marker.
+//
+// 2026-09-21: the marker also names the ELIDED count, and `clip` now keeps BOTH ends.
+// The head-only rule was invisible here for two years because every fixture in this
+// file sits far below every budget, so `clip` never fired; the assertions below are
+// written against a fixture that is specifically growth-shaped (oldest first, newest
+// last) because "which end survives" is the property that was actually broken.
 {
   const short = 'y'.repeat(100);
   const long = `论证 ${'z'.repeat(400)}`;
   check('clip: text within the budget is returned byte-for-byte unchanged',
     clip(short, 140) === short);
   check('clip: a cut is announced, with the ORIGINAL length (not just "something was cut")',
-    clip(long, 140).includes(`截断：全文 ${long.length} 字符`), clip(long, 140).slice(-40));
+    clip(long, 140).includes(`全文 ${long.length} 字符`), clip(long, 140).slice(0, 40));
+  check('clip: the announcement also names HOW MUCH was elided',
+    clip(long, 140).includes('省略 ') && clip(long, 140).includes('字符'),
+    clip(long, 140).slice(0, 60));
   check('clip: the kept CONTENT stays within the budget (only the marker is added)',
-    clip(long, 140).length - ' ……［截断：全文 403 字符，此处非全文，用 read/grep 取原文件］'.length <= 140,
+    clip(long, 140).length - ` … ……［截断：省略 ${long.length - 140} 字符，全文 ${long.length} 字符，此处非全文，用 read/grep 取原文件］`.length <= 140,
     `${clip(long, 140).length} vs budget 140 + fixed marker`);
   check('clip: the ellipsis convention is preserved for existing readers',
-    clip(long, 140).includes(' …'), clip(long, 140).slice(-60));
+    clip(long, 140).includes(' …'), clip(long, 140).slice(0, 60));
+
+  // ── the property that was actually broken: NEITHER END may be the only survivor ──
+  // A math vault is append-only, so the tail is the newest material; the head carries
+  // the definitions everything else depends on. Keeping one end loses the other
+  // silently, which is why these two assertions exist as a pair.
+  {
+    const headText = 'HEAD-最先写下的定义与约定。';
+    const tailText = 'TAIL-最新追加的一条结论。';
+    const grown = headText + '填充内容，用来说明来龙去脉。'.repeat(200) + tailText;
+    const cut = clip(grown, 200);
+    check('clip: the HEAD survives a cut (the definitions live there)',
+      cut.includes(headText), cut.slice(0, 40));
+    check('clip: the TAIL survives a cut too (append-only files put the newest there)',
+      cut.includes(tailText), cut.slice(-40));
+
+    // End to end on a real layer index: 40 appended lines against a budget of 800
+    // used to keep `rec-1` and drop `rec-40` — the newest card vanished from the map.
+    const idxRoot = mkdtempSync(join(tmpdir(), 'dsh-idx-'));
+    mkdirSync(join(idxRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+    mkdirSync(join(idxRoot, '.deepseek', 'memory', 'templates'), { recursive: true });
+    const recLines = Array.from({ length: 40 }, (_, i) => `- [rec-${i + 1}] 第${i + 1}张卡的索引行，带一点长度以撑过预算`);
+    writeFileSync(join(idxRoot, '.deepseek', 'memory', 'records', 'index.md'),
+      `# 记录索引\n\n${recLines.join('\n')}\n`, 'utf8');
+    const tplLines = Array.from({ length: 40 }, (_, i) => `- [tpl-${i + 1}] 第${i + 1}个模板的索引行，带一点长度以撑过预算`);
+    writeFileSync(join(idxRoot, '.deepseek', 'memory', 'templates', 'index.md'),
+      `# 模板索引\n\n${tplLines.join('\n')}\n`, 'utf8');
+    const idxSection = buildMemorySection(
+      { vaultRoot: idxRoot, sessionsRoot: join(idxRoot, 'sessions'), maxHistoryEntries: 0, maxHistoryChars: 0, cacheTtlMs: 0 },
+      null, null, undefined, ''
+    );
+    const recBlock = idxSection.slice(idxSection.indexOf('记忆记录摘要'), idxSection.indexOf('问题模板索引'));
+    const tplBlock = idxSection.slice(idxSection.indexOf('问题模板索引'), idxSection.indexOf('近期事件时间线'));
+    check('digest: the records index keeps the NEWEST lines within budget',
+      recBlock.includes('rec-40') && !/\brec-1\]/.test(recBlock),
+      JSON.stringify(recBlock.slice(-80)));
+    check('digest: the templates index keeps the NEWEST lines within budget',
+      tplBlock.includes('tpl-40') && !/\btpl-1\]/.test(tplBlock),
+      JSON.stringify(tplBlock.slice(-80)));
+    rmSync(idxRoot, { recursive: true, force: true });
+  }
+
+  // The notation layer used to be a hard-coded 800 outside BUDGET_TIERS, so the tier
+  // dial silently did not cover it. It is part of the table now, and it must actually
+  // be READ from the table — a constant that merely exists in the table proves nothing.
+  {
+    const tierKey = (tier) => BUDGET_TIERS[tier].notation;
+    check('budget: the notation layer is covered by the tier table',
+      Number.isFinite(tierKey('compact')) && Number.isFinite(tierKey('standard')) && Number.isFinite(tierKey('rich')),
+      JSON.stringify({ compact: tierKey('compact'), standard: tierKey('standard'), rich: tierKey('rich') }));
+    const noteRoot = mkdtempSync(join(tmpdir(), 'dsh-note-'));
+    mkdirSync(join(noteRoot, '.deepseek', 'memory'), { recursive: true });
+    // A notation ledger far past every tier's notation budget: the marker must appear
+    // under all three, and the smallest budget must inject the least.
+    writeFileSync(join(noteRoot, '.deepseek', 'memory', 'notation.md'),
+      '# 记号体系\n\n' + '| $W_p$ | Wasserstein 距离，用来测量测度之间的距离 |\n'.repeat(200), 'utf8');
+    const noteSection = (tier) => {
+      const s = buildMemorySection(
+        { vaultRoot: noteRoot, sessionsRoot: join(noteRoot, 'sessions'), maxHistoryEntries: 0, maxHistoryChars: 0, cacheTtlMs: 0, budgets: BUDGET_TIERS[tier] },
+        null, null, undefined, ''
+      );
+      return s.slice(s.indexOf('记号体系'), s.indexOf('研究主题索引'));
+    };
+    const compactNote = noteSection('compact');
+    const richNote = noteSection('rich');
+    check('budget: notation really is sized by the tier, not by a constant',
+      compactNote.length < richNote.length,
+      JSON.stringify({ compact: compactNote.length, rich: richNote.length }));
+    check('budget: an over-budget notation ledger announces its truncation',
+      compactNote.includes('截断：省略 ') && richNote.includes('截断：省略 '),
+      JSON.stringify({ compact: compactNote.slice(-60) }));
+    rmSync(noteRoot, { recursive: true, force: true });
+  }
 
   // End to end: a card body larger than the injected tier budget must carry the
   // marker in the assembled memory section — a rejected budget silently pretending
@@ -2556,7 +2647,7 @@ check('archive: a real memory card is still archived',
     `# 主题索引\n\n${'主题正文 '.repeat(1200)}\n`, 'utf8');
   const section = buildMemorySection({ vaultRoot: clipRoot, sessionsRoot: join(clipRoot, 'sessions') }, null, null, undefined, undefined);
   check('clip: the assembled memory section announces that a layer was truncated',
-    section.includes('截断：全文'), section.slice(-120));
+    section.includes('截断：省略 '), section.slice(0, 120));
   rmSync(clipRoot, { recursive: true, force: true });
 }
 

@@ -76,27 +76,30 @@
 | 段 | 预算 |
 |---|---|
 | profile | 4000 字符 |
+| notation（记号体系） | 800 字符 |
 | topics index | 1800 字符 |
-| records index | 800 字符 |
-| templates index | 600 字符 |
+| records index（尾部最新行） | 800 字符 |
+| templates index（尾部最新行） | 600 字符 |
 | episodes index（尾部最新行） | 1200 字符 |
 | inbox digest（含提醒候选） | 1200 字符 |
 | 跨会话问答线索 | 最多 6 组 / 3000 字符 |
 | 记忆体检报告（v2） | 1200 字符 |
 | working.md（工作记忆草稿） | 500 字符（空则跳过） |
 
-**被预算截断时必须说出来（2026-09-18 起）**：`clip(text, maxChars)` 在截断处追加
-`……［截断：全文 N 字符，此处非全文，用 read/grep 取原文件］`，**N 是原文长度**。
+**被预算截断时必须说出来（2026-09-18 起；2026-09-21 扩为「头 + 尾」）**：`clip(text, maxChars)` 在截断处插入
+`……［截断：省略 M 字符，全文 N 字符，此处非全文，用 read/grep 取原文件］`，**N 是原文长度、M 是被略去的字符数**。
 
 - **为什么不能用结尾的 `…` 代替**：散文本来就常以省略号结尾（审计的人读摘要里就有 `names}${count > 3 ? " …" : ""}` 这种写法），所以「以 `…` 结尾」**区分不了**"被预算截断"与"原文如此"。而把残片当完整证据，比没有证据更糟——WikiSkill（arXiv:2608.27454 Appendix C）对每条注入日志的上限写法就是显式的 `[TRUNCATED: …]`，而不是靠一个省略号。
-- **代价**：标记不计入预算（内容仍是 `maxChars`，标记是固定长度追加），因此**不会**因为这条改动而缩小任何一层的实际内容；`clip` 原有的 `…` 结尾保留，读旧格式的读者不受影响。
+- **为什么两端都保（2026-09-21）**：原来只保头部，这在**方向上**是错的，而且错得**没有任何测试看得见**——本仓库所有夹具都远低于各自预算，`clip` 从不触发（实测 `scripts/qa/benchmark-vault` 的整段注入是 **4088 字符、零截断**）。用「增长型」夹具重建后立刻现形：40 条 records 索引行对 800 预算，**保住了 `rec-1`、丢掉了 `rec-40`**；5033 字符的 `topics/index.md` 保住了 `alpha`、丢掉了 `omega`。两个方向各有不可替代的作用——**头部**是定义性的（身份、记号约定），**尾部**是自上次读取以来唯一变化的部分（本库的写入协议是 append-only、新的在下方）。只保一侧必然是另一侧的静默丢失。
+- **ASCII 边界才裁词**：`clip` 只在边界字符是 ASCII 时回退到词边界。数学 vault 的正文以 CJK 为主，那里没有词边界，裁了就是从词中间咬掉几个字——正是这条标记要防的「读起来像完整证据的残片」。
+- **代价**：标记不计入预算（内容仍是 `maxChars`，标记是固定长度追加），因此**不会**因为这条改动而缩小任何一层的实际内容；`clip` 原有的 `…` 结尾保留，读旧格式的读者不受影响。标记变长会让被截断的段落**总长**略增（多出的是标记本身）。
 - **注意边界**：`note_tools` 的检索片段（snippet）**不适用**这条——片段是围绕查询词的短窗口，而它读到的 passage 在 `composePassage` 里**已经**被截到 800–2000 字符，**原始长度在那里已经不可知**，无法做一个诚实的标记（试过两种实现，都无法区分，已放弃并在 `tests` 里不留假断言）。那里的诚实做法是**说清片段的性质**（工具描述里写明"snippets are short WINDOWS around the query terms, not the full card"），而不是给一个可能撒谎的标记。
 
-静态索引即“导航层”（告诉模型有什么）；相关内容按需用 `note_recall` 拉取（检索 v3 S5，不再逐轮注入召回段）。截断策略：`clip()` 从头截断（episodes 保留尾部）。
+静态索引即“导航层”（告诉模型有什么）；相关内容按需用 `note_recall` 拉取（检索 v3 S5，不再逐轮注入召回段）。截断策略：`clip()` **头尾都保**；三个 append-only 层索引（records/templates/episodes）由同一个 `appendOnlyIndexDigest` **按行保尾部**——它们曾有两份各自为政的实现，而其中两份是**头截断**（见上一条的实测数字）。
 
 ### 3.1 档位（`budget`：compact / standard / rich）
 
-上表是 **`standard`**，也就是**没有选择档位时的行为**——`BUDGET_TIERS.standard` 与上表逐个数字相同（有断言钉住这条否定性性质：仅仅提供一个选择，不能改变没有选择的人的行为）。`compact` 各项更小，`rich` 更大；三档以 `profile/topics/records/templates/episodes/inbox/dialogue` 七个键对齐。
+上表是 **`standard`**，也就是**没有选择档位时的行为**——`BUDGET_TIERS.standard` 与上表逐个数字相同（有断言钉住这条否定性性质：仅仅提供一个选择，不能改变没有选择的人的行为）。`compact` 各项更小，`rich` 更大；三档以 `profile/notation/topics/records/templates/episodes/inbox/dialogue` **八个键**对齐。`notation` 是 2026-09-21 补进表的：它此前是读取点上的硬编码 800，于是档位旋钮**管不到它**（`standard` 取值不变，仍是 800）。
 
 **优先级**（`budgetsFor`）：**显式 preset 配置 > 库内 `.deepseek/config.md` 的 `budget` > `standard`**。库内那一层由设置页写入（`setMemoryBudget`），因为 preset 配置文件 `agent.cordis.yml` 是构建产物、插件没有写它的通道。无法识别的档位**保持字段缺失**（而不是钉成 `standard`），好让 preset 配置继续生效。
 
