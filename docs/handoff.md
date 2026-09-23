@@ -35,6 +35,7 @@
 | `dsh/client-panel/` | **dsh web 客户端面板**：React 源码 `src/index.jsx` + esbuild 打包 `build-client.mjs` + 安装 `install-into-profile.mjs` + 产物 `lib/client.js` |
 | `literature/` + `scripts/lit-import.mjs` + `docs/literature.md` | **文献库子系统**：BibTeX + PDF + MinerU markdown → 双面文献库（14 篇） |
 | `docs/dsh-panel-research.md` | dsh web 面板机制调研（客户端契约 / settings.section 槽位 / profile 装配名单 / 宿主路由） |
+| `docs/design-intake-2026-09-21.md` | **用户提问评估（2026-09-21）**：三个问题的取证与吸纳决策——拖拽引用（可行性 + 待实测项，**只登记未实施**）、记忆引用打不开（两处根因 + B组实施范围）、注入机制（实测数据 + 「不做 handoff 文档」的理由） |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
 | `scripts/test-memory.mjs` | 零 token 记忆回归（376 项断言，进 `npm test`） |
@@ -347,6 +348,9 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **检索：关系信任 + 锚点槽位** | GraphMemix 的「查询条件化关系信任」需要 `related`/`source` 边带可信度（可用 `verified_by`/`harmed` 当先验）；触发条件写在 `retrieval-v3.md` §7.4 | 低（有触发条件） |
 | **多视图 max-pool 复测** | 本轮实测 Δ=0 且排名变差，保持单袋默认；出现「标题精确命中却排在 5 名之后」的真实稀释案例时，先补 ground-truth 用例再复测（`retrieval-v3.md` §7.2） | 低（有触发条件） |
 | **（可选）settings.section i18n** | `label` 已可用；若需多语言再补 | 低 |
+| **拖拽引用：把 Obsidian 笔记拖进侧栏 dsh** | 可行性已取证（`docs/design-intake-2026-09-21.md` §1.1）：缺的不是机制而是「谁去写那个 mention」——dsh 的 `@path` 引用是**普通提示词文本**（`dsh-file-reference/README.md:12`），程序化写 draft 是**公开 API**（`dsh-client-ui-conversation/lib/types/client/contract/input.d.ts:172-176` 的 `SessionInput.setDraft`，服务名 `conversation`），而 dsh **内置的 drop 只接真文件**（`dsh-client-ui-attachment/lib/client.js:618-619` 要求 `types.includes("Files")`），Obsidian 拖出来的不是 `Files`。侧栏 iframe **跨源**（`main.template.js:569-572` 注释原文「the plugin cannot touch its DOM (cross-origin)」），所以父页面读不到 iframe 内的 drop。**推荐路径**：在 dsh 客户端插件（`dsh/client-panel/`，已有基建）里挂 document 级 `drop` 监听 → 解析出 vault 相对路径 → `setDraft` 写入 `@path`；**备选**（不碰 dsh 侧）：透明遮罩 + 复用 `LinkServer` 回环。⚠️ **动手前必须先补一步实测**：Obsidian 拖拽的 `dataTransfer` 实际类型与取值（`text/plain` 是 vault 相对路径还是 markdown 链接？`text/uri-list` 是否绝对路径？）——本仓库目前**没有**这项数据 | 中（待实测） |
+| **`working.md` 的 500 字符上限** | 它是注入里唯一的「工作上下文」，但模板五字段（当前问题/子目标/已证·已失败/已检索·已排除/下一步）光标签就约 120 字符，500 装不下真正的进度 ⇒ 实际能承载的只有一两行。提到 800–1000 或精简模板，二选一；**要与注入体积一起量**再定（`math-memory.mjs:3797` 的硬编码 500）。注意 `clip()` 对它是**头截断**，见上一条 | 低（需先量） |
+| **`CHANGELOG.md:230` 与当前安装的前端版本不符** | 该行称「dsh 前端已内置 loopback 链接站内跳转」并据此删掉了 `patchDshFrontendLinks`；而在本机安装的 `@deepseek-ai/dsh-web-frontend/dist/assets/index-DuF6ti6g.js` 里 grep `127.0.0.1\|localhost\|loopback` **命中 0 处**。对本轮的记忆引用缺陷**无影响**（无论有没有 loopback 特判，`.deepseek/` 都打不开），但该说法需要单独核实并修正文档 | 低 |
 
 ## 8. 与用户协作约定
 
