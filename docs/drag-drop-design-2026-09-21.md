@@ -143,6 +143,43 @@ Obsidian 在 21:32 重启过，但**服务进程是更早起来的**。装进 `n
 取是 404，而 `apply()` 明明跑过 —— 宿主按 **loader 行的 id** 编 URL，入口 id 与包名不同；猜 URL
 只会制造假红，所以那条改成"报告参考信息"，判据一律以页面里的真实状态为准。
 
+## 4bis. 实现改道（2026-09-21 晚，用户第二次实测失败之后）
+
+**用户给的关键证据**：从文件列表往侧栏拖时，**"可放置提示"不出现**。那条提示挂在 iframe 内的
+`dragenter` 上 —— 它不出现 ⇒ **拖拽事件根本没有进入那个跨源 iframe**，问题不在"解析不出路径"。
+
+**我此前错在哪**：把 `iframe-drop-probe.mjs`（三端口真跨源夹具，"跨源 iframe 能收到 drop"）
+的结论**外推到了真实宿主**。夹具里的"源"是一个普通 HTML 页面；真实宿主是 Obsidian，它有自己的
+拖拽管理。**夹具结论不能跨宿主外推** —— 这是本轮最该记的一条（与坑 85 同族：夹具在证明一个
+不存在的场景是对的）。
+
+**现在的形状**：落点搬到**与拖拽同一文档**的 Obsidian 侧。
+
+```
+文件列表 --拖--> 侧栏上方的透明落点（Obsidian 文档内，必收得到）
+                 → 解出 obsidian://open?…&file=<库内路径>
+                   → ① 直插：webview 跨源执行 window.__dshMentionInsert(rel)
+                     ② 兜底：POST LinkServer /mention → 页面 EventSource 订阅 /mention-stream
+                        → 落笔：composer 自己的 paste 处理器（与手工拖拽同一条路）
+```
+
+| 环节 | 落点 | 文件 |
+|---|---|---|
+| 透明落点 + 载荷解析 | Obsidian 插件 | `obsidian/main.template.js` · `DshMathView.installDropZone`（CSS 在 `styles.css`） |
+| 送达 | Obsidian 插件 | `Plugin.insertMentionIntoFrame` / `Plugin.sendMention`；`LinkServer` 的 `/mention` + `/mention-stream`；`DshWebProxy.mentionChannelMeta` 注入地址 |
+| 接收与落笔 | dsh 客户端半个 | `dsh/client-panel/src/drop-mention/mention-inbox.mjs`（落笔复用 `composer-drop.mjs`） |
+
+**为什么需要注入那个 `<meta>`**：页面**无从知道** LinkServer 的端口与令牌（它只知道自己被哪个地址
+服务），而插件本来就在改写导航 HTML —— 于是把 `/mention-stream` 的完整地址与令牌作为 meta 注入，
+这是唯一自洽的传递方式（不注入任何可执行代码）。
+
+**两条路都只是"把文本递到落笔那一步"**：落笔永远走那条已经实测过的合成 paste（插到光标处、
+不覆盖已有草稿），所以落笔只有一份实现。
+
+**仍未验证**：真实 Obsidian 里"从文件列表拖到侧栏"的完整链路需要用户操作鼠标，我无法自动化。
+插件 debug 日志会逐步写下 `[drop] 收到拖拽，解析结果=…`、`[drop] 直插=…`、`/mention 响应 …`，
+用户试一次即可判定卡在哪一环。
+
 ## 5. 刻意不做 / 未知
 
 - **多选拖拽**：Obsidian 多选拖出的载荷形态**未实测**。若它也是单个 URI（只带一个文件），我们
