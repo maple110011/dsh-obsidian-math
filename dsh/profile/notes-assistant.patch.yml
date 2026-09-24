@@ -6,6 +6,22 @@
 # Auto-register the vault as a workspace so the web UI shows it in the
 # workspace picker immediately and never forces a directory-selection flow
 # inside the Obsidian iframe.
+#
+# `math-memory-client-panel` is the BROWSER half of the memory panel (its host
+# half is `math-memory-panel.mjs` just above). It is what makes the sidebar
+# usable for mentioning notes: it publishes `window.__dshMentionInsert` and
+# subscribes to the plugin's `/mention-stream`, so a note dragged out of the
+# file explorer lands in the composer as `@path`. Without this row the drag is
+# detected and the path is POSTed, but nothing ever receives it.
+#
+# THIS FILE IS THE ONLY PLACE THAT ROW MAY LIVE. 2026-09-21: the installer used
+# to append the row to a patch file at install time, but the plugin REGENERATES
+# this overlay from its embedded copy at every service start
+# (`buildNotesAssistantPatch`), so an appended row survived only until the next
+# boot — the feature was silently absent in exactly the configuration it was
+# built for, while the package sat unused in `node_modules`. Keep the row here
+# (it is embedded into `main.js` by scripts/build-obsidian.mjs) and let
+# `dsh/client-panel/install-into-profile.mjs` only INSTALL THE PACKAGE.
 - insert:
     - id: math-memory-workspace
       name: ./math-memory-workspace.mjs
@@ -13,6 +29,8 @@
         vaultPath: !!js process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT
     - id: math-memory-panel
       name: ./math-memory-panel.mjs
+    - id: math-memory-client-panel
+      name: '@dsh-math-memory/client-ui-memory-panel'
 
 # The skin manager writes a global patch ($DSH_HOME/cordis.patch.yml) that
 # inserts the ACTIVE web skin into EVERY profile. The obsidian profile

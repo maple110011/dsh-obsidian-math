@@ -2,13 +2,18 @@
 //
 // 面板 = 宿主半（`host/math-memory-panel.mjs`：`/memory-panel/*` 路由）+ 客户端半
 // （`lib/client.js`：Settings 面板 + **拖拽引用**）。本脚本装的是**包**：把两份文件放进
-// `profile/node_modules/@dsh-math-memory/client-ui-memory-panel/`，并把包名 register 进
-// `profile/cordis.patch.yml`。
+// `profile/node_modules/@dsh-math-memory/client-ui-memory-panel/`，然后**校验**那一行 loader 确实
+// 挂在权威 overlay 上（见 `OVERLAY_FILE`：本脚本**不再自己写那一行**）。
 //
 // ⚠️ **两个 profile 都需要它**（2026-09-21 踩到）：`web` profile 走这条路是为了 3080 的记忆面板；
 // 而 **Obsidian 侧栏跑的 `notes-assistant` profile 默认只有宿主半个** —— 于是"从文件树拖一篇笔记
 // 进输入框"这个功能在**侧栏里根本不加载**（代码对、也测过，但没被装上）。现在 `dsh/install.mjs`
 // 与 `scripts/deploy-local.mjs` 都会调用本模块导出的函数，把这一步固化进安装路径。
+//
+// ⚠️ **"装包"与"挂行"是两件事，必须分开做**：`web` profile 的行在它自己的 `cordis.patch.yml` 里
+// （用户可编辑、不被覆盖），而 `notes-assistant` profile 的行必须写在**随 main.js 发布的**
+// `notes-assistant.patch.yml` 源文件里 —— 因为插件每次启动服务都用内嵌副本重写那个文件。
+// 具体原因见 `OVERLAY_FILE` 的注释，那里也是这个功能的真实故障记录。
 //
 // 用法（CLI）：node dsh/client-panel/install-into-profile.mjs --profile-home <dir>
 import { mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, readdirSync } from "node:fs";
@@ -32,6 +37,26 @@ const PKG = CLIENT_PKG;
 const INSERT_ID = "math-memory-client-panel";
 /** 导出给守卫用：`scripts/check-patch-yaml.mjs` 断言它不与任何已发布的行 id 冲突。 */
 export const CLIENT_INSERT_ID = INSERT_ID;
+
+/**
+ * 那一行 loader 必须住在**哪个文件**里 —— 这是本模块 2026-09-21 第二个真实故障的结论。
+ *
+ * ⚠️ **不要把这个文件当成"安装时随便追加"的地方。** Obsidian 插件在**每次启动服务时**都用它内嵌
+ * 的那份副本重写 `notes-assistant.patch.yml`（`obsidian/main.template.js` 的
+ * `buildNotesAssistantPatch`）。也就是说：
+ *
+ *   · 安装时往 `notes-assistant.patch.yml` 追加的行 → **下一次启动就被覆盖掉**；
+ *   · 往 `cordis.patch.yml` 追加的行 → 那个文件根本不参与本 profile 的启动
+ *     （启动命令是 `dsh --profile notes-assistant --patch …/notes-assistant.patch.yml`），
+ *     而且它同样会被内嵌模板覆盖。
+ *
+ * 本模块原先正是追加到 `cordis.patch.yml`，于是"装好了包、却没有任何 loader 挂载它"：拖拽能接住、
+ * `/mention` 也回 204，但页面里既没有 `window.__dshMentionInsert`、也没有人订阅 `/mention-stream`，
+ * 路径全部掉进队列。**唯一可行的形状是把行写进 repo 源文件**（`dsh/profile/notes-assistant.patch.yml`
+ * → 由 build 内嵌进 `main.js` → 每次启动重写时自然带上），而本模块只负责**把包装进 node_modules**
+ * 并**校验那一行确实在**。
+ */
+export const OVERLAY_FILE = "notes-assistant.patch.yml";
 
 /** 扫一遍目录里的 `*.yml`，找出所有 `- id: <want>` 出现在哪、指向哪个包。 */
 function findIdOwners(profileHome, want) {
@@ -71,9 +96,15 @@ export function installClientIntoProfile(profileHome, opts = {}) {
   const pkgDir = join(home, "node_modules", ...PKG.split("/"));
   const result = { ok: false, pkgDir, inserted: false };
 
-  const patchPath = join(home, "cordis.patch.yml");
-  if (!existsSync(patchPath)) {
-    result.error = `没有 cordis.patch.yml: ${patchPath}`;
+  const overlayPath = join(home, OVERLAY_FILE);
+  const posturePath = join(home, "cordis.patch.yml");
+  if (!existsSync(posturePath)) {
+    result.error = `没有 cordis.patch.yml: ${posturePath}`;
+    log(result.error);
+    return result;
+  }
+  if (!existsSync(overlayPath)) {
+    result.error = `没有 ${OVERLAY_FILE}: ${overlayPath}（它是唯一允许挂载本包 loader 行的文件）`;
     log(result.error);
     return result;
   }
@@ -138,50 +169,39 @@ export function installClientIntoProfile(profileHome, opts = {}) {
   writeFileSync(join(pkgDir, "package.json"), JSON.stringify(pkgJson, null, 2) + "\n", "utf8");
   log("installed package into: " + pkgDir);
 
-  const patch = readFileSync(patchPath, "utf8");
-
-  // ⚠️ 先查 id 冲突，**再**动文件。cordis 对重复 id 是硬失败（整个 profile 起不来），
+  // ⚠️ 先查 id 冲突，**再**下结论。cordis 对重复 id 是硬失败（整个 profile 起不来），
   // 而"写进去之后才发现"意味着用户已经拿到一个坏 profile —— 2026-09-21 就是这样把用户的
-  // 侧栏搞挂的。同 id 已被**别的包**占用时：什么都不写，明确报错。
+  // 侧栏搞挂的。同 id 已被**别的包**占用时：明确报错。
   const owners = findIdOwners(home, INSERT_ID).filter((o) => !o.owner.includes(PKG));
   if (owners.length > 0) {
     result.error =
       `patch 里已存在 id "${INSERT_ID}"（${owners.map((o) => `${o.file}:${o.line} → ${o.owner || "(无 name)"}`).join("；")}）。` +
-      `再插一个同 id 条目会让 cordis 拒绝启动整个 profile（duplicate loader entry id）。已中止，未改动任何文件。`;
+      `同 id 重复会让 cordis 拒绝启动整个 profile（duplicate loader entry id）。`;
     log(result.error);
     return result;
   }
 
-  if (patch.includes(PKG)) {
-    log("cordis.patch.yml 已包含该包，跳过 insert");
-    result.inserted = false;
-    result.ok = true;
-  } else {
-    // The previous implementation anchored the insert to a trailing `]` (flow
-    // style). Every patch file this repo actually ships is BLOCK style with no
-    // trailing `]`, so `String.replace` returned the input unchanged — and the
-    // script still wrote the file back and printed success. That silent no-op is
-    // the only documented way the client panel reaches a profile. Appending a
-    // block item to a genuine flow sequence instead produced invalid YAML.
-    //
-    // Now the block-style insert is APPENDED (block style accepts any number of
-    // top-level items), and the write is asserted.
-    const insert = ["", "# Math-memory client panel (install-into-profile.mjs).", "- insert:", "    - id: " + INSERT_ID, "      name: '" + PKG + "'"].join("\n");
-    const next = patch.replace(/\s*$/, "") + insert + "\n";
-    // 备份只在**还没有备份**时写：安装是幂等的，但每次 insert 都覆盖 `.bak` 会反复改写同一个
-    // 文件，而它记的是"上一次改动前"——覆盖几轮之后就不知道是哪一轮了，用户 profile 里因此会
-    // 攒下一堆看不懂的 backup（2026-09-21 实测：我自己就先在那个目录里留了两个）。
-    if (!existsSync(patchPath + ".bak")) writeFileSync(patchPath + ".bak", patch, "utf8");
-    writeFileSync(patchPath, next, "utf8");
-    if (!readFileSync(patchPath, "utf8").includes(PKG)) {
-      result.error = `insert 失败：写入后 ${patchPath} 仍不含 ${PKG}`;
-      log(result.error);
-      return result;
-    }
-    log("已 insert 到 " + patchPath + "（备份 cordis.patch.yml.bak）");
-    result.inserted = true;
-    result.ok = true;
+  // 校验那一行**确实在权威来源里**。本模块不再写它（见 OVERLAY_FILE 的注释）：那行必须来自内嵌
+  // overlay，否则下一次服务启动就会被重写掉 —— 而"包在、行不在"恰恰是拖拽静默失效的形状，
+  // 所以这里必须正面对质，而不是像旧实现那样只要文件里出现过包名字符串就算通过。
+  const rowRe = new RegExp(`^\\s*-\\s*id:\\s*['"]?${INSERT_ID}['"]?\\s*$`, "m");
+  if (!rowRe.test(readFileSync(overlayPath, "utf8"))) {
+    result.error =
+      `${OVERLAY_FILE} 里没有 id "${INSERT_ID}" 的 loader 行：${overlayPath}。` +
+      `该行必须来自仓库源 dsh/profile/${OVERLAY_FILE}（由 build 内嵌进 main.js）；` +
+      `只装包不挂行 = 拖拽引用在页面里没有接收方。`;
+    log(result.error);
+    return result;
   }
+  if (!existsSync(join(pkgDir, "client.js"))) {
+    result.error = `包里没有 client.js：${join(pkgDir, "client.js")}`;
+    log(result.error);
+    return result;
+  }
+
+  result.inserted = false;
+  result.ok = true;
+  log(`overlay 已挂载 ${INSERT_ID}（${OVERLAY_FILE}）；包已就位：${pkgDir}`);
 
   const pp = join(home, "package.json");
   const bak = pp + ".bak";

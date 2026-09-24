@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -54,35 +54,53 @@ check('manifest posture=9 files', Array.isArray(manifest.posture) && manifest.po
 
 // drift detection (always-refresh files must match repo sources)
 //
-// `cordis.patch.yml` is the ONE exception, and it is deliberate: the installer appends the
-// client-half insert row to it (so the sidebar profile gets the memory panel's client half —
-// and with it the drag-to-mention feature). So the assertion for that file is "repo content
-// is a PREFIX, and the only thing appended is our client insert" — strictly stronger than
-// dropping it from the list, and it still catches a genuine drift in the shipped part.
+// `cordis.patch.yml` is no longer an exception: since the client-half loader row moved into the
+// authoritative overlay (`notes-assistant.patch.yml`) the installer does not append to ANY patch
+// file, so every shipped profile file must install byte-identically. The exception this comment
+// used to document ("repo content is a prefix") is exactly what hid the 2026-09-21 failure.
 const driftPairs = [
   [join(presetRoot, 'math-memory.mjs'), join(repo, 'dsh', 'preset', 'math-memory.mjs')],
   [join(presetRoot, 'note-tools.mjs'), join(repo, 'dsh', 'preset', 'note-tools.mjs')],
   [join(presetRoot, 'hook-frontmatter.mjs'), join(repo, 'dsh', 'preset', 'hook-frontmatter.mjs')],
   [join(profileRoot, 'notes-assistant.patch.yml'), join(repo, 'dsh', 'profile', 'notes-assistant.patch.yml')],
   [join(profileRoot, 'memory-admin.mjs'), join(repo, 'dsh', 'host', 'memory-admin.mjs')],
+  [join(profileRoot, 'cordis.patch.yml'), join(repo, 'dsh', 'profile', 'cordis.patch.yml')],
   [join(profileRoot, 'math-memory-panel.mjs'), join(repo, 'dsh', 'host', 'math-memory-panel.mjs')],
   [join(vault, 'AGENTS.md'), join(repo, 'dsh', 'templates', 'vault-AGENTS.md')]
 ];
 for (const [installed, source] of driftPairs) {
   check('no drift ' + installed, readFileSync(installed, 'utf8') === readFileSync(source, 'utf8'));
 }
+// The memory panel's BROWSER half (drag-to-mention) must be mounted by the
+// authoritative overlay, and its package must be installed. 2026-09-21 real
+// failure: the installer only APPENDED the loader row at install time, but the
+// plugin regenerates `notes-assistant.patch.yml` from its embedded copy at every
+// service start — so the row was gone by the next boot, the sidebar received the
+// drop, POSTed the path, got 204, and nothing was listening. The row now lives in
+// `dsh/profile/notes-assistant.patch.yml` (asserted above as byte-identical) and
+// the installer is only allowed to INSTALL THE PACKAGE.
 {
-  const installed = readFileSync(join(profileRoot, 'cordis.patch.yml'), 'utf8');
-  const shipped = readFileSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), 'utf8');
-  check('cordis.patch.yml: shipped content kept intact (prefix)', installed.startsWith(shipped.trimEnd()));
-  const appended = installed.slice(shipped.trimEnd().length);
-  check('cordis.patch.yml: the only appended block is the client-half insert',
-    appended.includes('@dsh-math-memory/client-ui-memory-panel') && appended.includes('math-memory-client-panel'));
-  // 行 id 必须与宿主半个的 id 不同：同日实测过"同 id ⇒ cordis 拒绝启动整个 profile"。
-  // 这里用**解析后的行 id** 断言，而不是文本匹配（文本匹配会连注释里的字样一起算进去）。
-  const rowIds = [...installed.matchAll(/^\s*-\s*id:\s*['"]?([A-Za-z0-9_-]+)['"]?\s*$/gmu)].map((m) => m[1]);
-  check('cordis.patch.yml: row ids are unique after install',
-    new Set(rowIds).size === rowIds.length, rowIds.join(','));
+  const overlay = readFileSync(join(profileRoot, 'notes-assistant.patch.yml'), 'utf8');
+  const rowRe = /^\s*-\s*id:\s*['"]?math-memory-client-panel['"]?\s*$/mu;
+  check('notes-assistant.patch.yml: mounts the client half (math-memory-client-panel)', rowRe.test(overlay));
+  // The id must differ from the host half's — the same day, an identical id made
+  // cordis refuse to boot the whole profile ("duplicate loader entry id").
+  const ids = [...overlay.matchAll(/^\s*-\s*id:\s*['"]?([A-Za-z0-9_-]+)['"]?\s*$/gmu)].map((m) => m[1]);
+  check('notes-assistant.patch.yml: row ids are unique', new Set(ids).size === ids.length, ids.join(','));
+  check('notes-assistant.patch.yml: host half row still present alongside the client row',
+    ids.includes('math-memory-panel') && ids.includes('math-memory-workspace'), ids.join(','));
+  const pkg = join(profileRoot, 'node_modules', '@dsh-math-memory', 'client-ui-memory-panel');
+  check('client half package installed', existsSync(join(pkg, 'client.js')) && existsSync(join(pkg, 'index.mjs')));
+  check('client half package.json points ./client at client.js',
+    JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')).exports['./client'] === './client.js');
+  // The id must appear EXACTLY once in the whole profile: cordis treats a repeated loader
+  // entry id as a hard failure of the profile, and the row must not be reachable twice
+  // (e.g. once from the overlay and once appended to cordis.patch.yml).
+  const occurrences = [...readdirSync(profileRoot).filter((n) => n.endsWith('.yml'))]
+    .map((name) => readFileSync(join(profileRoot, name), 'utf8'))
+    .join('\n')
+    .match(/^\s*-\s*id:\s*['"]?math-memory-client-panel['"]?\s*$/gmu) ?? [];
+  check('client row appears exactly once across the profile patch files', occurrences.length === 1, `count=${occurrences.length}`);
 }
 
 // 2. idempotent second run

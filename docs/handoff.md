@@ -85,7 +85,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：88
+> 陷阱条数：89
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -273,6 +273,17 @@
     - **形态**：`dsh/profile/cordis.patch.yml` 的**第一行与上一条注释拼在了同一行**（`# …plus the cross-session memory plugin.- id: agent-presets`）。那一行因此是注释 ⇒ 顶层序列**从未开始** ⇒ 后面第一个裸 `- id:` 就是 YAML 语法错误。真 `dsh` 直接拒绝启动整个 `notes-assistant` profile：`failed to parse overlay …: YAMLException: end of the stream or a document separator is expected (16:1)`。**Obsidian 侧栏、`dsh --profile notes-assistant`、以及依赖它的门禁全部一起坏掉。**
     - **为什么门禁没发现**：① 除 preset 门禁外，**所有门禁都把这些文件当文本读**——`test-preset-sync.mjs` 逐字节比对两份拷贝，而被改坏的行仍然是合法文本，两份还**完全一致**；② 唯一会发现的 preset 门禁是因为它**真的启动 dsh** 才撞上的，而它在受限环境里会因"写不了 `$DSH_HOME`"先失败 ⇒ **恰好在看不到真相的环境里，这个 YAML 错误是不可见的**（同族：坑 56/59/69）。
     - **纪律**：① **"是合法文本"不等于"是合法配置"**——对装配文件（`*.patch.yml` / `*.cordis.yml`）必须有**解析**它的门禁，不能只做字节或文本断言；② 一个只在"能启动真进程"时才被发现的缺陷，等于在受限环境里**没有守卫**；③ 注释与结构的边界是这类文件的常见雷区（本仓库已两次：坑 60 的文件名、这条的注释吞行）——**新增守卫 `scripts/check-patch-yaml.mjs`**（解析 + 顶层必须是 op 序列 + 每个 op 带 `id`/`insert` + 直接断言"没有行被注释吞掉"）。
+89. **★ 包装进了 `node_modules`，却没有任何 loader 挂载它——拖拽"接住了、也回 204"，就是不落笔**（2026-09-21，用户实测踩到）。
+    - **形态**：从 Obsidian 文件列表把笔记拖进侧栏 dsh 输入框 → 提示条出现 → 松手 → **草稿里什么都没有**。插件 `debug.log` 把故障区间夹得很死：
+      `[drop] 收到拖拽，解析结果="抄书/最优传输/最优传输2"` → `[drop] 直插=false` → `[drop] /mention 响应 204`，连续 5 次，全部这样。
+      也就是说：**Obsidian 那侧完全正常**（路径解析对了、服务端也收下了），断的是"送进页面之后由谁落笔"。
+    - **两个独立成因，缺一都修不好**：
+      1. **直插那条路结构性不存在**：`insertMentionIntoFrame` 调 `frame.executeJavaScript` —— 那是 Electron `<webview>` 的方法，而侧栏里放的是**跨源 `<iframe>`**，没有这个方法 ⇒ 它按设计返回 `false`（日志里的 `直插=false` 是**正确行为**，不是 bug）。
+      2. **兜底那条路没有接收方**：`/mention` → SSE `/mention-stream` 那半边要求页面里跑着**记忆面板的客户端半个**（它才 `window.__dshMentionInsert` + 订阅 SSE），而那个包**只躺在 `node_modules` 里，没有任何 loader 行挂载它**：`dsh/profile/notes-assistant.patch.yml` 与 `profiles/notes-assistant/cordis.patch.yml` 里都只有宿主半个。于是 `pushMention` 每次都落进空队列（`mentionClients.size === 0`）后被挤掉，**204 是真的、送达是假的**。
+    - **根因（为什么"装好了"却"没挂上"）**：安装器 `install-into-profile.mjs` 把 loader 行**追加到 `profiles/<profile>/cordis.patch.yml`**。可 Obsidian 插件在**每次启动服务时**都用内嵌副本重写 `notes-assistant.patch.yml`（`buildNotesAssistantPatch`），而启动命令是 `dsh --profile notes-assistant --patch …/notes-assistant.patch.yml` —— **`cordis.patch.yml` 压根不在这条启动路径上**。两头都错：追加到 A 的行会被覆盖（就算追加到 B 也一样）。
+    - **为什么门禁没发现**：① `install-into-profile.mjs` 的"成功判据"是 `patch.includes(PKG)` —— 一个**子串**检查，它证明"文件里出现过包名"，证明不了"有一行 id 挂载了它"；② `test-installer.mjs` 当时的断言是"`cordis.patch.yml` 的仓库内容是**前缀**，且追加块里有这个包名" —— 这条断言**把 bug 写成了期望**，等于给故障盖了章；③ `check-patch-yaml.mjs` 当时只断言 id **不冲突**（证明不了它**存在**）；④ e2e 探针 `drop-to-mention-e2e.mjs` 起实例时**没传 `--patch`**，于是它那台 profile 本来就不加载客户端半个，那条"该 profile 自己加载了客户端半个"永远红 —— **一条长期为红的断言，等于没有断言**（同族：坑 56/59/69）。
+    - **修法与纪律**：① **那一行必须是发布物的一部分**，写进权威源 `dsh/profile/notes-assistant.patch.yml`（由 build 内嵌进 `main.js`，每次启动重写时自然带上）；② 安装器只做"**装包 + 校验行在**"，**不再往任何 patch 文件写行**；③ 门禁从"不冲突"改成**"恰好出现一次"**（零次＝静默失效，两次＝`duplicate loader entry id` 整个 profile 起不来），并**变异验证**过两种红；④ 探针改为照抄插件真实启动参数（含 `--patch`），于是那条断言第一次真的在测装配路径；⑤ **判据要锚在结构上，不要锚在子串上**："装好了"必须由"能解析出一行 id、且它指向的包确实存在"来证，不能由 `includes('包名')` 来证。
+    - **为什么这条值得记**：拖拽功能**每一段代码都测过、每一段也都是对的**（解析、载荷、合成 paste、SSE、CSRF），坏的是**装配**——而装配恰好落在"安装器"与"插件每次启动重写 overlay"这两个各自都很合理的设计的**接缝**上。**"装进 profile"不等于"界面里加载了它"**；凡是有"安装期写文件 + 运行期重写同一文件"的地方，都要问一句**谁是权威、谁会覆盖谁**。
 
 ## 5. 用户决策记录（不要推翻）
 
@@ -362,7 +373,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **检索：关系信任 + 锚点槽位** | GraphMemix 的「查询条件化关系信任」需要 `related`/`source` 边带可信度（可用 `verified_by`/`harmed` 当先验）；触发条件写在 `retrieval-v3.md` §7.4 | 低（有触发条件） |
 | **多视图 max-pool 复测** | 本轮实测 Δ=0 且排名变差，保持单袋默认；出现「标题精确命中却排在 5 名之后」的真实稀释案例时，先补 ground-truth 用例再复测（`retrieval-v3.md` §7.2） | 低（有触发条件） |
 | **（可选）settings.section i18n** | `label` 已可用；若需多语言再补 | 低 |
-| **拖拽引用：把 Obsidian 笔记拖进侧栏 dsh** | ✅ **已实现（2026-09-21）**。规格与落地记录见 [`docs/drag-drop-design-2026-09-21.md`](drag-drop-design-2026-09-21.md)。链路：文件树拖拽 → 跨源 iframe 内 `document` 的 drop → 解析 `obsidian://open?vault=…&file=<库内路径>` → 在 composer 上派发一次合成 `paste`（文本 `@库内路径 `）→ 宿主自己的 paste 处理器插到光标处。实现 = `dsh/client-panel/src/drop-mention/`（纯解析 + DOM 接线），装配在 `index.jsx` 的 `apply()`，产物 `lib/client.js` 已重建。**验证**：零 token 回归 47 项（门禁 `test: drop-to-mention`，跑真产物 + 两次变异验证）+ 端到端探针 9/9（`scripts/qa/drop-to-mention-e2e.mjs`，真拖拽 → 草稿出现 `@路径`）+ 接缝探针 7/7（`composer-drop-probe.mjs`）。⚠️ **仍未实测**：**文件夹**与**编辑器里选中文字**两种拖拽的载荷（探针没跑通），实现按"解不出 `file=` 就忽略"处理 | 完成（两项待测） |
+| **拖拽引用：把 Obsidian 笔记拖进侧栏 dsh** | ✅ **已实现并实测可用（2026-09-21）**。规格与落地记录见 [`docs/drag-drop-design-2026-09-21.md`](drag-drop-design-2026-09-21.md)；装配缺口的完整排查见 `docs/changelog.md`「2026-09-21（续）」与陷阱 89。链路：文件树拖拽 → Obsidian 侧落点（跨源 iframe 收不到拖拽）→ 解析 `obsidian://open?vault=…&file=<库内路径>` → 送进页面 → 在 composer 上派发一次合成 `paste`（文本 `@库内路径 `）→ 宿主自己的 paste 处理器插到光标处。实现 = `dsh/client-panel/src/drop-mention/`（纯解析 + DOM 接线），装配在 `index.jsx` 的 `apply()`。**装配**：客户端半个的 loader 行住在 `dsh/profile/notes-assistant.patch.yml`（唯一权威，随 `main.js` 内嵌），安装器只装包 + 校验行在。**验证**：零 token 回归 **64 项**（门禁 `test: drop-to-mention`，跑真产物 + 变异验证）+ 端到端探针 **14/14**（`scripts/qa/drop-to-mention-e2e.mjs`，照抄插件真实启动参数：实例自己加载客户端半个 `present:true, handlers:5`，真拖拽 → 草稿出现 `@路径`，且插在光标处而非替换草稿）+ 接缝探针 7/7（`composer-drop-probe.mjs`）+ 门禁 `check: shipped yaml parses` 20/20（含"loader 行恰好挂一次"的两种变异验证）。⚠️ **仍未实测**：**文件夹**与**编辑器里选中文字**两种拖拽的载荷（探针没跑通），实现按"解不出 `file=` 就忽略"处理 | 完成（两项待测） |
 | **`working.md` 的 500 字符上限** | 它是注入里唯一的「工作上下文」，但模板五字段（当前问题/子目标/已证·已失败/已检索·已排除/下一步）光标签就约 120 字符，500 装不下真正的进度 ⇒ 实际能承载的只有一两行。提到 800–1000 或精简模板，二选一；**要与注入体积一起量**再定。⚠️ 原文引用的行号（`math-memory.mjs:3797`）与「`clip()` 对它是头截断」已在 2026-09-21 变更——`clip` 现为**头尾都保**，行号以当时代码为准 | 低（需先量） |
 | **拖拽：文件夹与编辑器选中文字的载荷未实测** | `scripts/qa/drag-payload-probe.mjs` 只测出了**文件树里拖一篇笔记**的载荷（`obsidian://open?vault=…&file=…`）。**文件夹**（要先把文件夹展开 + 真实鼠标动作）与**编辑器里选中文字**两种没测出来；实现按"解不出 `file=` 就忽略"处理，**不猜**。要支持它们，先补探针再改解析器 | 中 |
 | **卸载会留下客户端半个的包目录** | `dsh/install.mjs` 的 `--direct` 分支现在会把 `@dsh-math-memory/client-ui-memory-panel` 装进 profile 的 `node_modules/`（拖拽引用与记忆面板的客户端半个）。`uninstall` 按 marker 删的是 `cordis.patch.yml` 等**文件**，**不删**这个包目录 ⇒ 卸载后残留一个不再被 patch 引用的目录（无害但不对称）。修法：给 `node_modules/@dsh-math-memory/**` 也写进 owner marker 的删除清单 | 低 |

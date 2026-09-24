@@ -3,6 +3,62 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-21（续）· 拖拽引用的**装配**缺口：包在 `node_modules` 里，却没有任何 loader 挂载它
+
+**用户实测**：「有提示条了，但是松手后文件并没有进对话框」——拖拽被接住了（提示条是 Obsidian 那侧的
+落点），但草稿始终为空。**上一节记的是"代码怎么写"，这一节记的是"代码为什么没被加载"**，两者是同一个
+功能的两半，而坏掉的是后一半。
+
+**故障区间由插件日志夹死**（`<vault>/.obsidian/plugins/dsh-math-assistant/debug.log`）：
+
+```
+[drop] 收到拖拽，解析结果="抄书/最优传输/最优传输2"
+[drop] 直插=false
+[drop] /mention 响应 204（抄书/最优传输/最优传输2）      ← 连续 5 次，全部如此
+```
+
+即：**Obsidian 侧完全正常**（解析对了、服务端也收下了）。断点在"送进页面之后由谁落笔"。
+
+**两个独立成因，缺一都修不好**：
+
+1. **直插那条路结构性不存在**：`insertMentionIntoFrame` 调 `frame.executeJavaScript` —— 那是 Electron
+   `<webview>` 的方法，而侧栏里放的是**跨源 `<iframe>`**（`app://obsidian.md` 与 `http://127.0.0.1:3180`
+   不同源），没有这个方法 ⇒ 按设计返回 `false`。**日志里的 `直插=false` 是正确行为，不是 bug。**
+2. **兜底那条路没有接收方**：`/mention` → SSE `/mention-stream` 那半边要求页面里跑着**客户端的客户端
+   半个**（它才 `window.__dshMentionInsert` + 订阅 SSE），而那个包**只躺在 `node_modules` 里，没有任何
+   loader 行挂载它**。于是 `pushMention` 每次都落进空队列（`mentionClients.size === 0`）后被挤掉：
+   **204 是真的，送达是假的。**
+
+**根因（"装好了"却"没挂上"）**：安装器 `install-into-profile.mjs` 把 loader 行**追加到
+`profiles/<profile>/cordis.patch.yml`**。但 Obsidian 插件在**每次启动服务时**都用内嵌副本重写
+`notes-assistant.patch.yml`（`obsidian/main.template.js` 的 `buildNotesAssistantPatch`），而启动命令是
+`dsh --profile notes-assistant --patch …/notes-assistant.patch.yml` —— **`cordis.patch.yml` 压根不在这条
+启动路径上**。两头都错：追加到 A 的行会被覆盖，追加到 B 的行同样会被覆盖。
+
+| # | 谁在说谎 | 真相 |
+|---|---|---|
+| 1 | 安装器的成功判据 `patch.includes(PKG)` | **子串**检查：证明"文件里出现过包名"，证明不了"有一行 id 挂载了它" |
+| 2 | `test-installer.mjs` 的"仓库内容是**前缀**、追加块含包名" | 这条断言**把 bug 写成了期望** —— 等于给故障盖章 |
+| 3 | `check-patch-yaml.mjs` 的"id **不冲突**" | 不冲突 ≠ 存在。**只证明了没有撞车，证明不了它在那儿** |
+| 4 | `drop-to-mention-e2e.mjs` 那条"该 profile 自己加载了客户端半个" | 探针起实例时**没传 `--patch`** ⇒ 那台 profile 本来就不加载它 ⇒ **长期为红，等于没有断言**（同族：坑 56/59/69） |
+
+**修法与纪律**：
+1. **那一行必须是发布物的一部分**：写进权威源 `dsh/profile/notes-assistant.patch.yml`（由 build 内嵌进
+   `main.js`，每次启动重写时自然带上）。**"安装期写文件 + 运行期重写同一文件"的地方，必须先问谁是权威。**
+2. 安装器只做"**装包 + 校验行在**"，不再往任何 patch 文件写行；并把 `OVERLAY_FILE` 作为唯一权威写进注释。
+3. 门禁从"不冲突"改成**"恰好出现一次"**：零次＝静默失效，两次＝`duplicate loader entry id`（整个 profile
+   起不来）。**变异验证两种红都做过**（删行 → 红；在另一层加同 id → 红），恢复后 20/20。
+4. `test-installer.mjs` 的"前缀"断言**删除**，改为"`cordis.patch.yml` 也必须逐字节等于仓库源"（它不再是
+   例外）+ 断言 overlay 里真的解析出那一行、且 `name` 指向安装器会装的包、且该 id 全 profile 只出现一次。
+5. 探针改为照抄插件真实启动参数（含 `--patch`），于是 `present:true, handlers:5` 第一次由探针自己验到，
+   端到端 **14/14**。
+6. **判据要锚在结构上，不要锚在子串上**："装好了"必须由"能解析出一行 id、且它指向的包确实存在"来证。
+
+**为什么这条值得单独记**：拖拽功能**每一段代码都测过、每一段也都是对的**（载荷解析、合成 paste、SSE、
+CSRF、门禁），坏的是**装配** —— 而装配恰好落在"安装器"与"插件每次启动重写 overlay"这两个各自都很合理的
+设计的**接缝**上。**"装进 profile"不等于"界面里加载了它"。** 已记进 `docs/handoff.md` §4 陷阱 89。
+
+
 ## 2026-09-21 · 拖拽引用落地：从 Obsidian 文件树拖一篇笔记进输入框
 
 **用户诉求**（原话）：「我就是希望能够从 Obsidian 左侧的文件夹中拖拽文件到 dsh 对话框里」。
