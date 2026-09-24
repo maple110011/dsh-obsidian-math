@@ -134,31 +134,65 @@ for (const file of candidates) {
   check(`${name}: no duplicate row id inside the file`, dupes.length === 0, dupes.join(' / '));
 }
 
-// ── 跨文件：客户端半个的插入 id 不能撞上任何已发布的行 id ─────────────────────
+// ── 跨文件：客户端半个的 loader 行必须**恰好挂一次**，且挂对包 ─────────────────
 //
-// WHY。2026-09-21 真实故障：`install-into-profile.mjs` 用 `math-memory-panel` 作插入 id，而
-// `dsh/profile/notes-assistant.patch.yml` 里**已经**有一个同 id 的宿主半个。两个 patch 层
-// （`--patch notes-assistant.patch.yml` 与 profile 自己的 `cordis.patch.yml`）各插一个同 id 条目
-// ⇒ cordis 拒绝启动整个 profile：`duplicate loader entry id: math-memory-panel`，用户的
-// Obsidian 侧栏**完全起不来**。这条门禁把"两个文件各自的 id 集合必须不相交"钉住。
+// WHY。2026-09-21 两个真实故障，方向相反：
+//   · **重复**：`install-into-profile.mjs` 曾用 `math-memory-panel` 作插入 id，而
+//     `dsh/profile/notes-assistant.patch.yml` 里已有一个同 id 的宿主半个 ⇒ 两个 patch 层各插
+//     一个同 id 条目 ⇒ `duplicate loader entry id: math-memory-panel`，用户的 Obsidian 侧栏
+//     **完全起不来**。
+//   · **缺失（更隐蔽）**：修好重复之后，安装器改为把行追加到 `cordis.patch.yml`，但插件每次启动
+//     都用内嵌副本重写 `notes-assistant.patch.yml`，而 `cordis.patch.yml` 不参与 `--patch` 启动
+//     路径 ⇒ 包在 `node_modules` 里、却没有任何 loader 挂载它：拖拽接住了、`/mention` 回 204，
+//     页面里却没有接收方，路径静默丢失。
+// 所以这里钉的性质是"**恰好一次**"：零次是静默失效，两次是启动硬失败。
 {
-  const { CLIENT_INSERT_ID } = await import('../dsh/client-panel/install-into-profile.mjs');
-  const rowIds = new Set();
-  const collect = (parsedFile) => {
-    for (const entry of parsedFile) {
-      if (entry === null || typeof entry !== 'object') continue;
-      if (typeof entry.id === 'string') rowIds.add(entry.id);
-      if (Array.isArray(entry.insert)) for (const row of entry.insert) if (row !== null && typeof row === 'object' && typeof row.id === 'string') rowIds.add(row.id);
-    }
-  };
+  const { CLIENT_INSERT_ID, CLIENT_PKG, OVERLAY_FILE } = await import('../dsh/client-panel/install-into-profile.mjs');
+  let occurrences = 0;
   for (const file of candidates) {
     try {
       const parsedFile = load(stripCustomTags(readFileSync(file, 'utf8').replace(/\r\n/g, '\n')));
-      if (Array.isArray(parsedFile)) collect(parsedFile);
+      if (Array.isArray(parsedFile)) {
+        const countIn = (parsed) => parsed.reduce((n, entry) => {
+          if (entry === null || typeof entry !== 'object') return n;
+          let k = entry.id === CLIENT_INSERT_ID ? 1 : 0;
+          if (Array.isArray(entry.insert)) k += entry.insert.filter((row) => row !== null && typeof row === 'object' && row.id === CLIENT_INSERT_ID).length;
+          return n + k;
+        }, 0);
+        occurrences += countIn(parsedFile);
+      }
     } catch { /* 已在上面报过 */ }
   }
-  check('客户端半个的插入 id 不与任何已发布的行 id 冲突', !rowIds.has(CLIENT_INSERT_ID),
-    rowIds.has(CLIENT_INSERT_ID) ? `"${CLIENT_INSERT_ID}" 已被占用（会导致 duplicate loader entry id，整个 profile 起不来）` : CLIENT_INSERT_ID);
+
+  // ⚠️ 这条断言 2026-09-21 被**替换**过，别把旧的加回来。
+  //
+  // 旧断言是"客户端半个的 id 不能出现在任何已发布的行里"。它建立在"这一行由安装器在安装时插入"
+  // 的架构上 —— 而那个架构本身就是那个真实故障：安装器把行追加到 `cordis.patch.yml`，可 Obsidian
+  // 插件在**每次启动服务时**都用内嵌副本重写 `notes-assistant.patch.yml`（`buildNotesAssistantPatch`），
+  // 而 `cordis.patch.yml` 根本不参与 `--patch` 那条启动路径。于是包躺在 `node_modules` 里、
+  // **界面里没有任何 loader 挂载它**：拖拽被接住、`/mention` 回 204，但页面既没有
+  // `window.__dshMentionInsert`、也没人订阅 `/mention-stream`，路径全部掉进队列后消失。
+  //
+  // 修法是把这一行写进**权威 overlay 源文件**（`dsh/profile/${OVERLAY_FILE}`，由 build 内嵌进
+  // `main.js`，每次启动重写时自然带上），安装器只剩"装包 + 校验行在"。所以现在正确的性质不是
+  // "不能冲突"，而是 —— **恰好出现一次**：挂在权威 overlay 上、且没有任何第二层再挂一遍。
+  // 重复 id 是 cordis 的硬失败（`duplicate loader entry id`，整个 profile 起不来），
+  // 而"零次"就是上面那个静默失效的形状。
+  check(`客户端半个的 loader 行在所有 patch 层里恰好出现一次（id=${CLIENT_INSERT_ID}）`,
+    occurrences === 1,
+    occurrences === 0
+      ? '一次都没有 —— 拖拽引用在页面里将没有接收方（包会被装进 node_modules，但无人挂载）'
+      : occurrences > 1
+        ? `出现 ${occurrences} 次 —— 会导致 duplicate loader entry id，整个 profile 起不来`
+        : `挂在 dsh/profile/${OVERLAY_FILE}`);
+
+  // 行指向的包名必须是安装器真正会装的包（写错包名 ⇒ 启动时 ERR_MODULE_NOT_FOUND）。
+  const overlayPath = join(root, 'dsh', 'profile', OVERLAY_FILE);
+  let overlayText = '';
+  try { overlayText = readFileSync(overlayPath, 'utf8'); } catch { /* 下面按"没有"处理 */ }
+  const clientRow = new RegExp(`-\\s*id:\\s*['"]?${CLIENT_INSERT_ID}['"]?\\s*\\r?\\n\\s*name:\\s*['"]?([^'"\\s]+)`, 'm').exec(overlayText);
+  check('客户端半行的 name 指向安装器会装的包', clientRow !== null && clientRow[1] === CLIENT_PKG,
+    clientRow === null ? `在 dsh/profile/${OVERLAY_FILE} 里没找到 name 行` : `name=${clientRow[1]} 期望=${CLIENT_PKG}`);
 }
 
 console.log(`__CHECKS__ ${passed}/${total}`);

@@ -65,9 +65,21 @@ try {
   writeFileSync(join(vault, NOTE), '# 拖拽端到端探针\n\n用来验证「拖进来 → 草稿出现 @路径」。\n', 'utf8');
 
   // ── 起 dsh（独立 profile：临时 vault + 每进程独立的端口） ──────────────────
+  //
+  // ⚠️ **必须照抄插件的启动参数，包括 `--patch`**（2026-09-21）。`notes-assistant` profile 的
+  // overlay（`notes-assistant.patch.yml`）才是挂载"记忆面板客户端半个"的地方 —— 少了它，这台实例
+  // 就**不加载客户端插件**，于是下面那条"该 profile 自己加载了客户端半个"永远是 false，
+  // 而这个探针看起来像在报功能坏掉，其实只是它自己没按真实方式启动。插件就是这样启动的
+  // （`obsidian/main.template.js` 的 `ensureObsidianPatch` + `--patch`），所以探针也必须这样。
+  // 参数顺序同样照抄：`--patch` 属于**启动器**旗标，必须与 `--profile` 放在一起；放到 `--port`
+  // 之后会被透传给应用，报 `error: unknown option '--patch'`（看起来像"dsh 不支持 --patch"）。
   const logFd = openSync(join(work, 'dsh.log'), 'w');
   const errFd = openSync(join(work, 'dsh.err'), 'w');
-  child = spawn(process.execPath, [BIN, '--profile', 'notes-assistant', '--no-open', '--port', String(PORT)], {
+  const patch = join(DSH_HOME, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
+  const patchArgs = existsSync(patch) ? ['--patch', patch] : [];
+  console.log(`  启动参数: --profile notes-assistant ${patchArgs.join(' ')} --no-open --port ${PORT}`);
+  if (patchArgs.length === 0) console.log(`  （没有 ${patch}：这台实例将不加载客户端半个，下面那条断言会红）`);
+  child = spawn(process.execPath, [BIN, '--profile', 'notes-assistant', ...patchArgs, '--no-open', '--port', String(PORT)], {
     env: { ...process.env, DSH_HOME, DSH_WORKSPACE_ROOT: vault, DSH_OBSIDIAN_VAULT: vault },
     stdio: ['ignore', logFd, errFd]
   });
