@@ -5,7 +5,17 @@
 
 # The agent this profile defaults to: file read/write/search, dedicated note
 # tools (note_recall / note_strategy / note_create / note_links), ask_user, plus
-# the cross-session memory plugin.- id: agent-presets
+# the cross-session memory plugin.
+#
+# ⚠️ The blank line above the first row is NOT cosmetic. This file's first entry
+# used to sit on the SAME line as this comment (`…plugin.- id: agent-presets`),
+# which comments the row out: the top-level sequence then never opens, and the
+# next bare `- id:` is a YAML syntax error. It went unnoticed because nothing in
+# `npm test` parses this file — the failure surfaces only when a real `dsh`
+# boots the profile (`failed to parse overlay …: YAMLException: end of the
+# stream or a document separator is expected`), which is why the preset gate
+# caught it and the YAML-shaped gates did not.
+- id: agent-presets
   config:
     default: notes-assistant
     includeUserRoot: true

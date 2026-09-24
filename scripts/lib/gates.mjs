@@ -46,6 +46,14 @@ export const GATES = [
   // 「34」而实际已 41。真值分别来自 handoff §4 的编号与 scripts/lib/gates.mjs。
   { name: 'check: doc counts (traps/gates)', args: ['scripts/check-doc-counts.mjs'] },
   { name: 'check: agent instruction files', args: ['scripts/check-agent-instructions.mjs'] },
+  // 随包发出的 *.patch.yml / *.cordis.yml 必须**真的能解析**。2026-09-21 实测：profile 的
+  // cordis.patch.yml 第一行与上一条注释拼在了同一行（`…plugin.- id: agent-presets`），
+  // 该行被注释掉 ⇒ 顶层序列从未开始 ⇒ 后面那个裸 `- id:` 是 YAML 语法错误，**真 dsh 直接
+  // 拒绝启动整个 notes-assistant profile**。当时**没有任何门禁发现**：preset 门禁是因为它
+  // 真的启动 dsh 才撞上的（而那条门禁在沙箱里会因别的原因失败，于是这个 YAML 错误在受限
+  // 环境里根本不可见），其余门禁都把这些文件当**文本**读（preset-sync 逐字节比对，而被改坏
+  // 的行仍然是合法文本）。这条门禁只做别的门禁都没做的那件事：**解析它**。
+  { name: 'check: shipped yaml parses', args: ['scripts/check-patch-yaml.mjs'] },
   { name: 'check: release artifact paths', args: ['scripts/check-release-paths.mjs'] },
   { name: 'check: client bundle freshness', args: ['scripts/check-client-bundle.mjs'] },
   { name: 'check: main.js bundle freshness', args: ['scripts/check-bundle-freshness.mjs'] },
