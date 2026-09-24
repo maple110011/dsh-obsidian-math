@@ -168,7 +168,10 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     // top-level items), and the write is asserted.
     const insert = ["", "# Math-memory client panel (install-into-profile.mjs).", "- insert:", "    - id: " + INSERT_ID, "      name: '" + PKG + "'"].join("\n");
     const next = patch.replace(/\s*$/, "") + insert + "\n";
-    writeFileSync(patchPath + ".bak", patch, "utf8");
+    // 备份只在**还没有备份**时写：安装是幂等的，但每次 insert 都覆盖 `.bak` 会反复改写同一个
+    // 文件，而它记的是"上一次改动前"——覆盖几轮之后就不知道是哪一轮了，用户 profile 里因此会
+    // 攒下一堆看不懂的 backup（2026-09-21 实测：我自己就先在那个目录里留了两个）。
+    if (!existsSync(patchPath + ".bak")) writeFileSync(patchPath + ".bak", patch, "utf8");
     writeFileSync(patchPath, next, "utf8");
     if (!readFileSync(patchPath, "utf8").includes(PKG)) {
       result.error = `insert 失败：写入后 ${patchPath} 仍不含 ${PKG}`;

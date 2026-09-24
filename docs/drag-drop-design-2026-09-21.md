@@ -151,8 +151,19 @@ dsh 为程序化写草稿提供了 `SessionInput.setDraft(text)`
 **验证（说清覆盖范围）**：
 - `scripts/test-drop-mention.mjs`（新门禁 `test: drop-to-mention`，**47 项**）：**用宿主的 ModuleLoader 协议求值真产物**再驱动真处理器 —— 正常载荷、空格/中文/`&`/`#`/全角括号、`file=` 取最后一个参数、14 条拒绝载荷、`Files` 放行、`dragover` 的三种分支、落点回退、提示自愈、清理与幂等。
   **变异验证两次**：去掉 `//` 空段拒绝 → 该项红；去掉 `drop` 的 `preventDefault` → "事件被拦截"红。
-- `scripts/qa/drop-to-mention-e2e.mjs`（按需，**9/9**）：起独立 dsh + headless 浏览器，用 CDP `Input.dispatchDragEvent` 投递**与实测一致的载荷** → 断言输入框草稿里出现 `@库内路径`；不认识的载荷不追加垃圾；提示自愈。它跑的是**从产物里按 AST 切出的实现**（`scripts/lib/extract-bundle-function.mjs`）。
+- `scripts/qa/drop-to-mention-e2e.mjs`（按需，**14/14**）：起独立 dsh + headless 浏览器，用 CDP `Input.dispatchDragEvent` 投递**与实测一致的载荷** → 断言输入框草稿里出现 `@库内路径`；**并单独验了光标语义**（见下）；不认识的载荷不追加垃圾；提示自愈；profile 自己加载了客户端半个。它跑的是**从产物里按 AST 切出的实现**（`scripts/lib/extract-bundle-function.mjs`）。
 - `scripts/qa/composer-drop-probe.mjs`（按需，7/7）：量到输入框是 Lexical `contenteditable`、`document` 冒泡阶段收得到 drop、合成 paste 能落进草稿。
+
+**光标语义（规格 §3.2 的"插入到光标处"）是单独实测的**，因为"草稿里出现 `@路径`"在**整体替换**与
+**插入**两种实现下都能通过 —— 只有把光标放到草稿中间才区分得开。实测（e2e 探针）：
+
+```
+草稿先打上「前面的话 后面的话」，把光标定在两句之间，再拖入笔记：
+  拖入后 → "前面的话 @拖拽端到端探针.md 后面的话"
+```
+
+即：**原有的半句话没有被删掉**，引用**落在光标处**。这是"用合成 paste 而不是 `setDraft`"这个选择的
+直接回报（`setDraft` 是整体替换）。
 
 **踩过的坑（都写进代码注释了，因为每一条都会让"验证"变成假绿）**：
 1. **按配平括号自己切产物**会被压缩后正则字符类里的 `"]` 骗过（`[\u0000-\u001f\u007f-\u009f"]`），配平失衡。改用 **acorn 解析 + 按节点范围切片**。

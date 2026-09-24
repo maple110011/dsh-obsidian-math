@@ -197,13 +197,62 @@ try {
   const install = JSON.parse(injected);
   check('产物里的安装器装上了 drop 行为', install.ok === true, JSON.stringify(install));
 
-  // ── 真实拖拽：CDP 投递与实测一致的载荷 ──────────────────────────────────────
+  // 输入框的位置：后面的拖拽与光标测试都要用。
   await ev(`(() => { const el = document.querySelector('[contenteditable="true"]'); el.focus(); return true; })()`);
   const box = JSON.parse(await ev(`(() => {
     const r = document.querySelector('[contenteditable="true"]').getBoundingClientRect();
     return JSON.stringify({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) });
   })()`));
 
+  // ── 光标语义：草稿里已经有半句话时，引用应该插在**光标处**，而不是把草稿替换掉 ──
+  //
+  // 用户诉求的实现要点之一（规格 §3.2）：`setDraft` 那种"整体替换"会把用户已经写了一半的
+  // 话删掉，所以我们走合成 paste、由宿主自己的 paste 处理器落笔。**这条必须实测**：
+  // "草稿里出现 @路径"在"替换"与"插入"两种实现下都能通过，只有把光标放在中间才能区分。
+  await ev(`(() => {
+    const el = document.querySelector('[contenteditable="true"]');
+    el.focus();
+    document.execCommand('selectAll');
+    document.execCommand('delete');
+    document.execCommand('insertText', false, '前面的话 后面的话');
+    return true;
+  })()`);
+  await sleep(400);
+  const typed = await ev(`(() => { const el = document.querySelector('[contenteditable="true"]'); return el ? (el.textContent ?? '') : ''; })()`);
+  check('准备：草稿里确实打进了半句话', String(typed).includes('前面的话') && String(typed).includes('后面的话'), JSON.stringify(typed));
+  // 把光标移到"前面的话 "之后（即"后面的话"之前）：用真实的鼠标点在那一行的相应位置不稳，
+  // 改用 Selection API 定到文本中间 —— 编辑器下一次插入就会落在那里。
+  const caretPlaced = await ev(`(() => {
+    const el = document.querySelector('[contenteditable="true"]');
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode();
+    if (node === null) return false;
+    const idx = node.textContent.indexOf('后面的话');
+    if (idx < 1) return false;
+    const range = document.createRange();
+    range.setStart(node, idx);
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    el.focus();
+    return true;
+  })()`);
+  check('准备：光标定到了草稿中间', caretPlaced === true);
+  const midDrag = { items: [{ mimeType: 'text/plain', data: OBSIDIAN_URI }], dragOperationsMask: 1, files: [] };
+  await cdp.send('Input.dispatchDragEvent', { type: 'dragEnter', x: box.x, y: box.y, data: midDrag });
+  await cdp.send('Input.dispatchDragEvent', { type: 'dragOver', x: box.x, y: box.y, data: midDrag });
+  await cdp.send('Input.dispatchDragEvent', { type: 'drop', x: box.x, y: box.y, data: midDrag });
+  await sleep(600);
+  const afterMid = String(await ev(`(() => { const el = document.querySelector('[contenteditable="true"]'); return el ? (el.textContent ?? '') : ''; })()`));
+  console.log('  光标在中间时拖入后的草稿:', JSON.stringify(afterMid.slice(0, 120)));
+  check('草稿里原有的半句话没有被删掉（不是整体替换）',
+    afterMid.includes('前面的话') && afterMid.includes('后面的话'), JSON.stringify(afterMid.slice(0, 80)));
+  check('引用插在了光标处（在"前面的话"与"后面的话"之间）',
+    afterMid.indexOf('前面的话') < afterMid.indexOf(EXPECTED_MENTION) && afterMid.indexOf(EXPECTED_MENTION) < afterMid.indexOf('后面的话'),
+    JSON.stringify(afterMid.slice(0, 120)));
+
+  // ── 真实拖拽：CDP 投递与实测一致的载荷 ──────────────────────────────────────
   const dragData = {
     items: [
       { mimeType: 'text/plain', data: OBSIDIAN_URI },
