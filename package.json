@@ -50,6 +50,7 @@
     "node": ">=22.5"
   },
   "devDependencies": {
+    "acorn": "^8.18.0",
     "esbuild": "^0.28.2",
     "js-yaml": "^5.4.2"
   }

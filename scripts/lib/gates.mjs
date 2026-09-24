@@ -64,6 +64,11 @@ export const GATES = [
   { name: 'syntax: dsh/host/preset-sync.mjs', args: ['--check', 'dsh/host/preset-sync.mjs'] },
   { name: 'syntax: dsh/host/hook-frontmatter.mjs', args: ['--check', 'dsh/host/hook-frontmatter.mjs'] },
   { name: 'test: preset sync', args: ['scripts/test-preset-sync.mjs'] },
+  // 「从 Obsidian 文件树拖一篇笔记进输入框」：载荷解析（每条拒绝条件都对应一个 if）+
+  // DOM 接线（该不该 preventDefault、什么时候放行、落点、提示自愈、幂等与清理）。
+  // **它跑的是 dsh/client-panel/lib/client.js 这个真产物**（用宿主的 ModuleLoader 协议求值），
+  // 所以"改了源码忘了重建 bundle"会在这里红，而不是等用户发现功能不存在。
+  { name: 'test: drop-to-mention', args: ['scripts/test-drop-mention.mjs'] },
   // 「新建会话」真的能建出来吗：preset 字段漂移（persona 的 text→prefix）会让每次建会话
   // 都以 HTTP 200 + ok:false 失败，而 UI 只写一行 console.warn ——零 token，需要本机 dsh，
   // 否则按设计 SKIP（见 scripts/test-agent-preset.mjs 与 handoff.md 坑 70）。

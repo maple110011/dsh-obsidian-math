@@ -3,6 +3,53 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-21 · 拖拽引用落地：从 Obsidian 文件树拖一篇笔记进输入框
+
+**用户诉求**（原话）：「我就是希望能够从 Obsidian 左侧的文件夹中拖拽文件到 dsh 对话框里」。
+规格与落地记录在 `docs/drag-drop-design-2026-09-21.md`；这里只记**为什么这么实现、以及验证是怎么被
+自己的夹具骗了三次**。
+
+**链路**：文件树拖拽 → 跨源 iframe 内 `document` 的 `drop` → 解析
+`obsidian://open?vault=…&file=<库内路径>` → 在 composer 上派发一次**合成 `paste`**（文本
+`@库内路径 `）→ 宿主自己的 paste 处理器插到光标处。
+
+**为什么用合成 paste，而不是官方 `SessionInput.setDraft`**：
+`setDraft` 需要**会话作用域的 ctx 或会话 id**（客户端根上下文里没有"当前会话"的公开读法），
+而且它**整体替换**草稿 —— 用户拖进来时草稿里往往已经有半句话。而 dsh 的 composer 自己注册了
+paste 处理器（`dsh-client-ui-conversation/lib/client.js:15259-15273` 读
+`clipboardData.getData("text/plain")` 再走 `pasteText`），于是"把文本递给宿主、让宿主决定插到哪儿"
+改动面最小。代价：**它依赖宿主行为而非公开契约** ⇒ 由端到端探针钉住（下面第 2 条）。
+
+**验证的三层 + 两次变异**：
+1. 零 token 回归 `test-drop-mention.mjs`（**47 项**，新门禁 `test: drop-to-mention`）：
+   **用宿主的 ModuleLoader 协议求值真产物**（`lib/client.js`），再驱动它产出的真处理器。
+   变异验证两次：去掉 `//` 空段拒绝 → 红；去掉 `drop` 的 `preventDefault` → 红。
+2. 端到端探针 `scripts/qa/drop-to-mention-e2e.mjs`（**9/9**）：独立 dsh + headless 浏览器，
+   CDP `Input.dispatchDragEvent` 投递**与实测一致的载荷** → 断言草稿里出现 `@库内路径`。
+3. 接缝探针 `scripts/qa/composer-drop-probe.mjs`（7/7）：输入框是 Lexical `contenteditable`、
+   `document` 冒泡阶段收得到 drop、合成 paste 能落进草稿。
+
+**元教训：这一轮的"红"几乎全是探针自己造的（三次）。** 写得清楚，因为每一种都会让一个**正确**的
+实现看起来坏掉，而人的第一反应是去改产品：
+- **假 DOM 的 `createElement` 每次返回新元素** ⇒ 安装器 `querySelector` 找到的落点与探针观察的
+  不是同一个节点，paste 派发到了没人看的地方 → 症状"产品没递数据"。
+- **`DataTransfer` 替身缺 `getData`** ⇒ 断言读到 `getData is not a function` → 症状同前。
+- **断言看的是外层数组，而实现递的是事件** ⇒ 数组当然是空的。
+
+**AST 切片的三个坑**（要跑"仓库那份产物"就得从压缩代码里取片段，宿主没给 react 的读取通道）：
+1. **自己写括号配平不可行**：压缩后的正则字符类 `[\u0000-\u001f\u007f-\u009f"]` 里的 `"]` 被当成
+   字符串收尾，配平直接失衡。改用 **acorn 解析 + 按节点范围切片**。
+2. **按"标记名字符串"找安装器永远找不到**：`"__dshMathMemoryDropMention"` 在产物里只出现一次
+   （`var j="…"`），安装器体内用的是**变量名**（`s[j]`）。改为按**导出表**定位
+   （`installComposerDropMention: () => N`）——语义锚点，不随压缩改名。
+3. **正则扫"引用名"会把 `\u0000` 转义当成名字 `u`**，于是去外面找别人函数体里的
+   `let u = await fetch(…)` 并当作声明抽出来，报错是 `missing ) after argument list`。
+   改为由 **AST 收集 `Identifier`**，并排除属性名/键/参数/局部声明。
+
+**刻意不做**（写进 `handoff.md` §7）：多选拖拽、文件夹、编辑器里选中文字 —— 这三种载荷形态
+**没有实测**。载荷认不出来时**什么都不做**（不是"猜一个"），因为猜错会往提示词里塞一个指向
+可能越界路径的 `@` 引用（`@` 是接受绝对路径的）。
+
 ## 2026-09-21 · 一行被注释吞掉的 YAML，让整个 profile 起不来——而 41 条门禁全绿
 
 **怎么发现的（这一节的价值全在"发现方式"上）**：本轮为回答用户"你部署了吗"而跑了

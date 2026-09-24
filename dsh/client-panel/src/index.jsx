@@ -7,6 +7,7 @@
 //     这是「三选项令人不明所以」的直接原因之一）。
 
 import { useEffect, useState } from "react";
+import { installComposerDropMention } from "./drop-mention/composer-drop.mjs";
 
 const ROOT_KEY = "dsh-math-memory.panelRoot";
 
@@ -400,8 +401,27 @@ function MemoryPanel() {
   );
 }
 
+// 拖拽引用的实现放在自己的模块里；这里**再导出**一次，让 `scripts/test-drop-mention.mjs`
+// 能直接拿到它并注入假 DOM（不必去污染 Node 的全局），同时把真实装配路径也走通。
+// 依据与边界见 dsh/client-panel/src/drop-mention/ 两个文件头 + docs/drag-drop-design-2026-09-21.md。
+export { installComposerDropMention } from "./drop-mention/composer-drop.mjs";
+
 export const inject = ["slots"];
 export function apply(ctx) {
+  // 拖拽引用：从 Obsidian 文件树把一篇笔记拖进输入框，草稿里出现 `@库内路径`。
+  // 与面板无关，所以装在**根上下文**（不依赖任何 slot），并跟随插件 fiber 的寿命清理。
+  try {
+    // 显式传 document/window：模块里虽然有同样的缺省回退，但显式传入让"它作用于哪个
+    // 文档"在调用点就看得见，也让本仓库的回归不必改写全局。
+    const disposeDrop = installComposerDropMention({
+      document: globalThis.document,
+      window: globalThis.window
+    });
+    ctx.effect(() => disposeDrop, "drop-mention");
+  } catch (error) {
+    // 拖拽是增强，不是核心：装不上也不能让记忆面板跟着起不来。
+    try { console.warn("[dsh-math-memory] drop-mention 安装失败：", error); } catch { /* ignore */ }
+  }
   ctx.inject(["slots", "locale"], (scope) => {
     try { scope.locale?.register?.("math-memory-panel", { title: "记忆面板" }); } catch { /* cosmetic */ }
     scope.slots.inject("settings.section", () => scope.slots.register({

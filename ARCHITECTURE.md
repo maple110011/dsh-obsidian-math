@@ -41,7 +41,7 @@
 | `dsh/install.mjs` | npm CLI **编排器**：`install`（原生 `dsh plugin add`）/ `install --direct`（离线扁平拷贝）/ `status` / `uninstall`（分级删除），写 owner marker（`.owner.json` / `.install-manifest.json`） |
 | `dsh/cordis.patch.yml` | **bundle 补丁**（`dsh.bundle.patch` 指向）：往 profile roster `insert` 宿主插件 `dsh-math-memory`，使 `dsh plugin add` 能原生送达全部能力 |
 | `dsh/host/` | **bundle 宿主插件 + 记忆管理核心**：`index.mjs`（启动同步 preset + `/memory-panel` 路由 + workspace 自动注册）、`preset-sync.mjs`（幂等字节比对同步 + owner marker）、`hook-frontmatter.mjs`（`dsh/preset/hook-frontmatter.mjs` 的 re-export）、`memory-admin.mjs`（确定性操作 + 面板数据层）、`math-memory-panel.mjs`（`/memory-panel/*` 路由） |
-| `dsh/client-panel/` | dsh web 记忆面板：`src/index.jsx` + `build-client.mjs`（esbuild） + `install-into-profile.mjs` |
+| `dsh/client-panel/` | dsh web 记忆面板：`src/index.jsx` + `build-client.mjs`（esbuild） + `install-into-profile.mjs`；**另含拖拽引用**：`src/drop-mention/`（`parse.drop.mjs` 纯解析 + `composer-drop.mjs` DOM 接线），把文件树拖来的笔记变成草稿里的 `@库内路径`（规格见 `docs/drag-drop-design-2026-09-21.md`） |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignore，机器特定路径；备份 + 三路安装 + 验证） |
 | `scripts/qa/` | **QA 工具链**：`engine-probe.mjs`（零 token 召回断言 + 可达性分层/池化 A/B）、`e2e.mjs`（真实会话验收，含 API 级 token 计量）、`sidebar-perf-probe.mjs`（**按需**：CDP 驱动真实 dsh 测侧栏交互卡顿，不进 CI）、`drag-payload-probe.mjs` / `iframe-drop-probe.mjs`（**按需**：拖拽引用的两条前提——Obsidian 拖拽载荷真值 + 跨源 iframe 收不收得到 drop），`cases.json`、`run.mjs`；方法论见 `docs/memory/testing.md` |
