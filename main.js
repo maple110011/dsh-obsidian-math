@@ -1992,10 +1992,38 @@ class DshMathView extends ItemView {
 
     const setOver = (value) => {
       try {
-        if (value && zone.getAttribute('data-visible') !== 'true') zone.setAttribute('data-visible', 'true');
-        else if (!value) zone.removeAttribute('data-visible');
+        if (value) zone.setAttribute('data-visible', 'true');
+        else zone.removeAttribute('data-visible');
       } catch { /* cosmetic */ }
     };
+
+    // ⚠️ **检测拖拽必须挂在一个"始终在命中测试树里"的元素上** —— 这是本功能第二次栽的同一个坑：
+    //   ① 覆盖层原来用 `display: none` ⇒ 不参与命中测试 ⇒ 永远收不到 `dragenter` ⇒ 而"拖动时才
+    //      显示"正是靠 `dragenter` 打开的 ⇒ **自锁**（日志里只有 `[drop] 落点已安装`、一条
+    //      `[drop] 收到拖拽` 都没有）。已改成 `visibility: hidden`（留在命中测试树里）。
+    //   ② 但 `visibility: hidden` 的元素**仍然**不接收事件。所以检测不能指望覆盖层自己：
+    //      把检测挂在 `document` 上（永远在树里），一发现是"非文件的拖拽"就把覆盖层打开；
+    //      覆盖层一旦可见就自己接管后续事件（`dragover` 的 preventDefault 是"能收到 drop"的前提）。
+    // 注意：只挂 `dragstart` 不够 —— 真实的拖拽可能来自别的窗口/应用，那时没有 `dragstart`。
+    const engage = (event) => {
+      const dt = event.dataTransfer;
+      if (dt === null || dt === undefined) return;
+      let types = [];
+      try { types = Array.from(dt.types ?? []); } catch { return; }
+      if (types.includes('Files')) return; // 真文件拖拽归别处，不抢
+      setOver(true);
+    };
+    this.registerDomEvent(document, 'dragstart', engage);
+    this.registerDomEvent(document, 'dragenter', engage, true);
+    this.registerDomEvent(document, 'dragover', (event) => {
+      if (zone.getAttribute('data-visible') !== 'true') return;
+      // 拖拽期间的 `dragover` 一律 preventDefault（**必须**，否则收不到 drop），但要放过真文件拖拽。
+      const dt = event.dataTransfer;
+      try {
+        if (dt !== null && dt !== undefined && Array.from(dt.types ?? []).includes('Files')) return;
+      } catch { return; }
+      event.preventDefault();
+    }, true);
 
     this.registerDomEvent(zone, 'dragenter', (event) => {
       over += 1;
@@ -2024,8 +2052,12 @@ class DshMathView extends ItemView {
       writeDebugLog('[drop] 直插=' + String(inserted));
       if (!inserted) this.plugin.sendMention(rel);
     });
-    // 拖到别处/按 Esc 结束：不留残影（与 iframe 内那条提示同一个纪律）。
+    // 拖到别处/按 Esc/松手结束：不留残影（与 iframe 内那条提示同一个纪律）。
     this.registerDomEvent(document, 'dragend', () => {
+      over = 0;
+      setOver(false);
+    });
+    this.registerDomEvent(document, 'mouseup', () => {
       over = 0;
       setOver(false);
     });

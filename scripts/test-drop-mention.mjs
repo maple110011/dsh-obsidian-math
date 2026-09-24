@@ -377,5 +377,41 @@ function dropWith(textValue, { withTextPlain = true, target = composer } = {}) {
   again();
 }
 
+// ── 8. Obsidian 侧落点的**静态契约**（CSS 自锁 + 监听挂载点）─────────────────
+//
+// WHY 这一节（2026-09-21 真实故障）：落点原来写的是 `display: none`，而 `display: none` 的元素
+// **不参与命中测试** ⇒ 永远收不到 `dragenter` ⇒ 而"拖动时才显示"正是靠 `dragenter` 打开的
+// ⇒ **自锁**：功能静默失效，日志里只有"落点已安装"，别的什么都没有。同类还有第二个自锁：
+// `visibility: hidden` 的元素**也不接收事件**，所以检测必须挂在 `document` 上而不是落点自己。
+//
+// 这两条都是"看一眼就知道、跑起来才发现"的形态，所以直接对**真源码**断言（本仓库既有的
+// 手法：`test-panel-present.mjs` 从模板源码里取方法求值）。
+{
+  const template = readFileSync(new URL('../obsidian/main.template.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+  const zoneRule = /\.dsh-math-assistant-dropzone\s*\{([\s\S]*?)\}/u.exec(css);
+  check('CSS：落点的基础规则存在', zoneRule !== null);
+  const base = zoneRule === null ? '' : zoneRule[1];
+  check('CSS：落点基础态**不**用 display:none（那会让它不参与命中测试 ⇒ 自锁）',
+    !/display\s*:\s*none/u.test(base), base.replace(/\s+/g, ' ').slice(0, 80));
+  check('CSS：落点基础态用 visibility+pointer-events 保持"看不见但不挡鼠标"',
+    /visibility\s*:\s*hidden/u.test(base) && /pointer-events\s*:\s*none/u.test(base));
+  const visibleRule = /\.dsh-math-assistant-dropzone\[data-visible='true'\]\s*\{([\s\S]*?)\}/u.exec(css);
+  check('CSS：拖动期间接管事件（pointer-events:auto）',
+    visibleRule !== null && /pointer-events\s*:\s*auto/u.test(visibleRule[1]));
+
+  // 检测必须挂在 `document` 上：落点自己（隐藏时）收不到事件。
+  const zoneFn = /installDropZone\(\)\s*\{([\s\S]*?)\n  \}\n/u.exec(template);
+  check('源码：installDropZone 存在', zoneFn !== null);
+  const body = zoneFn === null ? '' : zoneFn[1];
+  check('源码：在 document 上挂拖拽检测（落点隐藏时收不到事件）',
+    /registerDomEvent\(document,\s*'dragstart'/u.test(body) && /registerDomEvent\(document,\s*'dragenter'/u.test(body));
+  check('源码：文件拖拽（Files）不被抢',
+    /includes\('Files'\)/u.test(body));
+  check('源码：认不出载荷时放行（不 preventDefault）',
+    /if \(rel === null\) return;/u.test(body));
+}
+
 console.log(`__CHECKS__ ${passed}/${total}`);
 process.exit(passed === total ? 0 : 1);

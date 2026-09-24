@@ -16,13 +16,20 @@
   position: relative;
 }
 
-/* 拖拽落点：平时完全不可见、不接收指针事件（否则会挡住输入框的点击）；
-   只有在"拖动经过侧栏"时才由插件打开 `data-visible`。 */
+/* 拖拽落点：平时**视觉上**不可见，但必须留在**命中测试树**里。
+ *
+ * ⚠️ 这里原来写的是 `display: none`，那是个会让整个功能静默失效的错误（2026-09-21 实测踩到）：
+ * `display: none` 的元素**根本不参与命中测试** ⇒ 它永远收不到 `dragenter` ⇒ 而"拖动时才显示"
+ * 正是靠 `dragenter` 打开的 ⇒ **自锁**。现象就是插件的 debug 日志里只有 `[drop] 落点已安装`、
+ * 一条 `[drop] 收到拖拽` 都没有，用户也看不到任何提示。
+ *
+ * 所以：用 `visibility: hidden`（元素仍在布局里、仍能被命中）+ `pointer-events: none`（平时
+ * 不抢鼠标事件，输入框照常可点）。拖动开始后由插件打开 `data-visible`，那一刻才接收事件。 */
 .dsh-math-assistant-dropzone {
   position: absolute;
   inset: 0;
   z-index: 5;
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   padding: 12px;
@@ -33,11 +40,13 @@
   border: 2px dashed var(--interactive-accent, #7f6df2);
   border-radius: 6px;
   pointer-events: none;
-  opacity: 0.92;
+  visibility: hidden;
+  opacity: 0;
 }
 
 .dsh-math-assistant-dropzone[data-visible='true'] {
-  display: flex;
+  visibility: visible;
+  opacity: 0.92;
   /* 拖动期间才接管事件：`dragover` 的 `preventDefault` 是"能收到 drop"的前提。 */
   pointer-events: auto;
 }
