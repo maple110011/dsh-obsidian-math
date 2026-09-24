@@ -25,6 +25,62 @@
 | 程序化写 draft 是**公开 API** | `dsh-client-ui-conversation/lib/types/client/contract/input.d.ts:172-176` `SessionInput.setDraft`（注释「persisted-draft seed and **programmatic writes**」）；服务名 `conversation`（`lib/types/client/index.d.ts:31`） |
 | 本地 provider **不排除点目录** | `dsh-file-reference-local/lib/index.js:189,245-246`（带 `.` 的查询不被过滤） |
 
+### 1.1.1 实测结果（2026-09-21，两个探针，**已不再是推断**）
+
+上一节把「Obsidian 拖拽 payload 形态」列为**未验证**。当天用两个探针把它测掉了：
+
+**A. 拖拽载荷的真值** — `node scripts/qa/drag-payload-probe.mjs`
+（启动**隔离**的 Obsidian：独立 `--user-data-dir` + 临时 vault，不碰用户正在用的实例；
+用 CDP `Input.setInterceptDrags` 拦下 Chromium **真实**的 `DragData`，即页面 `dragstart`
+里 `setData()` 之后、投递之前的真值）:
+
+```
+文件树里拖一个 note：
+  dragOperationsMask: -1
+  mime="text/plain"     data="obsidian://open?vault=vault&file=%E6%A0%B9%E7%AC%94%E8%AE%B0"
+  mime="text/uri-list"  data="obsidian://open?vault=vault&file=%E6%A0%B9%E7%AC%94%E8%AE%B0"
+```
+
+⇒ **不是 vault 相对路径，是一条 `obsidian://open?vault=<库名>&file=<URL 编码的库内路径>` URI**，
+`text/plain` 与 `text/uri-list` 两份同值。解析它得到的是 `file=` 后的**库内路径**
+（`%2F` 解出来是 `/`）。**嵌套文件与文件夹这两行探针没测出来**（文件夹需要先展开、
+编辑器的文字选择需要真实鼠标划选，这两条在该夹具里没跑通），因此它们的载荷形态
+**仍是推断**：按同一条 `dragstart` 处理器，最可能是同一种 URI。
+
+⚠️ **但这不影响可行性结论**：URI 里已经带了 `vault=` 与 `file=` 两个参数，
+`file=` 就是库内路径；即便文件夹/文字选择各有差异，drop 侧只需要处理「拿不到可解析的
+`file=` 时忽略该次拖拽」这一种退化情形。
+
+**B. 跨源 iframe 到底收不收得到 drop** — `node scripts/qa/iframe-drop-probe.mjs`
+（三个临时 HTTP 服务 = 真跨源：源 / 宿主 / 目标 iframe 各在不同端口；CDP
+`Input.dispatchDragEvent` 把 A 测出的同款载荷分别投给**同源对照区**与**跨源 iframe**）:
+
+```
+[ok] 三个角色确实不同源（源 ≠ 宿主 ≠ 目标 iframe）    source=53779 host=53781 child=53780
+[ok] 对照：宿主文档（自己就是 drop 目标）收到了 drop    hostDrops=1 dragenters=1
+[ok] 跨源 iframe 的 drop 监听收到了 drop 事件          drops=1
+[ok] 跨源 iframe 能读到 dataTransfer 的内容            text="obsidian://open?vault=vault&file=%E6%A0%B9%E7%AC%94%E8%AE%B0"
+__CHECKS__ 4/4
+结论：路径 A 可行 —— 在 dsh 客户端插件里挂 document 级 drop 监听即可，不需要遮罩。
+```
+
+⇒ **跨源 iframe 内的 `drop` 监听能收到事件、并且能读到 `dataTransfer` 的内容**
+（`types` 与 `text/plain` 都拿到了）。**路径 A 成立**，路径 B（透明遮罩）不必要。
+
+**夹具自己的三个坑（都写进探针注释了，因为每一个都会让结论反过来）**：
+1. **同源夹具**会证明一个不存在的场景是对的 ⇒ 三个角色必须三个端口；
+2. **一次拖拽只能在一个 CDP target 的输入管线里完成** ⇒ 把"源"放另一个 tab，
+   连**同源对照**都收不到 drop（第一版就是这样，差点把 0 读成"跨源不行"）；
+3. **父页面读不到跨源 iframe 的内部状态**（`SecurityError`）⇒ 目标 iframe 用
+   `postMessage` 回报结果，而不是让父页面读它的 `window`。
+   另：`setInterceptDrags` 不是"观察并放行"，它会**暂停**拖拽，必须用
+   `Input.dispatchDragEvent` 续上——不改这一点，投递根本不会发生。
+
+**给实现的最短路径**（也是本轮登记进 `handoff.md` §7 的内容）：
+在新客户端插件里 `document.addEventListener('drop', …)` → 从 `dataTransfer.getData('text/plain')`
+里取 `obsidian://open?…&file=<路径>` → 解出库内路径 → `setDraft(现有草稿 + '@' + 路径)`。
+`@path` 是普通提示词文本（§1.1 已证），模型会自己去读文件。
+
 **未验证（动手前必须补）**：Obsidian 拖拽的实际 `dataTransfer` 类型与取值（`text/plain` 是 vault 相对路径还是 markdown 链接？`text/uri-list` 是否为绝对路径？）。本文不据此下结论。
 
 ### 1.2 记忆引用打不开（问题 2）

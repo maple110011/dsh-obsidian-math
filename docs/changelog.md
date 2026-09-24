@@ -3,6 +3,101 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-21 · 一行被注释吞掉的 YAML，让整个 profile 起不来——而 41 条门禁全绿
+
+**怎么发现的（这一节的价值全在"发现方式"上）**：本轮为回答用户"你部署了吗"而跑了
+`node scripts/deploy-local.mjs`，之后**顺手**重跑门禁做确认，发现 `test: agent preset mounts`
+从绿转红。手工启动 dsh 读它的 stderr，拿到真因：
+
+```
+Error: dsh: failed to parse overlay C:\Users\…\.dsh\profiles\notes-assistant\cordis.patch.yml:
+YAMLException: end of the stream or a document separator is expected (16:1)
+  16 | - id: sandbox-policy
+```
+
+`dsh/profile/cordis.patch.yml` 的**第一行与上一条注释拼在了同一行**：
+
+```yaml
+# …plus the cross-session memory plugin.- id: agent-presets
+```
+
+那一行因此**整体是注释** ⇒ 顶层序列从未开始 ⇒ 后面第一个裸 `- id:` 就是语法错误。
+真 dsh 会**拒绝启动整个 `notes-assistant` profile**——Obsidian 侧栏、`dsh --profile notes-assistant`、
+以及依赖它的门禁全部一起坏掉。
+
+**为什么 41 条门禁没发现它（三种失效叠在一起）**：
+1. 除 preset 门禁外，**所有门禁都把这些文件当文本读**。`test-preset-sync.mjs` 逐字节比对两份
+   拷贝——而被改坏的行仍然是**完全合法的文本**，两份还**一模一样**，所以它比得越严格越是绿的;
+2. 唯一会发现的 preset 门禁靠**真的启动一个 dsh**，而它需要写 `$DSH_HOME`：在受限环境里它会
+   先因"写不了"失败（或 SKIP）⇒ **恰好在看不到真相的环境里，这个 YAML 错误是不可见的**；
+3. `check-embedded-*` 系列校验的是**嵌入**（`main.js` 里那份），不是 profile 目录里那份。
+
+**改动**：
+1. 修好那一行（并在源文件里写下"这个空行不是装饰"的注释，免得下次又被合并掉）。
+2. **新增门禁 `scripts/check-patch-yaml.mjs`**：对随包发出的 5 个 YAML **真的解析**，并断言——
+   解析通过；`*.patch.yml` / `*.cordis.yml` 顶层是**op 序列**；每个 op 带 `id` 或 `insert`；
+   以及**直接断言那条陷阱**（没有注释行吞掉一个 `- id:`）。它不需要 dsh、不需要子进程、不需要
+   可写状态 ⇒ 在**boot 门禁跑不动的环境里它照样有效**，这正是补上缺口的关键。
+   `!!js` 是 dsh 自己的标量标签，解析前按结构等价地剥掉（不为它仿造 schema）。
+3. 门禁数 41 → **42**；`AGENTS.md` §4 的计数同步（由 `check-doc-counts.mjs` 守着）。
+4. 新增 `js-yaml` 为 devDependency（只给这条门禁用）。
+
+**验证**：`node scripts/check-patch-yaml.mjs` **15/15**；修好后
+`node scripts/run-gates.mjs --only "agent preset"` **10/10**（真 dsh 又能启动了）；
+全量门禁 **42/42**。这条门禁对"第一行被注释吞掉"是**承重**的——`.md` 之外唯一会报错的就是它
+（变异形态见下：把源文件那一行改回去 → 该门禁立刻红）。
+
+## 2026-09-21 · 拖拽引用的两个前提：实测掉了（载荷形态 + 跨源 iframe 收不收得到）
+
+**起因**：评估文档把「Obsidian 拖拽的 `dataTransfer` 形态」和「跨源 iframe 里的 drop 监听收不收得到」
+都列为**未验证的前提**。用户直接问「你能不能自动实测」。能——本轮补了两个探针，两条前提都成了实测。
+
+**A. 载荷真值**（`scripts/qa/drag-payload-probe.mjs`）。
+
+不猜的做法：启动一个**隔离**的 Obsidian（独立 `--user-data-dir` + 临时 vault，不碰用户实例），
+用 CDP 的 `Input.setInterceptDrags` 拦下 Chromium **真实**的 `DragData`——那是页面在 `dragstart`
+里 `setData()` 之后、投递之前的真值，而不是我们伪造的 `DataTransfer`。结果：
+
+```
+文件树拖一篇笔记：
+  dragOperationsMask: -1
+  mime="text/plain"     data="obsidian://open?vault=vault&file=%E6%A0%B9%E7%AC%94%E8%AE%B0"
+  mime="text/uri-list"  data="obsidian://open?vault=vault&file=%E6%A0%B9%E7%AC%94%E8%AE%B0"
+```
+
+⇒ 不是 vault 相对路径，是 **`obsidian://open?vault=…&file=<URL 编码的库内路径>`**，两个 MIME 同值。
+
+**B. 跨源 iframe 收不收得到**（`scripts/qa/iframe-drop-probe.mjs`）。三个临时 HTTP 服务做**真跨源**
+（源 / 宿主 / 目标 iframe 各一个端口），用 `Input.dispatchDragEvent` 把 A 的同款载荷分别投给
+**同源对照区**与**跨源 iframe**：
+
+```
+[ok] 对照：宿主文档收到了 drop            hostDrops=1 dragenters=1
+[ok] 跨源 iframe 的 drop 监听收到了 drop   drops=1
+[ok] 跨源 iframe 能读到 dataTransfer 内容  text="obsidian://open?vault=vault&file=…"
+__CHECKS__ 4/4  结论：路径 A 可行，不需要透明遮罩。
+```
+
+**探针自己踩的三个坑（每个都会让结论反过来，所以都写进文件注释了）**：
+1. **同源夹具会证明一个不存在的场景是对的** ⇒ 三个角色必须三个端口（与坑 85 同族）。
+2. **一次拖拽只能在一个 CDP target 的输入管线里完成** ⇒ 第一版把"源"放在另一个 tab，
+   结果连**同源对照**都没收到 drop（0 事件）。差一点就把这个 0 读成"跨源 iframe 不行"——
+   **对照失败时结论无效**这条纪律救了它。
+3. **父页面读不到跨源 iframe 的内部状态**（实测 `SecurityError: Blocked a frame …`）⇒ 目标 iframe
+   改用 `postMessage` 回报；顺带一个事实：`Input.setInterceptDrags` 不是"观察并放行"，它会**暂停**
+   拖拽，必须用 `Input.dispatchDragEvent` 续上，否则投递根本不会发生。
+
+**仍未实测**：**文件夹**与**编辑器里选中文字**两种拖拽（前者要先把文件夹展开、后者要真实鼠标
+划选，探针里都没跑通）。按同一条 `dragstart` 处理器推测同形，已在 `handoff.md` §7 标注为待测，
+并要求实现时把"解不出 `file=` 的拖拽"当作忽略而不是异常。
+
+**结论对实现的影响**：路径从"遮罩 + 回环"收敛为**一条**——在 dsh 客户端插件里挂 document 级
+`drop` 监听，从 `text/plain` 解出 `file=`，`setDraft('@' + 库内路径)`。本轮**只登记不改代码**。
+
+**顺带**：本轮把两项改动部署进了用户本机 vault（`node scripts/deploy-local.mjs`）——此前
+部署副本是 2026-09-20 的旧构建，**不包含**本轮的 `/open` 分流与协议模板。部署后逐字节比对通过，
+但**运行中的 Obsidian 与 dsh 服务需要重载/重启才会用上**。
+
 ## 2026-09-21 · 回复里的记忆引用点不开：两处根因，一处从未登记
 
 **起因**：用户问「dsh 回复里引用了它自己记忆库里的东西，似乎无法在 Obsidian 中打开查看」。取证后确认这不是一个 bug，而是**两个独立缺口叠在一起**，而且第二个从未被登记、也**不可能被现有测试发现**。

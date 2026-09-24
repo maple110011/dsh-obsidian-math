@@ -46,7 +46,7 @@
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测 |
 | `scripts/check-doc-consistency.mjs` | 文档一致性守卫（断言数等数字与代码实测对齐，进 `npm test`） |
 | `scripts/check-rename.mjs` / `check-skin-fallback.mjs` / `check-plugin-id.mjs` | 三个守卫（见 §4 坑） |
-| `scripts/qa/` | engine-probe（12 组 ground-truth + §2 可达性分层/池化 A/B）+ e2e（真实 token 会话，`npm run qa:e2e`） |
+| `scripts/qa/` | engine-probe（12 组 ground-truth + §2 可达性分层/池化 A/B）+ e2e（真实 token 会话，`npm run qa:e2e`）+ **按需探针**：`sidebar-*`（侧栏性能）、**`drag-payload-probe.mjs`**（隔离 Obsidian + CDP 拦真实拖拽载荷）、**`iframe-drop-probe.mjs`**（真跨源夹具测 iframe 内 drop 可达性） |
 | `scripts/deploy-local.mjs` | 本机一键部署（gitignored，含本机路径；用 copyFileSync 手动遍历，勿用 cpSync） |
 
 ## 3. 当前状态（2026-08 大改收尾后）
@@ -85,7 +85,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：87
+> 陷阱条数：88
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -269,6 +269,10 @@
 87. **★ 断言把"包装"算进了被包装物的上限**（2026-09-21）。
     - **形态**：`audit: report bounded` 断言 `report.report.length <= 1200`，而被截断的报告长度 = 内容 + **截断标记**。标记因为要写出"省略了多少字符"长了 12 个字符，于是**内容一字未变**的报告报红。
     - **纪律**：断言一个量的时候，先问"这个量里还装了别的东西吗"；上限类断言要**分别**断言"被保留的内容 ≤ N"与"超限时标记存在"，不要合成一个恒等式。
+88. **★ 一个被注释掉的列表项，让整个 profile 无法启动——而 41 条门禁全绿**（2026-09-21，实测踩到）。
+    - **形态**：`dsh/profile/cordis.patch.yml` 的**第一行与上一条注释拼在了同一行**（`# …plus the cross-session memory plugin.- id: agent-presets`）。那一行因此是注释 ⇒ 顶层序列**从未开始** ⇒ 后面第一个裸 `- id:` 就是 YAML 语法错误。真 `dsh` 直接拒绝启动整个 `notes-assistant` profile：`failed to parse overlay …: YAMLException: end of the stream or a document separator is expected (16:1)`。**Obsidian 侧栏、`dsh --profile notes-assistant`、以及依赖它的门禁全部一起坏掉。**
+    - **为什么门禁没发现**：① 除 preset 门禁外，**所有门禁都把这些文件当文本读**——`test-preset-sync.mjs` 逐字节比对两份拷贝，而被改坏的行仍然是合法文本，两份还**完全一致**；② 唯一会发现的 preset 门禁是因为它**真的启动 dsh** 才撞上的，而它在受限环境里会因"写不了 `$DSH_HOME`"先失败 ⇒ **恰好在看不到真相的环境里，这个 YAML 错误是不可见的**（同族：坑 56/59/69）。
+    - **纪律**：① **"是合法文本"不等于"是合法配置"**——对装配文件（`*.patch.yml` / `*.cordis.yml`）必须有**解析**它的门禁，不能只做字节或文本断言；② 一个只在"能启动真进程"时才被发现的缺陷，等于在受限环境里**没有守卫**；③ 注释与结构的边界是这类文件的常见雷区（本仓库已两次：坑 60 的文件名、这条的注释吞行）——**新增守卫 `scripts/check-patch-yaml.mjs`**（解析 + 顶层必须是 op 序列 + 每个 op 带 `id`/`insert` + 直接断言"没有行被注释吞掉"）。
 
 ## 5. 用户决策记录（不要推翻）
 
@@ -358,7 +362,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **检索：关系信任 + 锚点槽位** | GraphMemix 的「查询条件化关系信任」需要 `related`/`source` 边带可信度（可用 `verified_by`/`harmed` 当先验）；触发条件写在 `retrieval-v3.md` §7.4 | 低（有触发条件） |
 | **多视图 max-pool 复测** | 本轮实测 Δ=0 且排名变差，保持单袋默认；出现「标题精确命中却排在 5 名之后」的真实稀释案例时，先补 ground-truth 用例再复测（`retrieval-v3.md` §7.2） | 低（有触发条件） |
 | **（可选）settings.section i18n** | `label` 已可用；若需多语言再补 | 低 |
-| **拖拽引用：把 Obsidian 笔记拖进侧栏 dsh** | 可行性已取证（`docs/design-intake-2026-09-21.md` §1.1）：缺的不是机制而是「谁去写那个 mention」——dsh 的 `@path` 引用是**普通提示词文本**（`dsh-file-reference/README.md:12`），程序化写 draft 是**公开 API**（`dsh-client-ui-conversation/lib/types/client/contract/input.d.ts:172-176` 的 `SessionInput.setDraft`，服务名 `conversation`），而 dsh **内置的 drop 只接真文件**（`dsh-client-ui-attachment/lib/client.js:618-619` 要求 `types.includes("Files")`），Obsidian 拖出来的不是 `Files`。侧栏 iframe **跨源**（`main.template.js:569-572` 注释原文「the plugin cannot touch its DOM (cross-origin)」），所以父页面读不到 iframe 内的 drop。**推荐路径**：在 dsh 客户端插件（`dsh/client-panel/`，已有基建）里挂 document 级 `drop` 监听 → 解析出 vault 相对路径 → `setDraft` 写入 `@path`；**备选**（不碰 dsh 侧）：透明遮罩 + 复用 `LinkServer` 回环。⚠️ **动手前必须先补一步实测**：Obsidian 拖拽的 `dataTransfer` 实际类型与取值（`text/plain` 是 vault 相对路径还是 markdown 链接？`text/uri-list` 是否绝对路径？）——本仓库目前**没有**这项数据 | 中（待实测） |
+| **拖拽引用：把 Obsidian 笔记拖进侧栏 dsh** | **可行性已实测（2026-09-21），不再是推断**。① **载荷真值**（`node scripts/qa/drag-payload-probe.mjs`，隔离 Obsidian + CDP `Input.setInterceptDrags`）：从文件树拖一篇笔记时，`dataTransfer` 里是 **`text/plain` 与 `text/uri-list` 两份同值**，内容为 `obsidian://open?vault=<库名>&file=<URL 编码的库内路径>`——**不是** vault 相对路径，但 `file=` 参数就是它。② **跨源 iframe 收不收得到**（`node scripts/qa/iframe-drop-probe.mjs`，三个端口的真跨源夹具，4/4 绿）：**能收到 drop，且能读到 `dataTransfer` 内容** ⇒ **在 dsh 客户端插件里挂 document 级 drop 监听即可，不需要透明遮罩**。实现路径：`drop` → 从 `text/plain` 解出 `file=` → `setDraft(草稿 + '@' + 库内路径)`（`@path` 是普通提示词文本，`dsh-client-ui-conversation` 的 `SessionInput.setDraft` 是公开 API）。⚠️ **仍未实测**：**文件夹**与**编辑器里选中文字**两种拖拽的载荷（前者要先把文件夹展开、后者要真实鼠标划选，探针里没跑通）；按同一条 `dragstart` 处理器推测同形，实现时要对"解不出 `file=`"的拖拽做忽略而不是崩 | 中（可行，待实现） |
 | **`working.md` 的 500 字符上限** | 它是注入里唯一的「工作上下文」，但模板五字段（当前问题/子目标/已证·已失败/已检索·已排除/下一步）光标签就约 120 字符，500 装不下真正的进度 ⇒ 实际能承载的只有一两行。提到 800–1000 或精简模板，二选一；**要与注入体积一起量**再定。⚠️ 原文引用的行号（`math-memory.mjs:3797`）与「`clip()` 对它是头截断」已在 2026-09-21 变更——`clip` 现为**头尾都保**，行号以当时代码为准 | 低（需先量） |
 | **`CHANGELOG.md:230` 与当前安装的前端版本不符** | 该行称「dsh 前端已内置 loopback 链接站内跳转」并据此删掉了 `patchDshFrontendLinks`；而在本机安装的 `@deepseek-ai/dsh-web-frontend/dist/assets/index-DuF6ti6g.js` 里 grep `127.0.0.1\|localhost\|loopback` **命中 0 处**。对本轮的记忆引用缺陷**无影响**（无论有没有 loopback 特判，`.deepseek/` 都打不开），但该说法需要单独核实并修正文档 | 低 |
 
