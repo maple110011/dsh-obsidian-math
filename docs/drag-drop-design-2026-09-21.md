@@ -104,16 +104,28 @@ dsh 为程序化写草稿提供了 `SessionInput.setDraft(text)`
 | 端到端（按需） | `node scripts/qa/composer-drop-probe.mjs` | **真拖拽**（CDP `Input.dispatchDragEvent`，真实 MIME + 真实载荷）→ 草稿里出现 `@库内路径` |
 | 变异验证 | 手工 | 把解析器的某个拒绝条件去掉、把 `drop` 的放行改掉、把安装去掉 ⇒ 对应断言必须红 |
 
-**已知缺口（这条必须读）**：代码在 **dsh web 客户端半个插件**里，而**侧栏跑的是 `notes-assistant`
-profile，它只装了宿主半个**（`notes-assistant.patch.yml` 插的是 `./math-memory-panel.mjs`），
-客户端半个（`@dsh-math-memory/client-ui-memory-panel` + `lib/client.js`）装在 **`web` profile**
-（`web/cordis.patch.yml`）里。所以：
+**客户端半个的安装（已修，2026-09-21）——过程中真的把用户的侧栏搞挂过两次**：
 
-- 在**主 dsh web（3080）**里，本功能随客户端插件一起加载 ⇒ 可用；
-- 在 **Obsidian 侧栏（3180）**里，客户端半个**没有安装** ⇒ 本功能**不会生效**。
+本功能在 **dsh web 客户端半个插件**里，而侧栏跑的 `notes-assistant` profile 原先**只装了宿主半个**
+（`notes-assistant.patch.yml` 插 `./math-memory-panel.mjs`），客户端半个
+（`@dsh-math-memory/client-ui-memory-panel` + `lib/client.js`）只装在 `web` profile
+⇒ 侧栏里根本不会加载它。把这一步固化进安装路径时，连撞两个 **cordis 硬失败**（都是整个 profile
+起不来，用户看到的是「dsh 服务未能在端口 3180 上启动」）：
 
-要让侧栏里也能用，需要把客户端半个也装进 `notes-assistant` profile（`dsh/client-panel/install-into-profile.mjs`
-已具备这个能力，`--profile-home` 指向该 profile 即可），并在安装/部署路径里固化这一步。**本轮未做**。
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `duplicate loader entry id: math-memory-panel` | 插入行 id 用了 `math-memory-panel`，而 `notes-assistant.patch.yml` 里**已经**有一个同 id 的宿主半个 —— 两个 patch 层各插一个同 id | 插入 id 改为 `math-memory-client-panel`；安装**前**先扫该 profile 的全部 `*.yml` 查 id 冲突，冲突就中止且**不写任何文件**；门禁 `check-patch-yaml` 断言该 id 不与任何已发布行 id 冲突 |
+| 2 | `webserver: duplicate prefix route "/memory-panel"` | 包的 `index.mjs` 直接用了 `host/math-memory-panel.mjs`（**就是注册路由的那个模块**），而 profile 里已有独立宿主半个 ⇒ 两个条目注册同一前缀 | **profile 已有独立宿主半个时，本包的宿主半写成空实现**（`export const name`; `export function apply() {}`），只交付客户端半个；没有独立宿主半个的 profile（如 `web`）才用仓库里那份真宿主 `host/index.mjs` |
+
+**教训（值得单独记）**：这两个都是"**往别人的 profile 目录里插条目**"这类改动的固有风险 ——
+`id` 与**路由前缀**是**跨文件、跨 patch 层**共享的命名空间，而当时**没有任何东西**在写之前检查。
+现在检查点在**安装时**（`install-into-profile.mjs` 的 `findIdOwners`）与**门禁里**（`check-patch-yaml`）
+各有一份，且都在**写之前**。另一条：**"文件里多了几行"与"整个应用起不来"之间只隔一个命名冲突**，
+所以这类改动必须**真的启动一次**才算验证过 —— `test-installer.mjs` 因此补了"安装后 row id 唯一"的断言。
+
+端到端探针还有一条**直接判据**：`drop-to-mention-e2e.mjs` 在页面里先查
+`window.__dshMathMemoryDropMention` 是否**已被 profile 自己装上**（10/10 通过）——
+只测"注入之后能用"是不够的，那证明不了用户那边会加载。
 
 ## 5. 刻意不做 / 未知
 

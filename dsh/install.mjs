@@ -273,7 +273,7 @@ function directInstallPreset(options, dshHome) {
   return true;
 }
 
-function directInstallProfile(options, dshHome) {
+async function directInstallProfile(options, dshHome) {
   const profileRoot = join(dshHome, "profiles", options.profile);
   const markerPath = join(profileRoot, INSTALL_MANIFEST);
   const conflict = assertOwnership(options, markerPath, "direct");
@@ -292,6 +292,17 @@ function directInstallProfile(options, dshHome) {
   copyFile(options, join(HOST_DIR, "memory-admin.mjs"), join(profileRoot, "memory-admin.mjs"), true);
   copyFile(options, join(HOST_DIR, "math-memory-panel.mjs"), join(profileRoot, "math-memory-panel.mjs"), true);
   copyFile(options, join(PRESET_DIR, "hook-frontmatter.mjs"), join(profileRoot, "hook-frontmatter.mjs"), true);
+  // 客户端半个（记忆面板的 Settings 面板 + **拖拽引用**）。以前只有 `web` profile 装它，于是
+  // Obsidian 侧栏（notes-assistant）里"从文件树拖一篇笔记进输入框"根本不加载 —— 代码对、也测过，
+  // 但没被装上（2026-09-21 发现）。这一步让安装路径自己负责，而不是靠手工跑另一个脚本。
+  try {
+    const { installClientIntoProfile } = await import("./client-panel/install-into-profile.mjs");
+    const res = installClientIntoProfile(profileRoot, { quiet: true });
+    if (!res.ok) log(options, `[client] 客户端半个安装失败：${res.error ?? "unknown"}`);
+    else log(options, `[client] 客户端半个已装（${res.inserted ? "新插入 patch" : "patch 已包含"}）`);
+  } catch (error) {
+    log(options, `[client] 客户端半个安装异常：${String(error)}`);
+  }
   writeManifest(options, profileRoot, "direct", DIRECT_PROFILE_FILES, []);
   return true;
 }
@@ -327,13 +338,13 @@ function seedVaultTemplates(options) {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
-function commandInstall(options) {
+async function commandInstall(options) {
   const dshHome = resolveDshHome(options);
   log(options, `dsh-math-memory: installing into ${dshHome} (${options.direct ? "direct" : "native"})`);
 
   if (options.direct) {
     if (!directInstallPreset(options, dshHome)) return 1;
-    if (!directInstallProfile(options, dshHome)) return 1;
+    if (!(await directInstallProfile(options, dshHome))) return 1;
   } else {
     // Check ownership conflicts BEFORE mutating: `dsh plugin add` writes into
     // the profile, so a foreign-owned profile/preset must be refused up front
@@ -527,12 +538,12 @@ function commandUninstall(options) {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv.slice(2));
   const code =
     options.command === "status" ? commandStatus(options) :
     options.command === "uninstall" ? commandUninstall(options) :
-    commandInstall(options);
+    await commandInstall(options);
   process.exit(code);
 }
 

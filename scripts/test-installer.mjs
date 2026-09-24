@@ -53,11 +53,16 @@ check('manifest owner=direct', manifest.owner === 'direct');
 check('manifest posture=9 files', Array.isArray(manifest.posture) && manifest.posture.length === 9);
 
 // drift detection (always-refresh files must match repo sources)
+//
+// `cordis.patch.yml` is the ONE exception, and it is deliberate: the installer appends the
+// client-half insert row to it (so the sidebar profile gets the memory panel's client half —
+// and with it the drag-to-mention feature). So the assertion for that file is "repo content
+// is a PREFIX, and the only thing appended is our client insert" — strictly stronger than
+// dropping it from the list, and it still catches a genuine drift in the shipped part.
 const driftPairs = [
   [join(presetRoot, 'math-memory.mjs'), join(repo, 'dsh', 'preset', 'math-memory.mjs')],
   [join(presetRoot, 'note-tools.mjs'), join(repo, 'dsh', 'preset', 'note-tools.mjs')],
   [join(presetRoot, 'hook-frontmatter.mjs'), join(repo, 'dsh', 'preset', 'hook-frontmatter.mjs')],
-  [join(profileRoot, 'cordis.patch.yml'), join(repo, 'dsh', 'profile', 'cordis.patch.yml')],
   [join(profileRoot, 'notes-assistant.patch.yml'), join(repo, 'dsh', 'profile', 'notes-assistant.patch.yml')],
   [join(profileRoot, 'memory-admin.mjs'), join(repo, 'dsh', 'host', 'memory-admin.mjs')],
   [join(profileRoot, 'math-memory-panel.mjs'), join(repo, 'dsh', 'host', 'math-memory-panel.mjs')],
@@ -65,6 +70,19 @@ const driftPairs = [
 ];
 for (const [installed, source] of driftPairs) {
   check('no drift ' + installed, readFileSync(installed, 'utf8') === readFileSync(source, 'utf8'));
+}
+{
+  const installed = readFileSync(join(profileRoot, 'cordis.patch.yml'), 'utf8');
+  const shipped = readFileSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), 'utf8');
+  check('cordis.patch.yml: shipped content kept intact (prefix)', installed.startsWith(shipped.trimEnd()));
+  const appended = installed.slice(shipped.trimEnd().length);
+  check('cordis.patch.yml: the only appended block is the client-half insert',
+    appended.includes('@dsh-math-memory/client-ui-memory-panel') && appended.includes('math-memory-client-panel'));
+  // 行 id 必须与宿主半个的 id 不同：同日实测过"同 id ⇒ cordis 拒绝启动整个 profile"。
+  // 这里用**解析后的行 id** 断言，而不是文本匹配（文本匹配会连注释里的字样一起算进去）。
+  const rowIds = [...installed.matchAll(/^\s*-\s*id:\s*['"]?([A-Za-z0-9_-]+)['"]?\s*$/gmu)].map((m) => m[1]);
+  check('cordis.patch.yml: row ids are unique after install',
+    new Set(rowIds).size === rowIds.length, rowIds.join(','));
 }
 
 // 2. idempotent second run

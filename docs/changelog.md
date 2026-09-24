@@ -29,6 +29,29 @@ paste 处理器（`dsh-client-ui-conversation/lib/client.js:15259-15273` 读
 3. 接缝探针 `scripts/qa/composer-drop-probe.mjs`（7/7）：输入框是 Lexical `contenteditable`、
    `document` 冒泡阶段收得到 drop、合成 paste 能落进草稿。
 
+**客户端半个的安装路径（同日补上，否则前端功能等于没装；过程中把用户侧栏搞挂过两次）**：本功能
+（以及记忆面板的 Settings 面板）在 **dsh web 客户端半个插件**里，而它此前**只被装进 `web` profile**
+—— Obsidian 侧栏跑的 `notes-assistant` profile 只有宿主半个 ⇒ **侧栏里根本不会加载它**。这正是
+"代码对、测试绿、用户却用不上"的典型形态。修法：`dsh/client-panel/install-into-profile.mjs` 把安装
+逻辑抽成导出函数 `installClientIntoProfile()`（CLI 行为不变），`dsh/install.mjs` 的 `--direct` 分支
+装完 profile 后调用它（幂等），`scripts/deploy-local.mjs` 走的正是这条安装器路径；
+`commandInstall`/`directInstallProfile`/`main` 因此改为 `async`。
+
+**但这一步连撞两个 cordis 硬失败，用户的侧栏真的起不来了**（报错原文：
+`dsh: plugin tree failed to load: … duplicate loader entry id: math-memory-panel`，随后还有
+`webserver: duplicate prefix route "/memory-panel"`）：
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `duplicate loader entry id: math-memory-panel` | 插入行 id 用了 `math-memory-panel`，而 `notes-assistant.patch.yml` 里**已经**有一个同 id 的宿主半个 —— 两个 patch 层各插一个同 id | 插入 id 改为 `math-memory-client-panel`；安装**前**扫全部 `*.yml` 查 id 冲突，冲突即中止且**不写任何文件**；门禁 `check-patch-yaml` 断言该 id 不与任何已发布行 id 冲突（做过变异验证） |
+| 2 | `webserver: duplicate prefix route "/memory-panel"` | 包的 `index.mjs` 用的是 `host/math-memory-panel.mjs` —— **正是注册路由的那个模块**；而 profile 里已有独立宿主半个 ⇒ 两个条目注册同一前缀 | **profile 已有独立宿主半个时，本包的宿主半写成空实现**，只交付客户端半个；没有独立宿主半个的 profile（如 `web`）才用真宿主 `host/index.mjs` |
+
+**教训**：`id` 与**路由前缀**是跨文件、跨 patch 层共享的命名空间，而这两个风险此前**没有任何东西**
+在写之前检查。现在安装时（`findIdOwners`）与门禁里（`check-patch-yaml`）各有一份检查，且都在**写之前**。
+另一条：**"文件里多了几行"与"整个应用起不来"之间只隔一个命名冲突**，所以这类改动必须**真的启动一次**
+才算验证过 —— `test-installer.mjs` 因此补了"安装后 row id 唯一"的断言，`drop-to-mention-e2e.mjs`
+补了"profile 自己加载了客户端半个"的直接判据。
+
 **元教训：这一轮的"红"几乎全是探针自己造的（三次）。** 写得清楚，因为每一种都会让一个**正确**的
 实现看起来坏掉，而人的第一反应是去改产品：
 - **假 DOM 的 `createElement` 每次返回新元素** ⇒ 安装器 `querySelector` 找到的落点与探针观察的

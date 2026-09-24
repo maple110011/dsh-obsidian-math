@@ -159,6 +159,18 @@ try {
   // drop→mention 那几个片段单独求值：跑的是同一份编译产物，只是绕开了模块系统的依赖。
   // 切片逻辑与踩过的坑见 `scripts/lib/extract-bundle-function.mjs`。
   const bundle = readFileSync(BUNDLE, 'utf8');
+
+  // 先看**这个 profile 是不是自己把客户端半个装上了** —— 这是"侧栏里能不能用"的那个问题的直接判据：
+  // 客户端半个装在 profile 里时，插件在开机时就会装好 drop 行为（window 上留下幂等句柄）。
+  // 这一条是必要的，因为"注入之后能用"只证明代码对，**不证明用户那边会加载它**。
+  const preInstalled = await ev(`(() => {
+    const h = window.__dshMathMemoryDropMention;
+    return JSON.stringify({ present: h !== undefined && typeof h === 'function', handlers: h && h.__handlers ? Object.keys(h.__handlers).length : 0 });
+  })()`);
+  const pre = JSON.parse(preInstalled);
+  console.log('  这个 profile 是否已自带客户端半个:', preInstalled);
+  check('该 profile 自己加载了客户端半个（否则侧栏里不会有这个功能）', pre.present === true, preInstalled);
+
   const extraction = (() => {
     try {
       const { source } = extractDropMentionProbeSource(bundle);

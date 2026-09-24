@@ -116,6 +116,49 @@ for (const file of candidates) {
   const smuggled = source.split('\n').filter((line) => /^#.*\.-\s*id:\s*[A-Za-z0-9_-]+\s*$/u.test(line) && !/[`'"]/u.test(line));
   check(`${name}: no row is commented out on a comment line`, smuggled.length === 0,
     smuggled.length === 0 ? '' : smuggled[0].slice(-60));
+
+  // Row ids must be unique WITHIN a file: cordis treats a duplicate loader entry id as a hard
+  // failure of the whole profile, not as "last one wins".
+  const seenIds = new Map();
+  const dupes = [];
+  for (const entry of parsed) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const ids = [];
+    if (typeof entry.id === 'string') ids.push(entry.id);
+    if (Array.isArray(entry.insert)) for (const row of entry.insert) if (row !== null && typeof row === 'object' && typeof row.id === 'string') ids.push(row.id);
+    for (const id of ids) {
+      if (seenIds.has(id)) dupes.push(`${id}（${seenIds.get(id)} 与本次）`);
+      else seenIds.set(id, name);
+    }
+  }
+  check(`${name}: no duplicate row id inside the file`, dupes.length === 0, dupes.join(' / '));
+}
+
+// ── 跨文件：客户端半个的插入 id 不能撞上任何已发布的行 id ─────────────────────
+//
+// WHY。2026-09-21 真实故障：`install-into-profile.mjs` 用 `math-memory-panel` 作插入 id，而
+// `dsh/profile/notes-assistant.patch.yml` 里**已经**有一个同 id 的宿主半个。两个 patch 层
+// （`--patch notes-assistant.patch.yml` 与 profile 自己的 `cordis.patch.yml`）各插一个同 id 条目
+// ⇒ cordis 拒绝启动整个 profile：`duplicate loader entry id: math-memory-panel`，用户的
+// Obsidian 侧栏**完全起不来**。这条门禁把"两个文件各自的 id 集合必须不相交"钉住。
+{
+  const { CLIENT_INSERT_ID } = await import('../dsh/client-panel/install-into-profile.mjs');
+  const rowIds = new Set();
+  const collect = (parsedFile) => {
+    for (const entry of parsedFile) {
+      if (entry === null || typeof entry !== 'object') continue;
+      if (typeof entry.id === 'string') rowIds.add(entry.id);
+      if (Array.isArray(entry.insert)) for (const row of entry.insert) if (row !== null && typeof row === 'object' && typeof row.id === 'string') rowIds.add(row.id);
+    }
+  };
+  for (const file of candidates) {
+    try {
+      const parsedFile = load(stripCustomTags(readFileSync(file, 'utf8').replace(/\r\n/g, '\n')));
+      if (Array.isArray(parsedFile)) collect(parsedFile);
+    } catch { /* 已在上面报过 */ }
+  }
+  check('客户端半个的插入 id 不与任何已发布的行 id 冲突', !rowIds.has(CLIENT_INSERT_ID),
+    rowIds.has(CLIENT_INSERT_ID) ? `"${CLIENT_INSERT_ID}" 已被占用（会导致 duplicate loader entry id，整个 profile 起不来）` : CLIENT_INSERT_ID);
 }
 
 console.log(`__CHECKS__ ${passed}/${total}`);
