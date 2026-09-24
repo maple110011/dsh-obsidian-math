@@ -12,6 +12,34 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* 拖拽落点要绝对定位覆盖在 iframe 上（见 installDropZone 的 WHY）。 */
+  position: relative;
+}
+
+/* 拖拽落点：平时完全不可见、不接收指针事件（否则会挡住输入框的点击）；
+   只有在"拖动经过侧栏"时才由插件打开 `data-visible`。 */
+.dsh-math-assistant-dropzone {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-on-accent, #fff);
+  background: var(--background-modifier-border, rgba(0, 0, 0, 0.25));
+  border: 2px dashed var(--interactive-accent, #7f6df2);
+  border-radius: 6px;
+  pointer-events: none;
+  opacity: 0.92;
+}
+
+.dsh-math-assistant-dropzone[data-visible='true'] {
+  display: flex;
+  /* 拖动期间才接管事件：`dragover` 的 `preventDefault` 是"能收到 drop"的前提。 */
+  pointer-events: auto;
 }
 
 .dsh-math-assistant-iframe {

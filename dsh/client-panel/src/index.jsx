@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { installComposerDropMention } from "./drop-mention/composer-drop.mjs";
+import { installMentionInbox } from "./drop-mention/mention-inbox.mjs";
 
 const ROOT_KEY = "dsh-math-memory.panelRoot";
 
@@ -402,17 +403,28 @@ function MemoryPanel() {
 }
 
 // 拖拽引用的实现放在自己的模块里；这里**再导出**一次，让 `scripts/test-drop-mention.mjs`
-// 能直接拿到它并注入假 DOM（不必去污染 Node 的全局），同时把真实装配路径也走通。
-// 依据与边界见 dsh/client-panel/src/drop-mention/ 两个文件头 + docs/drag-drop-design-2026-09-21.md。
+// 能直接拿到它们并注入假 DOM（不必去污染 Node 的全局），同时把真实装配路径也走通。
+// 依据与边界见 dsh/client-panel/src/drop-mention/ 各文件头 + docs/drag-drop-design-2026-09-21.md。
 export { installComposerDropMention } from "./drop-mention/composer-drop.mjs";
+export {
+  installMentionInbox,
+  installMentionInboxWithDrop,
+  insertMentionText,
+  mentionTextFor,
+  mentionStreamUrlFromDocument,
+  parseMentionSseLine
+} from "./drop-mention/mention-inbox.mjs";
 
 export const inject = ["slots"];
 export function apply(ctx) {
   // 拖拽引用：从 Obsidian 文件树把一篇笔记拖进输入框，草稿里出现 `@库内路径`。
-  // 与面板无关，所以装在**根上下文**（不依赖任何 slot），并跟随插件 fiber 的寿命清理。
+  //
+  // **两条入口都装**（2026-09-21 实测否掉了第一条）：
+  //   · `installComposerDropMention` —— iframe 自己收 drop。在真实 Obsidian 里**收不到**从
+  //     文件列表拖来的事件（跨源 iframe），但在浏览器里直接打开 dsh web 时它有效，成本也低。
+  //   · `installMentionInbox` —— 接收 Obsidian 那侧推来的路径（直插 `window.__dshMentionInsert`
+  //     + LinkServer SSE 兜底）。**真正让侧栏能用的是这一条。**
   try {
-    // 显式传 document/window：模块里虽然有同样的缺省回退，但显式传入让"它作用于哪个
-    // 文档"在调用点就看得见，也让本仓库的回归不必改写全局。
     const disposeDrop = installComposerDropMention({
       document: globalThis.document,
       window: globalThis.window
@@ -421,6 +433,17 @@ export function apply(ctx) {
   } catch (error) {
     // 拖拽是增强，不是核心：装不上也不能让记忆面板跟着起不来。
     try { console.warn("[dsh-math-memory] drop-mention 安装失败：", error); } catch { /* ignore */ }
+  }
+  try {
+    const disposeInbox = installMentionInbox({
+      document: globalThis.document,
+      window: globalThis.window,
+      // 地址由插件注入的 `<meta name="dsh-math-memory-mention-stream">` 提供；这里不写死端口。
+      url: ""
+    });
+    ctx.effect(() => disposeInbox, "mention-inbox");
+  } catch (error) {
+    try { console.warn("[dsh-math-memory] mention-inbox 安装失败：", error); } catch { /* ignore */ }
   }
   ctx.inject(["slots", "locale"], (scope) => {
     try { scope.locale?.register?.("math-memory-panel", { title: "记忆面板" }); } catch { /* cosmetic */ }

@@ -280,6 +280,29 @@ class LinkServer {
     // back in the t= query parameter. Without a token (old paired installs)
     // the endpoint still works for backward compatibility.
     this.token = '';
+    // 拖拽引用通道（见 handle 里那一段的 WHY）：一条极简的"服务器 → 页面"推送。
+    // 队列用来兜住"用户先拖、dsh 页面还没连上"这一小段窗口；容量刻意很小。
+    this.mentionClients = new Set();
+    this.mentionQueue = [];
+  }
+
+  /** 把一条库内路径推给所有已连接的 dsh 页面；没有连接就先排队（最多 8 条）。 */
+  pushMention(rel) {
+    const payload = String(rel ?? '');
+    if (payload === '') return;
+    if (this.mentionClients.size === 0) {
+      this.mentionQueue.push(payload);
+      while (this.mentionQueue.length > 8) this.mentionQueue.shift();
+      return;
+    }
+    const frame = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const client of [...this.mentionClients]) {
+      try {
+        client.res.write(frame);
+      } catch {
+        this.mentionClients.delete(client);
+      }
+    }
   }
 
   start() {
@@ -342,7 +365,7 @@ class LinkServer {
     this.server.listen(wanted > 0 && wanted < 65536 ? wanted : 0, '127.0.0.1', onListening);
   }
 
-  /** One request: /feedback (memory mutation) or /open (note jump). */
+  /** One request: /feedback (memory mutation), /open (note jump), or the mention channel. */
   handle(req, res, finish) {
     {
       let url;
@@ -350,6 +373,76 @@ class LinkServer {
         url = new URL(req.url ?? '/', 'http://127.0.0.1');
       } catch {
         finish(400, 'bad request');
+        return;
+      }
+      // ── 拖拽引用通道（2026-09-21） ─────────────────────────────────────────
+      //
+      // WHY 这条通道存在（实测结论，别再退回"让 iframe 收 drop"）：拖拽发生在 **Obsidian 的
+      // 文档**里，而 dsh 界面在一个跨源 iframe 里。**在真实 Obsidian 里，拖拽事件不会进入那个
+      // iframe** —— 用户拖动时连"可放置提示"都不出现（提示挂在 iframe 内的 `dragenter` 上），
+      // 说明事件根本没到达；隔离夹具里"跨源 iframe 能收到 drop"因此**不能外推到真实宿主**。
+      // 所以由 Obsidian 侧（与拖拽同文档，必然收得到）接住，再经本通道送进 dsh。
+      //
+      //   POST /mention?t=<token>   body = 库内相对路径（原样，不编码）
+      //     → 入队，回 204
+      //   GET  /mention-stream?t=<token>
+      //     → SSE；有新条目就推一条 `data: <路径>`；同时发心跳注释保活
+      //
+      // 只绑 127.0.0.1，且与 /open、/feedback 同一个 CSRF token。
+      if (url.pathname === '/mention' || url.pathname === '/mention-stream') {
+        const authorized = this.token === '' || url.searchParams.get('t') === this.token;
+        // SSE 是**跨源**读取（iframe 在 127.0.0.1:<dsh 端口>），必须显式允许；只允许 loopback 来源。
+        const origin = String(req.headers?.origin ?? '');
+        const originAllowed = origin === '' || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) || /^http:\/\/localhost(:\d+)?$/.test(origin);
+        if (!authorized || !originAllowed) {
+          finish(403, 'bad token');
+          return;
+        }
+        if (url.pathname === '/mention-stream') {
+          res.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-store',
+            connection: 'keep-alive',
+            'access-control-allow-origin': origin === '' ? 'http://127.0.0.1' : origin,
+            vary: 'origin'
+          });
+          const client = { res };
+          this.mentionClients.add(client);
+          // 心跳：中间任何一层超时都会静默掐断 SSE，定期写一行注释成本极低。
+          const beat = setInterval(() => {
+            try { res.write(': keep-alive\n\n'); } catch { /* 连接已断 */ }
+          }, 20000);
+          const drop = () => {
+            clearInterval(beat);
+            this.mentionClients.delete(client);
+            try { res.end(); } catch { /* 已结束 */ }
+          };
+          req.on('close', drop);
+          req.on('error', drop);
+          // 连上时先把队列里没送出的送掉（用户可能比 dsh 更早就拖了一次）。
+          for (const pending of this.mentionQueue.splice(0)) this.pushMention(pending);
+          return;
+        }
+        // POST /mention：读 body（库内相对路径），校验后入队。
+        const chunks = [];
+        let size = 0;
+        req.on('data', (chunk) => {
+          size += chunk.length;
+          if (size > 4096) { try { req.destroy(); } catch { /* ignore */ } return; }
+          chunks.push(chunk);
+        });
+        req.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          const normalized = normalizeVaultRelPath(raw);
+          if (normalized === null) {
+            finish(400, 'bad path');
+            return;
+          }
+          this.pushMention(normalized.rel);
+          this.plugin?.service?.appendLog?.(`拖拽引用已送达 dsh：${normalized.rel}`);
+          finish(204, '');
+        });
+        req.on('error', () => { try { finish(400, 'bad request'); } catch { /* ignore */ } });
         return;
       }
       if (url.pathname === '/feedback') {
@@ -763,7 +856,27 @@ class DshWebProxy {
     if (html.includes(this.perfStyleId)) return html;
     const at = html.lastIndexOf('</head>');
     if (at === -1) return html;
-    return html.slice(0, at) + this.perfStylesheet() + this.noteLinkInterceptor() + html.slice(at);
+    return html.slice(0, at) + this.mentionChannelMeta() + this.perfStylesheet() + this.noteLinkInterceptor() + html.slice(at);
+  }
+
+  /**
+   * 把"拖拽引用通道"的地址与令牌作为 `<meta>` 注入到页面里。
+   *
+   * WHY。拖拽的落点在 Obsidian 那侧（实测：事件不会进入这个跨源 iframe），所以那条通道要把
+   * 库内路径**送回页面**。第一条路是跨源执行一小段脚本直接调页面里的 `window.__dshMentionInsert`；
+   * 若宿主不提供那个 API，就退到第二条路：页面用 EventSource 订阅 LinkServer 的 `/mention-stream`。
+   * 而**页面无从知道 LinkServer 的端口与令牌** —— 它只知道自己被哪个地址服务。插件本来就在改写
+   * 导航 HTML，所以这里顺手把地址与令牌注入进去（与链接模板注入给模型的是同一对值）。
+   *
+   * 不注入任何可执行代码，只有一个 meta 标签；令牌本来就是页面自己那条链路用的同一个 CSRF 令牌。
+   */
+  mentionChannelMeta() {
+    const base = this.plugin?.linkServer?.baseUrl ?? '';
+    if (base === '') return '';
+    const token = this.plugin?.linkServer?.token ?? '';
+    const url = `${base}/mention-stream${token === '' ? '' : `?t=${encodeURIComponent(token)}`}`;
+    const escape = (value) => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    return `<meta name="dsh-math-memory-mention-stream" content="${escape(url)}">`;
   }
 
   /** A navigation (not a fetch for CSS/JS/JSON): the only HTML we inject into. */
@@ -1822,6 +1935,104 @@ class DshMathView extends ItemView {
     }
   }
 
+  /**
+   * 拖拽落点：把从**文件列表**拖来的笔记变成 dsh 草稿里的一次 `@引用`。
+   *
+   * WHY 在 Obsidian 这一侧接（2026-09-21 实测结论，别再改回"让 iframe 收 drop"）：
+   * dsh 界面在一个**跨源 iframe** 里，而拖拽发生在 **Obsidian 的文档**里。
+   * 用户实测：从文件列表往侧栏拖，**连"可放置提示"都不出现** —— 提示挂在 iframe 内的
+   * `dragenter` 上，也就是说**拖拽事件根本没有进入那个 iframe**。
+   * （此前的隔离夹具证明"跨源 iframe 能收到 drop"，那是**夹具结论，不能外推到真实宿主** ——
+   * 这正是"必须在真环境验一次"的又一例。）
+   *
+   * 所以在与拖拽**同一文档**的这里接住：盖一层 `pointer-events: none` 的透明落点，
+   * 拖动经过侧栏时把它打开，`drop` 时读 `dataTransfer`、解出库内路径，POST 给 LinkServer，
+   * 由 dsh 页面里的客户端半个取回并落进草稿（`/mention` + `/mention-stream`）。
+   */
+  installDropZone() {
+    if (this.dropZone !== undefined && this.dropZone !== null) return;
+    const host = this.body;
+    if (host === undefined || host === null) return;
+    let zone;
+    try {
+      zone = host.createDiv({ cls: 'dsh-math-assistant-dropzone' });
+      zone.setText('松手即可把这篇笔记引用进对话');
+    } catch (error) {
+      writeDebugLog('[drop] 落点创建失败：' + String(error));
+      return;
+    }
+    let over = 0;
+
+    /** 从拖拽载荷里取库内路径：认不出返回 null（**不猜**）。 */
+    const pathFrom = (dataTransfer) => {
+      if (dataTransfer === null || dataTransfer === undefined) return null;
+      let text = '';
+      let uriList = '';
+      try {
+        text = dataTransfer.getData('text/plain') ?? '';
+        uriList = dataTransfer.getData('text/uri-list') ?? '';
+      } catch {
+        return null;
+      }
+      // 实测（scripts/qa/drag-payload-probe.mjs）：文件列表拖一篇笔记时 `text/plain` 与
+      // `text/uri-list` 都是 `obsidian://open?vault=…&file=<URL 编码的库内路径>`。
+      // 两个都试一遍：只要有一个能解出来就用，避免依赖"哪个 MIME 一定有"。
+      for (const candidate of [text, uriList]) {
+        const trimmed = String(candidate).trim();
+        if (trimmed === '') continue;
+        const match = /obsidian:\/\/open\?[^\s]*[?&]file=([^&\s]*)/u.exec(trimmed);
+        if (match === null) continue;
+        let decoded = '';
+        try { decoded = decodeURIComponent(match[1]); } catch { continue; }
+        const normalized = normalizeVaultRelPath(decoded);
+        if (normalized !== null) return normalized.rel;
+      }
+      return null;
+    };
+
+    const setOver = (value) => {
+      try {
+        if (value && zone.getAttribute('data-visible') !== 'true') zone.setAttribute('data-visible', 'true');
+        else if (!value) zone.removeAttribute('data-visible');
+      } catch { /* cosmetic */ }
+    };
+
+    this.registerDomEvent(zone, 'dragenter', (event) => {
+      over += 1;
+      event.preventDefault();
+      setOver(true);
+    });
+    this.registerDomEvent(zone, 'dragover', (event) => {
+      // 必须 preventDefault，否则**根本收不到 drop**。
+      event.preventDefault();
+      try { event.dataTransfer.dropEffect = 'copy'; } catch { /* ignore */ }
+    });
+    this.registerDomEvent(zone, 'dragleave', () => {
+      over = Math.max(0, over - 1);
+      if (over === 0) setOver(false);
+    });
+    this.registerDomEvent(zone, 'drop', (event) => {
+      over = 0;
+      setOver(false);
+      const rel = pathFrom(event.dataTransfer);
+      writeDebugLog('[drop] 收到拖拽，解析结果=' + JSON.stringify(rel));
+      if (rel === null) return; // 不是"一篇笔记"：放行，别拦别人的拖拽
+      event.preventDefault();
+      event.stopPropagation();
+      // 优先走"直插 iframe"（同一次会话内立刻可见）；宿主没给这个 API 时再走 LinkServer 推送。
+      const inserted = this.plugin.insertMentionIntoFrame(rel);
+      writeDebugLog('[drop] 直插=' + String(inserted));
+      if (!inserted) this.plugin.sendMention(rel);
+    });
+    // 拖到别处/按 Esc 结束：不留残影（与 iframe 内那条提示同一个纪律）。
+    this.registerDomEvent(document, 'dragend', () => {
+      over = 0;
+      setOver(false);
+    });
+    this.dropZone = zone;
+    writeDebugLog('[drop] 落点已安装');
+  }
+
   render(status) {
     if (this.statusRow === undefined) return;
     if (status === 'running') {
@@ -1832,8 +2043,9 @@ class DshMathView extends ItemView {
       const expectedSrc = this.plugin.service.iframeSrc;
       // Diagnostic: keep the record of what the iframe actually loads — a live
       // 401 turned out to be a cookie problem, not a navigation problem.
-      writeDebugLog('[render] status=running iframe=' + expectedSrc);
-      if (this.iframe === null) {
+      writeDebugLog('[render] status=running iframe=' + expectedSrc);      if (this.iframe === null) {
+        // 侧栏容器要能承载一个绝对定位的拖拽落点（见 installDropZone 的 WHY）。
+        try { this.body.addClass('dsh-math-assistant-body'); } catch { /* cosmetic */ }
         this.iframe = this.body.createEl('iframe', {
           cls: 'dsh-math-assistant-iframe',
           attr: { src: expectedSrc }
@@ -1849,6 +2061,7 @@ class DshMathView extends ItemView {
           }
           writeDebugLog('[iframe] load href=' + href + ' text=' + JSON.stringify(text));
         });
+        this.installDropZone();
         this.syncSuspension();
       } else if (this.iframe.getAttribute('src') !== expectedSrc) {
         // Also the re-auth path: a new token (restart, port change) must reload.
@@ -2645,6 +2858,85 @@ class DshObsidianMathPlugin extends Plugin {
     }
     new MemoryPreviewModal(this.app, title ?? rel, content, fullPath, () => this.refreshViews?.()).open();
     return true;
+  }
+
+  /**
+   * 把一条库内路径交给 LinkServer，由它推给 dsh 页面（落到草稿里成为 `@引用`）。
+   *
+   * 用 Node 的 `http` 而不是渲染进程的 `fetch`：Obsidian 的 CSP 会拦渲染进程对 127.0.0.1 的
+   * 请求（插件的 `probeService` 早就在注释里记过这条）；而这里是主进程侧、没有 CSP 限制。
+   */
+  sendMention(rel) {
+    if (typeof rel !== 'string' || rel === '') return;
+    const server = this.linkServer;
+    if (server === undefined || server === null || !(server.port > 0)) {
+      writeDebugLog('[drop] 链接服务未启动，无法送达：' + rel);
+      new Notice('拖拽引用无法送达：链接跳转服务未启动。');
+      return;
+    }
+    const body = Buffer.from(rel, 'utf8');
+    const token = server.token === '' ? '' : `?t=${encodeURIComponent(server.token)}`;
+    try {
+      const req = httpRequest({
+        host: '127.0.0.1',
+        port: server.port,
+        path: `/mention${token}`,
+        method: 'POST',
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'content-length': body.length, connection: 'close' }
+      }, (res) => {
+        res.resume();
+        writeDebugLog(`[drop] /mention 响应 ${res.statusCode}（${rel}）`);
+      });
+      req.on('error', (error) => {
+        writeDebugLog('[drop] /mention 请求失败：' + String(error));
+        new Notice('拖拽引用发送失败：' + String(error));
+      });
+      req.end(body);
+    } catch (error) {
+      writeDebugLog('[drop] /mention 抛错：' + String(error));
+    }
+  }
+
+  /**
+   * 把一条库内路径**直接**送进侧栏 iframe 里的 dsh 输入框。
+   *
+   * 与 `sendMention`（走 LinkServer → dsh 页面订阅）的分工：
+   *   · 本方法用于**同一次会话内**立刻送达：`<webview>` 的内部 API 允许跨源执行一小段脚本，
+   *     所以这里调 dsh 客户端半个导出的 `window.__dshMentionInsert`（它内部就是"往 composer
+   *     派发一次合成 paste"，与手工拖拽走同一条落笔路径）。
+   *   · 若宿主没有这个 API（iframe 而非 webview，或 API 改名），**静默返回 false**，
+   *     调用方再走 `sendMention` 的推送通道 —— 两条路都可用时才叫"能工作"。
+   */
+  insertMentionIntoFrame(rel) {
+    // 从工作区拿**当前**那个视图的 iframe，而不是在插件上缓存一个引用：视图会被关闭/重建，
+    // 缓存的引用会在重建后指向一个已经脱离文档的 iframe（表现是"直插永远不生效"）。
+    let frame = null;
+    try {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+        const candidate = leaf?.view?.iframe;
+        if (candidate !== undefined && candidate !== null) { frame = candidate; break; }
+      }
+    } catch {
+      return false;
+    }
+    if (frame === null) return false;
+    const exec = frame.executeJavaScript;
+    if (typeof exec !== 'function') return false;
+    const script = `(() => {
+      const fn = window.__dshMentionInsert;
+      return typeof fn === 'function' ? fn(${JSON.stringify(rel)}) : 'no-insert-api';
+    })()`;
+    try {
+      const result = exec.call(frame, script, true);
+      if (result !== null && typeof result.then === 'function') {
+        result.then((value) => writeDebugLog('[drop] 直插 iframe 结果=' + JSON.stringify(value)))
+          .catch((error) => writeDebugLog('[drop] 直插 iframe 失败：' + String(error)));
+      }
+      return true;
+    } catch (error) {
+      writeDebugLog('[drop] 直插 iframe 抛错：' + String(error));
+      return false;
+    }
   }
 
   async onload() {

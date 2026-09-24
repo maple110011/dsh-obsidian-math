@@ -185,8 +185,9 @@ try {
   installError = error;
 }
 check('apply() 没有抛异常', installError === null, installError === null ? '' : String(installError?.message ?? installError));
-check('apply() 注册了一个可清理的 effect',
-  effects.length === 1 && effects[0].name === 'drop-mention', JSON.stringify(effects.map((e) => e.name)));
+check('apply() 注册了两个可清理的 effect（drop-mention + mention-inbox）',
+  effects.length === 2 && effects.map((e) => e.name).join(',') === 'drop-mention,mention-inbox',
+  JSON.stringify(effects.map((e) => e.name)));
 check('重复安装复用同一份监听（幂等：不会留下孤儿监听）',
   doc.listeners.length === 5, `listeners=${doc.listeners.length}`);
 
@@ -319,6 +320,47 @@ function dropWith(textValue, { withTextPlain = true, target = composer } = {}) {
     shown !== undefined && shown.parentNode !== null && hintShown(), `shown=${hintShown()}`);
   handlers.onDragEnd();
   check('提示：拖动被取消（dragend）时也收掉——不会永久留在屏幕上', hintShown() === false);
+}
+
+// ── 7. 「Obsidian 侧推来」的入口（mention-inbox）────────────────────────────
+//
+// WHY 这一节存在（2026-09-21 实测）：**在真实 Obsidian 里，从文件列表拖到侧栏时，拖拽事件
+// 根本不会进入那个跨源 iframe**（用户连"可放置提示"都看不到）。所以真正让侧栏能用的不是上面的
+// drop 监听，而是"Obsidian 那侧接住、再把库内路径送进来"这条通道。它有两个入口：
+//   ① 直插：Obsidian 的 webview 跨源执行一小段脚本，调 `window.__dshMentionInsert(rel)`；
+//   ② 推送：Obsidian POST 给 LinkServer，页面用 EventSource 订阅 `/mention-stream`。
+{
+  const { document: d3, window: w3 } = makeDom();
+  const composer3 = d3.createElement('div');
+  composer3.setAttribute('contenteditable', 'true');
+  const installInbox = exports.module.installMentionInbox;
+  const insertMentionText = exports.module.insertMentionText;
+  const parseMentionSseLine = exports.module.parseMentionSseLine;
+  check('产物导出了 mention-inbox 的入口与纯函数',
+    typeof installInbox === 'function' && typeof insertMentionText === 'function' && typeof parseMentionSseLine === 'function');
+
+  const disposeInbox = installInbox({ document: d3, window: w3, url: '' });
+  check('直插入口挂在 window 上（Obsidian 那侧一行就能调）', typeof w3.__dshMentionInsert === 'function');
+  const okInsert = w3.__dshMentionInsert('数学/随便.md');
+  const pasted = composer3.pastes.length === 0 ? null : composer3.pastes[0].clipboardData.getData('text/plain');
+  check('直插：把 @库内路径 递给了 composer 的 paste 处理器', okInsert === true && pasted === '@数学/随便.md ',
+    `ok=${String(okInsert)} pasted=${JSON.stringify(pasted)}`);
+  // 与拖拽那条路共用同一套校验：非法路径一样要被拒。
+  const beforeCount = composer3.pastes.length;
+  check('直插：非法路径被拒（不往草稿里塞越界内容）',
+    w3.__dshMentionInsert('../secret.md') === false && composer3.pastes.length === beforeCount);
+  check('直插：带空格的路径加引号', w3.__dshMentionInsert('笔记/一 致 收敛.md') === true
+    && composer3.pastes[composer3.pastes.length - 1].clipboardData.getData('text/plain') === '@"笔记/一 致 收敛.md" ',
+    JSON.stringify(composer3.pastes[composer3.pastes.length - 1]?.clipboardData.getData('text/plain')));
+
+  // SSE 数据行解析：正常/带引号的 JSON/裸串/非数据行。
+  check('SSE 行：`data: "路径"` 解析成路径', parseMentionSseLine('data: "数学/随便.md"') === '数学/随便.md');
+  check('SSE 行：非 JSON 的裸串按原样用（容错）', parseMentionSseLine('data: 数学/随便.md') === '数学/随便.md');
+  check('SSE 行：心跳/空行/其它字段都返回 null',
+    parseMentionSseLine(': keep-alive') === null && parseMentionSseLine('') === null && parseMentionSseLine('event: x') === null);
+
+  disposeInbox();
+  check('mention-inbox 清理后直插入口也摘掉', w3.__dshMentionInsert === undefined);
 }
 
 // ── 6. 清理与幂等 ───────────────────────────────────────────────────────────
