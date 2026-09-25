@@ -409,15 +409,44 @@ function dropWith(textValue, { withTextPlain = true, target = composer } = {}) {
     visibleRule !== null && /pointer-events\s*:\s*auto/u.test(visibleRule[1]));
 
   // 检测必须挂在 `document` 上：落点自己（隐藏时）收不到事件。
-  const zoneFn = /installDropZone\(\)\s*\{([\s\S]*?)\n  \}\n/u.exec(template);
-  check('源码：installDropZone 存在', zoneFn !== null);
-  const body = zoneFn === null ? '' : zoneFn[1];
+  //
+  // ⚠️ 这里曾经用 `/installDropZone\(\)\s*\{([\s\S]*?)\n  \}\n/` 取方法体，那是**配平错误的**：
+  // 它停在体内第一个"两个空格缩进的 `}`"，于是切出来的不是整个方法。方法体一长到出现这种缩进的
+  // 花括号，四条源码断言就**一起变红**——而它们此前"绿"过，是因为那时方法还短、恰好没撞上。
+  // （同族：handoff §4 陷阱 88/92 —— "是合法文本"不等于"是那段代码"。）改为**按花括号配平**提取。
+  const methodBody = (source, marker) => {
+    const at = source.indexOf(marker);
+    if (at < 0) return null;
+    const open = source.indexOf('{', at);
+    if (open < 0) return null;
+    let depth = 0;
+    for (let i = open; i < source.length; i += 1) {
+      const c = source[i];
+      if (c === "'" || c === '"' || c === '`') {
+        // 跳过字符串/模板串（处理转义；模板串里的 ${} 不参与配平，够用且不会误判）
+        for (i += 1; i < source.length; i += 1) {
+          if (source[i] === '\\') { i += 1; continue; }
+          if (source[i] === c) break;
+        }
+        continue;
+      }
+      if (c === '/' && source[i + 1] === '/') { while (i < source.length && source[i] !== '\n') i += 1; continue; }
+      if (c === '/' && source[i + 1] === '*') { i = source.indexOf('*/', i) + 1; if (i <= 0) return null; continue; }
+      if (c === '{') depth += 1;
+      else if (c === '}') { depth -= 1; if (depth === 0) return source.slice(open + 1, i); }
+    }
+    return null;
+  };
+  const body = methodBody(template, 'installDropZone()');
+  check('源码：installDropZone 存在（按花括号配平取到方法体）', body !== null,
+    body === null ? '未取到方法体 —— 提取器坏了，下面四条断言会全部无意义' : `${body.length} 字符`);
+  const zoneBody = body ?? '';
   check('源码：在 document 上挂拖拽检测（落点隐藏时收不到事件）',
-    /registerDomEvent\(document,\s*'dragstart'/u.test(body) && /registerDomEvent\(document,\s*'dragenter'/u.test(body));
+    /registerDomEvent\(document,\s*'dragstart'/u.test(zoneBody) && /registerDomEvent\(document,\s*'dragenter'/u.test(zoneBody));
   check('源码：文件拖拽（Files）不被抢',
-    /includes\('Files'\)/u.test(body));
+    /includes\('Files'\)/u.test(zoneBody));
   check('源码：认不出载荷时放行（不 preventDefault）',
-    /if \(rel === null\) return;/u.test(body));
+    /if \(rel === null\) return;/u.test(zoneBody));
 }
 
 console.log(`__CHECKS__ ${passed}/${total}`);

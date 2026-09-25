@@ -3,6 +3,54 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-25 · 落笔路径自述诊断 + 探针改动了用户持久状态（拖拽仍未完成）
+
+**状态**：拖拽「从文件树拖进输入框」**仍未完成**。本条只记两件当天真正落地的事，接续入口是
+[`docs/drag-to-mention-progress-2026-09-25.md`](drag-to-mention-progress-2026-09-25.md)。
+
+**① 落笔路径自述诊断（提交 `9790420`）。** `insertMentionText` 的契约是布尔 —— 插进去了 `true`，
+否则 `false`，**没有"为什么"**。于是现场"拖进去没反应"时日志里一个字节都没有，而当天排查正好卡在
+这里：SSE 在进程层面完全正常（POST 204 → `data: "路径"`）、页面也确实订阅着、composer 是页面上
+**唯一**的 `[contenteditable="true"]`、直调 `__dshMentionInsert` 就能落笔 —— 可草稿是空的。
+修法是让**静默的失败分支自述**：
+
+- `describeMentionInsert()` 把落笔拆成可观察步骤（`step` / `ok` / `editable`（可编辑元素个数）/
+  `target`（命中的元素）/ `textLen` / `error`）；
+- `reportMentionDiagnostic()` 把诊断 fire-and-forget 发回 Obsidian 那侧（`fetch` + `mode:'no-cors'`：
+  跨源写、不需要读响应），写进插件日志；
+- **每一次落笔都上报**（成功与失败都报）。不留"只在失败时报"：那要先判断返回值，而"处理器到底
+  有没有被调用"本身正是最容易丢的一环 —— 当天现场就是它；
+- `LinkServer` 新增 `/mention-report`（只用查询参数、白名单字段、逐值截断：这是**页面可控输入**，
+  不能往日志里灌任意内容），地址由 `mentionChannelMeta` 作为第二个 meta 注入；
+- 服务端补两条**永久留痕**：`/mention-stream` 连接时记**订阅者数量**、`/mention` 收到时**先记订阅者
+  数量再推送**。"推给了 0 个订阅者"与"推了但没落笔"此前在日志里长得一模一样，而这两种的修法完全不同。
+
+**② 探针改动了用户的持久状态（我自己造成的，已清）。** `dsh/profile/math-memory-workspace.mjs` 会把
+`DSH_WORKSPACE_ROOT` **登记**进 `$DSH_HOME/storages/workspace.json`，而所有 QA 探针都为"不碰真实
+vault"用 `mkdtempSync` 造临时 vault 起 dsh ⇒ **每跑一次探针，用户侧栏的「工作区」列表里就多一条**
+`C:\Windows\Temp\dsh-*-probe-*/vault`。反复调试那几天累计 **38 条**，列表被同名 `vault` 填满之后
+页面会先显示"选择工作区"而不是直接给输入框 —— **看起来像功能坏了**，实际是我弄脏了用户环境。
+清理脚本 `scripts/qa/clean-probe-workspaces.mjs`（只删系统临时目录下的登记、先写 `.bak`、默认
+dry-run）已入库；教训写进 `docs/handoff.md` §4 陷阱 91。
+
+**③ 一条被误用的观察（陷阱 90）。** 我用"日志里没有诊断行"推断"处理器没执行" —— 而当时线上跑的
+客户端包是**旧构建**（页面加载时取的，服务重启前一直是旧的），它**根本没有**那段诊断代码。
+**"我没观察到" ≠ "它没发生"**：用一条"还没被部署的代码"的沉默当证据，等于拿空气当证据。
+纪律：判定"某段代码有没有被执行"之前，先证明那段代码**在运行的构建里**。
+
+**夹具坑（都表现为"产品像坏了"，实际是夹具缺件，已写进接续文档）**：改写正文的反代必须禁掉上游
+压缩（否则 gunzip 纯文本失败、页面永远 `loading`，而 curl/node 自测看不到）；反代必须代理
+WebSocket `upgrade`（否则页面停在"重新连接中"）；夹具 vault 要用唯一名字；假 DOM 缺
+`querySelectorAll` 会让落笔路径走 `query-threw` 分支造成假红。
+
+**④ dsh 0.1.7 的 preset 断代（环境结果，不是本仓回归）。** 用户机器的 dsh 于当天 10:28 升到
+`0.1.7-rc.2`，它**不再读** `$DSH_HOME/.agent-presets/<id>/`（内置技能 `editing-cordis-compositions`
+原文：*"Nothing reads that directory any more."*），preset 改为 `@deepseek-ai/dsh-agent-preset` 的
+插件行声明。于是 `notes-assistant` preset 认不出来、**会话完全起不来**。判据：门禁
+`test: agent preset mounts` 红，且**在纯净 HEAD 上一样红** ⇒ 按 AGENTS.md §4，这是环境结果，
+**不要**改断言或文档去"修"。已登记进 handoff §7，用户决定新开会话专门适配。
+
+
 ## 2026-09-21（续）· 拖拽引用的**装配**缺口：包在 `node_modules` 里，却没有任何 loader 挂载它
 
 **用户实测**：「有提示条了，但是松手后文件并没有进对话框」——拖拽被接住了（提示条是 Obsidian 那侧的

@@ -36,6 +36,7 @@
 | `literature/` + `scripts/lit-import.mjs` + `docs/literature.md` | **文献库子系统**：BibTeX + PDF + MinerU markdown → 双面文献库（14 篇） |
 | `docs/dsh-panel-research.md` | dsh web 面板机制调研（客户端契约 / settings.section 槽位 / profile 装配名单 / 宿主路由） |
 | `docs/design-intake-2026-09-21.md` | **用户提问评估（2026-09-21）**：三个问题的取证与吸纳决策——拖拽引用（可行性 + 待实测项，**只登记未实施**）、记忆引用打不开（两处根因 + B组实施范围）、注入机制（实测数据 + 「不做 handoff 文档」的理由） |
+| **`docs/drag-to-mention-progress-2026-09-25.md`** | **拖拽引用的接续入口（未完成）**：已修好并实测证实的缺陷（客户端半个从未被加载）、**已复现但尚未判定**的那一环（页面收到了投递、草稿却为空）、四个分层探针各自的量法与最近结果、自述诊断的日志格式、夹具坑、以及"探针会改用户持久状态"的教训。**接手拖拽这件事先读它。** |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
 | `scripts/test-memory.mjs` | 零 token 记忆回归（386 项断言，进 `npm test`） |
@@ -85,7 +86,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：89
+> 陷阱条数：91
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -284,6 +285,14 @@
     - **为什么门禁没发现**：① `install-into-profile.mjs` 的"成功判据"是 `patch.includes(PKG)` —— 一个**子串**检查，它证明"文件里出现过包名"，证明不了"有一行 id 挂载了它"；② `test-installer.mjs` 当时的断言是"`cordis.patch.yml` 的仓库内容是**前缀**，且追加块里有这个包名" —— 这条断言**把 bug 写成了期望**，等于给故障盖了章；③ `check-patch-yaml.mjs` 当时只断言 id **不冲突**（证明不了它**存在**）；④ e2e 探针 `drop-to-mention-e2e.mjs` 起实例时**没传 `--patch`**，于是它那台 profile 本来就不加载客户端半个，那条"该 profile 自己加载了客户端半个"永远红 —— **一条长期为红的断言，等于没有断言**（同族：坑 56/59/69）。
     - **修法与纪律**：① **那一行必须是发布物的一部分**，写进权威源 `dsh/profile/notes-assistant.patch.yml`（由 build 内嵌进 `main.js`，每次启动重写时自然带上）；② 安装器只做"**装包 + 校验行在**"，**不再往任何 patch 文件写行**；③ 门禁从"不冲突"改成**"恰好出现一次"**（零次＝静默失效，两次＝`duplicate loader entry id` 整个 profile 起不来），并**变异验证**过两种红；④ 探针改为照抄插件真实启动参数（含 `--patch`），于是那条断言第一次真的在测装配路径；⑤ **判据要锚在结构上，不要锚在子串上**："装好了"必须由"能解析出一行 id、且它指向的包确实存在"来证，不能由 `includes('包名')` 来证。
     - **为什么这条值得记**：拖拽功能**每一段代码都测过、每一段也都是对的**（解析、载荷、合成 paste、SSE、CSRF），坏的是**装配**——而装配恰好落在"安装器"与"插件每次启动重写 overlay"这两个各自都很合理的设计的**接缝**上。**"装进 profile"不等于"界面里加载了它"**；凡是有"安装期写文件 + 运行期重写同一文件"的地方，都要问一句**谁是权威、谁会覆盖谁**。
+90. **★ 拿一个"沉默的旧构建"的观察结果去判定新代码有没有被执行**（2026-09-21/25，查拖拽时踩到）。
+    - **形态**：真实侧栏实例（127.0.0.1:3180，经插件反代）上，我量到"页面订阅了 `/mention-stream`、服务端推一条、页面 `message` 事件**确实收到** `"路径"`、可草稿是空的"，于是判定"消息处理器那一段没落笔"。**这个结论当时是无效的**：那台实例上跑的客户端包是**旧构建**（`lib/client.js` 在页面加载时取，服务重启前一直是旧的），它根本**没有**我刚加的自述诊断代码——于是"日志里没有诊断行"被我读成了"处理器没执行"，而真相是"那段代码不在运行的包里"。
+    - **为什么危险**：这是坑 88（文本 vs 配置）的近亲 —— **"我没观察到" ≠ "它没发生"**：观察通道本身可能是旧版本、或压根不存在。用一条"还没被部署的代码"的沉默当证据，等于拿空气当证据；而它会把排查方向引到完全错误的地方（我当时已经开始怀疑 SSE 解析与事件次序）。
+    - **纪律**：① 判定"某段代码有没有被执行"之前，**先证明那段代码在运行的构建里**（取它自己的特征串/导出名去当前页面或当前产物里查一次，例如 `describeMentionInsert` 在不在服务的 bundle 里）；② **让被观察的东西自己说话**：静默的失败分支必须自述（`describeMentionInsert` + `/mention-report`），而不是靠外部推断"没看到 ⇒ 没发生"；③ 客户端包是**页面加载时**取的 —— 改了 `lib/client.js` 之后，**旧页面仍是旧代码**，"重启服务"与"刷新页面"是两件不同的事。
+91. **★ 测试探针改动了用户的持久状态：一条"零 token 可随意跑"的探针，往侧栏塞了 38 条垃圾工作区**（2026-09-21/25，我自己造成的）。
+    - **形态**：`dsh/profile/math-memory-workspace.mjs` 会把 `DSH_WORKSPACE_ROOT` **登记**进 `$DSH_HOME/storages/workspace.json`。而 QA 探针为了不碰真实 vault，都用 `mkdtempSync` 造临时 vault 起 dsh ⇒ **每跑一次探针，用户侧栏的「工作区」列表里就多一条 `C:\Windows\Temp\dsh-*-probe-*/vault`**。反复调试拖拽那几天累计塞进 **38 条**，列表里全是同名 `vault` / `probe-vault-*`。
+    - **为什么危险**：工作区登记是**持久**的（写在 json 里、不是进程内状态），而且探针"零 token、可随意跑"这个表述**诱导人把它当成无副作用**。它的副作用还与排查混在一起：列表被垃圾项填满后，页面会先显示"选择工作区"而不是直接给输入框 —— **看起来像功能坏了**，实际是我的探针弄脏了用户环境。
+    - **纪律**：① 探针前先问"它会写哪些**持久**状态"（workspace.json、settings、`.agent-presets`、会话目录…），会写就**用完立刻清**；② 清理要做成**按判据**的脚本（`scripts/qa/clean-probe-workspaces.mjs`：只删系统临时目录下的登记、先写 `.bak`、默认 dry-run），而不是手改 json —— `test-agent-preset.mjs` 早就有这条纪律（固定探针路径 + 用完摘登记），新探针必须照做；③ 探针的 vault 目录要用**唯一名字**，同名既让夹具无法确定性点中，也让垃圾项更难辨认。
 
 ## 5. 用户决策记录（不要推翻）
 
@@ -373,7 +382,9 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **检索：关系信任 + 锚点槽位** | GraphMemix 的「查询条件化关系信任」需要 `related`/`source` 边带可信度（可用 `verified_by`/`harmed` 当先验）；触发条件写在 `retrieval-v3.md` §7.4 | 低（有触发条件） |
 | **多视图 max-pool 复测** | 本轮实测 Δ=0 且排名变差，保持单袋默认；出现「标题精确命中却排在 5 名之后」的真实稀释案例时，先补 ground-truth 用例再复测（`retrieval-v3.md` §7.2） | 低（有触发条件） |
 | **（可选）settings.section i18n** | `label` 已可用；若需多语言再补 | 低 |
-| **拖拽引用：把 Obsidian 笔记拖进侧栏 dsh** | ✅ **已实现并实测可用（2026-09-21）**。规格与落地记录见 [`docs/drag-drop-design-2026-09-21.md`](drag-drop-design-2026-09-21.md)；装配缺口的完整排查见 `docs/changelog.md`「2026-09-21（续）」与陷阱 89。链路：文件树拖拽 → Obsidian 侧落点（跨源 iframe 收不到拖拽）→ 解析 `obsidian://open?vault=…&file=<库内路径>` → 送进页面 → 在 composer 上派发一次合成 `paste`（文本 `@库内路径 `）→ 宿主自己的 paste 处理器插到光标处。实现 = `dsh/client-panel/src/drop-mention/`（纯解析 + DOM 接线），装配在 `index.jsx` 的 `apply()`。**装配**：客户端半个的 loader 行住在 `dsh/profile/notes-assistant.patch.yml`（唯一权威，随 `main.js` 内嵌），安装器只装包 + 校验行在。**验证**：零 token 回归 **64 项**（门禁 `test: drop-to-mention`，跑真产物 + 变异验证）+ 端到端探针 **14/14**（`scripts/qa/drop-to-mention-e2e.mjs`，照抄插件真实启动参数：实例自己加载客户端半个 `present:true, handlers:5`，真拖拽 → 草稿出现 `@路径`，且插在光标处而非替换草稿）+ 接缝探针 7/7（`composer-drop-probe.mjs`）+ 门禁 `check: shipped yaml parses` 20/20（含"loader 行恰好挂一次"的两种变异验证）。⚠️ **仍未实测**：**文件夹**与**编辑器里选中文字**两种拖拽的载荷（探针没跑通），实现按"解不出 `file=` 就忽略"处理 | 完成（两项待测） |
+| **拖拽引用：把 Obsidian 笔记拖进侧栏 dsh** | ⚠️ **部分实现 —— 未完成，接续入口见 [`docs/drag-to-mention-progress-2026-09-25.md`](drag-to-mention-progress-2026-09-25.md)**。**已修好并实测证实**的缺陷：客户端半个（拖拽的接收端）此前**从未被加载** —— 包躺在 `node_modules` 里，但 loader 行写进了不参与启动、且每次开机被内嵌副本覆盖的 `cordis.patch.yml`。现在那一行住在权威源 `dsh/profile/notes-assistant.patch.yml`（随 `main.js` 内嵌），安装器只"装包 + 校验行在"，门禁按**恰好出现一次**守（含零次/两次变异验证）。证：修前 `/` 的 HTML 里 `memory-panel` 出现 **0 次**，修后出现 client bundle 且实例干净启动。**仍未判定的一环**：真实侧栏上 `__dshMentionInsert` 存在且直调就能落笔、页面也确实订阅并**收到了** SSE 消息（`errors:0`），**但草稿仍为空** ⇒ "消息处理器是否调用了落笔"还没定论（产品已加自述诊断，下一次拖拽会写进插件日志）。⚠️ **用户更正：这个问题在 dsh 升级前就存在**，不是升级引入的。规格与落地记录见 [`docs/drag-drop-design-2026-09-21.md`](drag-drop-design-2026-09-21.md) | **未完成** |
+| **dsh 0.1.7 适配：preset 不再是 `.agent-presets/` 目录** | 用户机器上的 `@deepseek-ai/dsh` 于 2026-09-25 升到 **`0.1.7-rc.2`**，它**不再读** `$DSH_HOME/.agent-presets/<id>/`（内置技能 `editing-cordis-compositions` 原文：*"Nothing reads that directory any more."*）。preset 改为 `@deepseek-ai/dsh-agent-preset` 的**插件行声明**（`presets/<id>.patch.yml`）。后果：`notes-assistant` preset 认不出来 ⇒ **会话完全起不来**（连 composer 都不会出现）。实测报错 `agent-preset/not-found: Unknown agent preset: notes-assistant`，`available=["standard","ptc","minimal","cordis"]`。判据：`node scripts/run-gates.mjs --only 'agent preset mounts'` 红，且**在纯净 HEAD 上一样红** ⇒ **环境结果，不是本仓回归**（按 AGENTS.md §4 不要去改断言/文档"修"它）。修法（须由维护者按 0.1.7 的 bundle 声明格式迁移 preset，用户 2026-09-25 决定**新开会话专门做**） | **高（阻塞侧栏可用）** |
+| **`math-memory-workspace.mjs` 的登记副作用** | 它把 `DSH_WORKSPACE_ROOT` **登记**进 `$DSH_HOME/storages/workspace.json`（持久）。所有 QA 探针都用临时 vault 起 dsh ⇒ 每跑一次就在用户侧栏多一条垃圾工作区（2026-09-25 累计 38 条，已用 `scripts/qa/clean-probe-workspaces.mjs` 摘除）。**探针侧规矩**已写进陷阱 91；可选的产品侧改进：给登记加"探针/临时目录不登记"的开关，或让探针用独立 `DSH_HOME` | 中 |
 | **`working.md` 的 500 字符上限** | 它是注入里唯一的「工作上下文」，但模板五字段（当前问题/子目标/已证·已失败/已检索·已排除/下一步）光标签就约 120 字符，500 装不下真正的进度 ⇒ 实际能承载的只有一两行。提到 800–1000 或精简模板，二选一；**要与注入体积一起量**再定。⚠️ 原文引用的行号（`math-memory.mjs:3797`）与「`clip()` 对它是头截断」已在 2026-09-21 变更——`clip` 现为**头尾都保**，行号以当时代码为准 | 低（需先量） |
 | **拖拽：文件夹与编辑器选中文字的载荷未实测** | `scripts/qa/drag-payload-probe.mjs` 只测出了**文件树里拖一篇笔记**的载荷（`obsidian://open?vault=…&file=…`）。**文件夹**（要先把文件夹展开 + 真实鼠标动作）与**编辑器里选中文字**两种没测出来；实现按"解不出 `file=` 就忽略"处理，**不猜**。要支持它们，先补探针再改解析器 | 中 |
 | **卸载会留下客户端半个的包目录** | `dsh/install.mjs` 的 `--direct` 分支现在会把 `@dsh-math-memory/client-ui-memory-panel` 装进 profile 的 `node_modules/`（拖拽引用与记忆面板的客户端半个）。`uninstall` 按 marker 删的是 `cordis.patch.yml` 等**文件**，**不删**这个包目录 ⇒ 卸载后残留一个不再被 patch 引用的目录（无害但不对称）。修法：给 `node_modules/@dsh-math-memory/**` 也写进 owner marker 的删除清单 | 低 |
