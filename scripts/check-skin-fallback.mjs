@@ -55,14 +55,32 @@ const problems = [];
 const mountStart = template.indexOf('function skinCenterMountable');
 const mountEnd = template.indexOf('function skinCenterInstallable');
 const mountBody = mountStart >= 0 && mountEnd > mountStart ? template.slice(mountStart, mountEnd) : '';
-if (mountBody === '') {
-  problems.push('skinCenterMountable / skinCenterInstallable not found in obsidian/main.template.js');
+// The predicates DELEGATE (skinCenterMountable → skinCenterInstalled → the scope),
+// so the "packages live in THIS profile" assertion has to span the whole helper
+// block, not just the mount function. Written after a refactor moved the scope
+// check one level down and left the old assertion failing on a correct tree.
+const predicateStart = template.indexOf('function obsidianSkinScope');
+const predicates = predicateStart >= 0 && mountEnd > predicateStart ? template.slice(predicateStart, mountEnd) : '';
+if (mountBody === '' || predicates === '') {
+  problems.push('skinCenterMountable / skinCenterInstalled / obsidianSkinScope not found in obsidian/main.template.js');
 } else {
-  if (!/obsidianSkinScope\(home\)/.test(mountBody)) {
-    problems.push('skinCenterMountable no longer checks THIS profile\'s scope (@linxin666 must be installed here before the row is appended, or the profile cannot boot)');
+  if (!/obsidianSkinScope\(home\)/.test(predicates)) {
+    problems.push('the skin-center predicates no longer resolve packages from THIS profile\'s scope (@linxin666 must be installed here before the row is appended, or the profile cannot boot)');
+  }
+  if (!/skinCenterInstalled\(home\)/.test(mountBody)) {
+    problems.push('skinCenterMountable no longer requires the packages to be installed IN THIS profile');
   }
   if (/webSkinScope\(home\)/.test(mountBody)) {
     problems.push('skinCenterMountable went back to checking the WEB profile\'s scope — that is the mirror-era condition');
+  }
+  // …and it must not re-insert what a registered bundle already inserts. Both
+  // skin-center packages declare their own `dsh.bundle.patch` inserting exactly the
+  // two rows SKIN_CENTER_INSERT inserts; `dsh plugin add` (the settings button)
+  // registers them as bundles, so appending our block afterwards would repeat the
+  // same entry ids (measured on the real profile 2026-09-26: the composed config
+  // shows those rows coming from `# == @linxin666/dsh-client-ui-skin-center`).
+  if (!/skinCenterBundled\(home\)/.test(mountBody)) {
+    problems.push('skinCenterMountable does not consult the profile bundles — it would re-insert rows a registered bundle already provides');
   }
 }
 if (!/function installSkinCenterPackages/.test(template)) {

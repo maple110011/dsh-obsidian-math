@@ -85,6 +85,46 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 实机测试抓到的第一个缺陷：皮肤中心行会被插两遍
+
+**怎么发现的**：本机 `$DSH_HOME` 里**没有 `notes-assistant` profile**（2026-09-25 那次全损删掉了，
+之后一直没重建），所以两条最该真跑的门禁长期 SKIP。把 profile 用离线通道铺出来之后：
+
+1. 两条 SKIP 变成真跑：`test: agent preset mounts` **16/16**、`test: panel auth e2e` **8/8**
+   ⇒ 全量 **49/49 passed, 0 skipped**（这是本轮第一次没有 SKIP）；
+2. 顺手把 P2-D 那个按钮干的活（`dsh plugin --profile notes-assistant add` 两个皮肤中心包）
+   在真机上跑了一遍——**这是 P2-D 里唯一没有被任何自动化覆盖的一步**；
+3. 跑完看组合结果才发现问题：`dsh plugin add` 把两个包登记进了 profile 的
+   `dsh.profile.bundles`，于是**它们自带的 patch**（`dsh.bundle.patch` → `cordis.patch.yml`）
+   已经把 `ui-skin-center` / `ui-web-ui-settings` 两行插进去了——
+   `dsh --dump-config` 里这两行标着 `# == @linxin666/dsh-client-ui-skin-center`，即**来自包本身**。
+
+而用户的设置里 `enableSkinCenter: true`，插件还会往 overlay **再插一次同样的 id**。
+
+**为什么必须修**：同 id 插两次在语义上就是错的（能不能被 dsh 容忍是另一回事——我没能用
+`--dump-config` 证伪，因为它不渲染 preset 组合体内的行）。而这条路径以前不会被触发，因为
+"包在、且已登记成 bundle"这个状态**只有在用那个按钮之后才会出现**，而按钮是 2026-09-26 才有的。
+
+**修法**：把判据拆成三个，各司其职——
+- `skinCenterInstalled(home)`：这两个包在**本 profile** 里可解析（按钮与状态行用它）；
+- `skinCenterBundled(home)`：本 profile 的 `dsh.profile.bundles` 里已经有它们（读
+  `profiles/<name>/package.json`）；
+- `skinCenterMountable(settings, home)`：开关开 **且** 已安装 **且** 未登记成 bundle
+  ——只有这种情况才轮到插件插入挂载行。
+连带的用户可见变化：**点过按钮之后那个开关就不再控制皮肤中心了**（行由包自己的 patch 提供），
+所以设置页文案与提示都改了，按钮的成功提示也分两种情形如实说明。
+（按钮的完成判据必须用 `skinCenterInstalled` 而不是 `skinCenterMountable`——装成 bundle 之后
+后者**故意**是 false，用错会让一次成功的安装被报成失败。）
+
+**守卫**：`check-skin-fallback.mjs` 新增"挂载判据必须读 profile bundles"这条断言；
+并把上一轮那条"必须检查本 profile 的 scope"改成**跟随委托关系**（判据下沉到 `skinCenterInstalled`
+之后，旧断言在一个正确的树上误报了——这本身也是它该被改写的信号，而不是放宽它）。
+变异验证：**M15** 拿掉 bundle 判据 ⇒ 精确报那一条；**M16** 判据退回 web scope ⇒ 报
+mirror-era + bundle 两条；恢复后绿。
+
+**验证**：真 profile 组合结果里 `id: ui-skin-center` 与 `id: ui-web-ui-settings` **各出现 1 次**；
+`node scripts/run-gates.mjs` = **49/49 passed, 0 skipped**。
+
 ## 2026-09-26 · 第二对重复实现合并，且扫描覆盖共享模块（P2-B 第三步）
 
 **合并 `setTopFieldText`（preset）/ `setTopField`（host）。** 与上一对不同，这一对**不是同义代码**：

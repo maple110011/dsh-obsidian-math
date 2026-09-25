@@ -1656,13 +1656,48 @@ function packagesPresent(scope, packages = SKIN_CENTER_PACKAGES) {
 }
 
 /**
- * True when the skin center can be MOUNTED: the toggle is on AND both packages
- * are installed in THIS profile. Pure filesystem check on purpose — this runs
- * inside `writeNotesAssistantPatch`, which must never have side effects.
+ * The `dsh.profile.bundles` of THIS profile.
+ *
+ * Matters because a registered bundle contributes its OWN patch: both skin-center
+ * packages declare `dsh.bundle.patch` pointing at a patch that inserts exactly the
+ * two rows `SKIN_CENTER_INSERT` inserts. So once they are bundles, appending that
+ * block here would repeat the same entry ids — verified on the real profile
+ * (2026-09-26) with `dsh --profile notes-assistant --dump-config`, where the rows
+ * appear under `# == @linxin666/dsh-client-ui-skin-center`, i.e. they come from the
+ * package, not from our overlay. `dsh plugin add` (which the button below runs)
+ * registers a bundle, so this is the normal outcome of using that button.
+ */
+function profileBundles(home) {
+  try {
+    const parsed = JSON.parse(readFileSync(join(home, 'profiles', PRESET_NAME, 'package.json'), 'utf8'));
+    const bundles = parsed?.dsh?.profile?.bundles;
+    return Array.isArray(bundles) ? bundles : [];
+  } catch {
+    return [];
+  }
+}
+
+/** True when both skin-center packages are RESOLVABLE in this profile (whatever provides them). */
+function skinCenterInstalled(home) {
+  return packagesPresent(obsidianSkinScope(home));
+}
+
+/** True when this profile already carries both packages as registered bundles. */
+function skinCenterBundled(home) {
+  const bundles = profileBundles(home);
+  return SKIN_CENTER_PACKAGES.every((pkg) => bundles.includes('@linxin666/' + pkg));
+}
+
+/**
+ * True when the plugin ITSELF must mount the skin center: the toggle is on, both
+ * packages are installed in THIS profile, and their own bundle patches are not
+ * already inserting those rows. Pure filesystem check on purpose — this runs inside
+ * `writeNotesAssistantPatch`, which must never have side effects.
  */
 function skinCenterMountable(settings, home) {
   if (settings.enableSkinCenter !== true) return false;
-  return packagesPresent(obsidianSkinScope(home));
+  if (!skinCenterInstalled(home)) return false;
+  return !skinCenterBundled(home);
 }
 
 /**
@@ -1708,8 +1743,21 @@ function installSkinCenterPackages(home, done) {
   child.on('error', (error) => done({ ok: false, detail: String(error) }));
   child.on('close', () => {
     // Never trust the exit code alone: the packages must be resolvable HERE.
-    const ok = skinCenterMountable({ enableSkinCenter: true }, home);
-    done({ ok, detail: ok ? '已安装到 ' + obsidianSkinScope(home) : '安装命令已结束，但 ' + obsidianSkinScope(home) + ' 里仍找不到这两个包' });
+    // NOTE the predicate: `skinCenterInstalled`, not `skinCenterMountable` —
+    // `dsh plugin add` registers them as BUNDLES, and a bundled skin center needs no
+    // insert from us, so the mount predicate is deliberately false right after a
+    // successful install.
+    const ok = skinCenterInstalled(home);
+    if (!ok) {
+      done({ ok: false, detail: '安装命令已结束，但 ' + obsidianSkinScope(home) + ' 里仍找不到这两个包' });
+      return;
+    }
+    done({
+      ok: true,
+      detail: skinCenterBundled(home)
+        ? '已作为 profile bundle 安装（皮肤中心行由这两个包自己的 patch 提供）'
+        : '已安装到 ' + obsidianSkinScope(home) + '（插件会负责插入挂载行）'
+    });
   });
 }
 
@@ -3363,7 +3411,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('挂载皮肤中心 UI（高级 / 通常无需开启）')
-      .setDesc('在笔记 profile 里额外挂载皮肤中心（皮肤选择 + 背景透明度）与它的设置卡宿主。注意：(1) 自 dsh-web-all 0.3.20 起聚合包已自带皮肤中心，装了聚合包的机器上这个开关是冗余的（宿主半边只跑一次、浏览器半边按包名去重）；它只覆盖「有皮肤包、没有聚合包」的 web profile。(2) **侧栏与皮肤的关系已经改简单了**：插件过去用目录链接（junction）把 web profile 的 @linxin666 整片镜像过来，那是本机上唯一还在自动建链接的机制，已于 2026-09-26 退役。现在这两个包需要**真的装进笔记 profile**——点下面的按钮做一次（走 dsh plugin add，需要 pnpm / 网络），装好之前这个开关即使打开也不会挂载（挂一个解析不到的包会起不来）。(3) 皮肤**本体**不再依赖全局 cordis.patch.yml 插入（skin-center 0.4.x 已不再改写它），所以关掉这个开关就只是没有那个选择器 UI。改动需重启 dsh 服务后生效。')
+      .setDesc('在笔记 profile 里额外挂载皮肤中心（皮肤选择 + 背景透明度）与它的设置卡宿主。注意：(1) 自 dsh-web-all 0.3.20 起聚合包已自带皮肤中心，装了聚合包的机器上这个开关是冗余的（宿主半边只跑一次、浏览器半边按包名去重）；它只覆盖「有皮肤包、没有聚合包」的 web profile。(2) **侧栏与皮肤的关系已经改简单了**：插件过去用目录链接（junction）把 web profile 的 @linxin666 整片镜像过来，那是本机上唯一还在自动建链接的机制，已于 2026-09-26 退役。现在这两个包需要**真的装进笔记 profile**——点下面的按钮做一次（走 dsh plugin add，需要 pnpm / 网络），装好之前这个开关即使打开也不会挂载（挂一个解析不到的包会起不来）。(3) ⚠️ **那个按钮装完这个开关就不再管用了**：`dsh plugin add` 会把它登记成 profile 的 **bundle**，而这两个包自带 patch、自己就会插入挂载行，所以它们会**一直挂着**；插件不会再重复插一遍（同 id 插两次是错的），此开关只剩下「包在、但没登记成 bundle」这一种情形还有意义。(4) 皮肤**本体**不再依赖全局 cordis.patch.yml 插入（skin-center 0.4.x 已不再改写它）。改动需重启 dsh 服务后生效。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.enableSkinCenter).onChange(async (value) => {
         this.plugin.settings.enableSkinCenter = value;
         await this.plugin.saveSettings();
@@ -3371,8 +3419,10 @@ class DshObsidianSettingTab extends PluginSettingTab {
           const location = this.plugin.service.location();
           if (location !== null) {
             writeNotesAssistantPatch(this.plugin, location.home);
-            if (value && !skinCenterMountable(this.plugin.settings, location.home)) {
+            if (value && !skinCenterInstalled(location.home)) {
               new Notice('已开启皮肤中心，但这两个包还没装进笔记 profile：请点下面的「把皮肤中心装进侧栏 profile」按钮。');
+            } else if (value && skinCenterBundled(location.home)) {
+              new Notice('皮肤中心是照包的 bundle patch 挂载的（不受这个开关控制）；重启 dsh 服务后生效。');
             } else {
               new Notice(value ? '皮肤中心已开启，重启 dsh 服务后生效。' : '皮肤中心已关闭，重启 dsh 服务后生效。');
             }
@@ -3390,8 +3440,10 @@ class DshObsidianSettingTab extends PluginSettingTab {
       .setName('把皮肤中心装进侧栏 profile')
       .setDesc(this.plugin.service.location() === null
         ? '未检测到 dsh：先在设置里配置 dsh 安装目录。'
-        : (skinCenterMountable({ enableSkinCenter: true }, this.plugin.service.location().home)
-          ? '✅ 已安装（' + obsidianSkinScope(this.plugin.service.location().home) + '）。'
+        : (skinCenterInstalled(this.plugin.service.location().home)
+          ? (skinCenterBundled(this.plugin.service.location().home)
+            ? '✅ 已安装为 profile bundle——皮肤中心行由这两个包自己的 patch 提供，已不受上面的开关控制。'
+            : '✅ 已安装到 ' + obsidianSkinScope(this.plugin.service.location().home) + '（插件负责插入挂载行，受上面的开关控制）。')
           : (skinCenterInstallable(this.plugin.service.location().home)
             ? '运行 `dsh plugin --profile ' + PRESET_NAME + ' add @linxin666/dsh-client-ui-skin-center @linxin666/dsh-client-ui-web-ui-settings`。需要 pnpm 与网络，可能要几十秒。'
             : '未检测到 web profile 里的皮肤包，暂时没有可装的版本。')))
@@ -3405,7 +3457,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
           new Notice('开始安装皮肤中心包（可能需要几十秒）…');
           installSkinCenterPackages(location.home, async (result) => {
             if (result.ok) {
-              new Notice('皮肤中心包已装进笔记 profile：重启 dsh 服务后生效。');
+              new Notice('皮肤中心包已装进笔记 profile：重启 dsh 服务后生效。' + result.detail);
             } else {
               new Notice('皮肤中心包安装未完成：' + result.detail);
             }
