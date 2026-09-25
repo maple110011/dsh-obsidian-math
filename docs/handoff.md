@@ -292,7 +292,7 @@
 91. **★ 测试探针改动了用户的持久状态：一条"零 token 可随意跑"的探针，往侧栏塞了 38 条垃圾工作区**（2026-09-21/25，我自己造成的）。
     - **形态**：`dsh/profile/math-memory-workspace.mjs` 会把 `DSH_WORKSPACE_ROOT` **登记**进 `$DSH_HOME/storages/workspace.json`。而 QA 探针为了不碰真实 vault，都用 `mkdtempSync` 造临时 vault 起 dsh ⇒ **每跑一次探针，用户侧栏的「工作区」列表里就多一条 `C:\Windows\Temp\dsh-*-probe-*/vault`**。反复调试拖拽那几天累计塞进 **38 条**，列表里全是同名 `vault` / `probe-vault-*`。
     - **为什么危险**：工作区登记是**持久**的（写在 json 里、不是进程内状态），而且探针"零 token、可随意跑"这个表述**诱导人把它当成无副作用**。它的副作用还与排查混在一起：列表被垃圾项填满后，页面会先显示"选择工作区"而不是直接给输入框 —— **看起来像功能坏了**，实际是我的探针弄脏了用户环境。
-    - **纪律**：① 探针前先问"它会写哪些**持久**状态"（workspace.json、settings、`.agent-presets`、会话目录…），会写就**用完立刻清**；② 清理要做成**按判据**的脚本（`scripts/qa/clean-probe-workspaces.mjs`：只删系统临时目录下的登记、先写 `.bak`、默认 dry-run），而不是手改 json —— `test-agent-preset.mjs` 早就有这条纪律（固定探针路径 + 用完摘登记），新探针必须照做；③ 探针的 vault 目录要用**唯一名字**，同名既让夹具无法确定性点中，也让垃圾项更难辨认。
+    - **纪律**：① 探针前先问"它会写哪些**持久**状态"（workspace.json、settings、`.agent-presets`、会话目录…），会写就**用完立刻清**；② 清理要做成**按判据**的脚本（`scripts/qa/clean-probe-workspaces.mjs`：只删系统临时目录下的登记、先写 `.bak`、默认 dry-run），而不是手改 json —— `test-agent-preset.mjs` 早就有这条纪律（固定探针路径 + 用完摘登记），新探针必须照做；③ 探针的 vault 目录要用**唯一名字**，同名既让夹具无法确定性点中，也让垃圾项更难辨认；④ **"用完清理"不够，最好让它一开始就写不到**：`scripts/lib/isolated-dsh-home.mjs` 给探针种一个临时 `$DSH_HOME`（复制 profile 要点 + junction 链 node_modules），登记于是写进副本。注意两个反例：**删目录前要先读登记表**（顺序反了 `catch` 会返回 0 ⇒ 断言永远绿），以及**路径比较必须归一化**（`dsh` 写的是反斜杠路径，拿正斜杠前缀 `startsWith` 一条都匹配不到 —— 这是同一条断言"永远绿"的第二个原因；两处都做过变异验证）。
 
 ## 5. 用户决策记录（不要推翻）
 

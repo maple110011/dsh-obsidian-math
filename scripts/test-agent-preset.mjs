@@ -19,6 +19,7 @@
 // 否则按设计 SKIP 并 exit 0（与 scripts/test-panel-auth.mjs 同一约定）。
 import { readFileSync, existsSync, mkdtempSync, mkdirSync, rmSync, openSync, closeSync } from 'node:fs';
 import { pruneWorkspaces } from './lib/workspace-registry.mjs';
+import { seedIsolatedHome, removeIsolatedHome } from './lib/isolated-dsh-home.mjs';
 import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
@@ -41,19 +42,31 @@ check('preset 里有 persona 行', personaBlock.length > 0);
 check('persona 用 `prefix:`（dsh-persona ≥0.1.5-rc.1 的必填字段）', /^\s{4}prefix:\s*>-/m.test(personaBlock), personaBlock.match(/^\s{4}\w+:/m)?.[0]?.trim() ?? '(none)');
 check('persona 不再用旧字段 `text:`（旧写法会让 preset 挂载失败）', !/^\s{4}text:/m.test(personaBlock));
 
-const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
+// 真实 home：**只读**，用来判断"这套装好了没"以及给下面对照源码漂移。
+const realDshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
 const installDir = join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh');
 const binJs = join(installDir, 'lib', 'bin.js');
-const patch = join(dshHome, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
-const installedPreset = join(dshHome, '.agent-presets', 'notes-assistant', 'agent.cordis.yml');
-if (!existsSync(binJs) || !existsSync(patch) || !existsSync(installedPreset)) {
+const realPatch = join(realDshHome, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
+const installedPreset = join(realDshHome, '.agent-presets', 'notes-assistant', 'agent.cordis.yml');
+if (!existsSync(binJs) || !existsSync(realPatch) || !existsSync(installedPreset)) {
   console.log('agent-preset-e2e: SKIP (needs an installed dsh + notes-assistant profile; 零 token 部分已跑)');
   console.log(`  binJs: ${binJs} (${existsSync(binJs)})`);
-  console.log(`  patch: ${patch} (${existsSync(patch)})`);
+  console.log(`  patch: ${realPatch} (${existsSync(realPatch)})`);
   console.log(`  installed preset: ${installedPreset} (${existsSync(installedPreset)})`);
   console.log(`__CHECKS__ ${passed}/${total}`);
   process.exit(0);
 }
+
+// 本次会话**真正用来启动 dsh** 的 home：临时目录里种一份副本（见 isolated-dsh-home.mjs 的 WHY）。
+// 这样 `session/create` 登记工作区时写的是副本，用户侧栏不会被探针塞垃圾 —— 而"用完摘掉登记"
+// 那条清理仍然保留（双保险）。
+//
+// ⚠️ **不要**把 preset 目录整个 `cpSync(recursive)` 进来：`.agent-presets/<profile>/` 里可能含
+// `node_modules` 的 **junction**，而 cpSync 会**跟着链接递归**，实测直接把进程打成
+// `exit=-1073740791`（栈溢出）。只种"启动要点"：目录本身 + 一层文件。
+const dshHome = mkdtempSync(join(tmpdir(), 'dsh-preset-home-'));
+seedIsolatedHome(dshHome, realDshHome, { withPreset: true });
+const patch = join(dshHome, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
 
 /** Deployed copy vs repo source: the installed preset is what dsh actually reads. */
 const deployed = readFileSync(installedPreset, 'utf8');
@@ -173,18 +186,38 @@ try {
     if (removed !== null && removed > 0) { probeRegistered = removed; break; }
     await sleep(500);
   }
-  for (const dir of [logDir, workspace]) {
-    if (dir !== null) { try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ } }
-  }
-  // 探针留下的痕迹必须为零：否则用户的侧栏会出现一个他从未创建过的「工作区」。
+  // ⚠️ **先读登记表，再删目录**。这里曾经把删除放在前面，于是"摘掉登记"那条断言读的是一个
+  // 已经被删掉的文件 ⇒ catch 分支返回 0 ⇒ **它永远是绿的**（又一条不会失败的断言）。
+  // 另外一条重要纪律：路径比较必须**归一化**。`dsh` 写进表里的是反斜杠路径（且大小写随系统），
+  // 直接拿正斜杠前缀去 `startsWith` 会**一条都匹配不到** —— 那是它曾经"永远绿"的第二个原因
+  // （第一个是删目录在前）。归一化做法与 `pruneWorkspaces` 一致。
+  const norm = (p) => String(p ?? '').replaceAll('\\', '/').toLowerCase();
   const leftovers = (() => {
     try {
       const parsed = JSON.parse(readFileSync(join(dshHome, 'storages', 'workspace.json'), 'utf8'));
-      return Object.values(parsed?.tables?.workspaces ?? {}).filter((v) => typeof v?.path === 'string' && v.path.startsWith(PROBE_WORKSPACE)).length;
+      const want = norm(PROBE_WORKSPACE);
+      return Object.values(parsed?.tables?.workspaces ?? {}).filter((v) => norm(v?.path).startsWith(want)).length;
+    } catch { return 0; }
+  })();
+  const userLeftovers = (() => {
+    try {
+      const parsed = JSON.parse(readFileSync(join(realDshHome, 'storages', 'workspace.json'), 'utf8'));
+      const tmp = norm(tmpdir()).replace(/\/+$/u, '');
+      return Object.values(parsed?.tables?.workspaces ?? {}).filter((v) => {
+        const p = norm(v?.path);
+        return p === tmp || p.startsWith(tmp + '/');
+      }).length;
     } catch { return 0; }
   })();
   const stripped = probeRegistered;
   check('探针工作区已从 dsh 的工作区登记表里摘掉（不留痕）', leftovers === 0, leftovers === 0 ? `摘掉 ${stripped} 条` : `仍残留 ${leftovers} 条`);
+  check('用户真实 $DSH_HOME 的工作区表里没有临时目录登记（探针不该碰它）', userLeftovers === 0, `残留 ${userLeftovers} 条`);
+
+  // 最后才删：临时 home（含 junction，用 removeIsolatedHome 先摘链接）与探针工作区。
+  try { rmSync(workspace, { recursive: true, force: true }); } catch { /* ignore */ }
+  if (logDir !== null) { try { rmSync(logDir, { recursive: true, force: true }); } catch { /* ignore */ } }
+  const homeGone = removeIsolatedHome(dshHome);
+  check('临时 home 已删净（含 node_modules junction）', homeGone, dshHome);
 }
 
 console.log(`__CHECKS__ ${passed}/${total}`);
