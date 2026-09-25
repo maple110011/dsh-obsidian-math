@@ -85,51 +85,78 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
-## 2026-09-26 · 实机测试抓到的第三个缺陷：每一轮回复都失败（请求扩展准备）
+## 2026-09-26 · 面板客户端包"只拷不声明"（真缺口，但**不是**下面那次故障的病因）
 
-**症状**：侧栏里每一轮回复都失败，报
-`本轮运行失败 DeepSeek request extension preparation failed`。会话日志显示它在 `request/context`
-之后约 30 ms 就 `turn/end: error` ⇒ **HTTP 之前**、**没花任何 token**。
-
-**定位过程**（值得记，因为每一步都排除了一个看起来很像的嫌疑）：
-1. 上游只有一处抛这句话：`@deepseek-ai/dsh-llm-deepseek` 的 `prepareRequestExtensions`，它把真正的
-   `cause` 包在里层，UI/会话日志**只留外层**；
-2. 贡献请求字段的插件只有两个，都在 `dsh-base`：`session-log-deepseek`（opt-in，默认关）与
-   `plugin-package-inventory-deepseek`（**默认开**）；后者的 `resolve()` 是唯一会抛的地方
-   （`cannot resolve active package "<name>"`）；
-3. 第一次复现（headless profile 里插一行"存在但未声明"的裸包名）**没触发** —— 因为那一行 inject
-   `webServer`/`workspaceRegistry`，headless 里没有这些服务，于是它**从未被激活**，而该扩展只看
-   **活动行**（`fiber.state === 2`）。这条"看起来证伪"的实验其实什么都没测。
-4. 用真 profile 的插件集 + 无头 app 复现也没触发（缺 web app 的那些服务）；
-5. 最后用**二分法**在真机的 profile 层关掉那个扩展 ⇒ **回复立刻恢复正常** ⇒ 确认贡献者。
-
-**根因（读上游代码确认）**：dsh 的运行时解析图由 `dsh-app-boot` 的
-`installedProfilePackageNames()` 构建，判据是
+⚠️ **因果更正**：本节最初把"每一轮回复都失败"归因于这个缺口。**错了**——真正的原因是 profile 清单缺
+`version`（见下一节）。这个缺口是在排查途中发现的**独立真问题**，修法保留：dsh 的运行时解析图由
+`dsh-app-boot` 的 `installedProfilePackageNames()` 构建，判据是
 > profile 的 `package.json` 的 **`dependencies` ∪ `peerDependencies`**，**且**该名字在
 > profile 的 `node_modules/<name>/package.json` 真的存在。
 
-而我们的**面板客户端半个**只满足后半条：`install-into-profile.mjs` 把包**拷进** `node_modules` 却
-**从不在 profile 的 package.json 里声明它**。于是那一行是"激活的、裸包名、不在图里" ⇒ 默认开启的
-清单扩展每次准备请求时抛错 ⇒ **每一轮回复都失败**。它只在"CLI 装过客户端半个"的 profile 上复现
-（Obsidian 单独引导的 profile 里那个包不存在 ⇒ 行不是活动的 ⇒ 不会崩，只是没有面板客户端半个）。
-
-**修法**：安装器在拷贝之后**同时声明**——把同一棵树再放一份到 profile 内的稳定目录
-`.dsh-client-panel/`，并在 profile 的 `package.json` 里写
+我们的面板客户端半个此前只满足后半条（安装器把它**拷进** `node_modules` 却**从不声明**）⇒ 那一行是
+"激活的、裸包名、不在图里"，而默认开启的清单扩展正是对"不在图里的活动行"抛错的那种消费者。
+修法：安装器拷贝之后**同时声明**——同一棵树再放一份到 profile 内的稳定目录 `.dsh-client-panel/`，
+并在 profile 的 `package.json` 里写
 `"@dsh-math-memory/client-ui-memory-panel": "file:.dsh-client-panel"`。
-`file:` 指向 profile 内、目标目录真实存在，所以 pnpm 也认这个依赖（用版本号会去 registry 取，用
-`node_modules` 里那份自己会成自引用）。两份内容一致：`node_modules` 那份负责"立即可加载 + 满足图的
-存在性判据"，`.dsh-client-panel` 那份只作为 pnpm 可解析的来源。
+`file:` 指向 profile 内、目标目录真实存在 ⇒ pnpm 也认（用版本号会去 registry 取；用 `node_modules`
+里那份自己会成自引用）。两份内容一致：`node_modules` 那份负责"立即可加载 + 满足图的存在性判据"，
+`.dsh-client-panel` 那份只作为 pnpm 可解析的来源。
 
-**踩到的坑**：第一版用 `fs.cpSync` 拷贝，在真实 `$DSH_HOME` 下报 `EIO, Access is denied`（同一个调用在
+**踩到的坑**：第一版用 `fs.cpSync` 拷贝，在真实 `$DSH_HOME` 下报 `EIO, Access is denied`（同一调用在
 `%TEMP%` 下成功 ⇒ 环境/杀软产物而非权限规则）。改成显式 `readdir + mkdir + copyFile` 的朴素实现，
 并把原因写进注释。
 
 **守卫**：`check-client-package-layout.mjs` 增 4 条断言——profile **声明**了它、`file:` 目标目录真实存在、
 `node_modules` 里存在（图的存在性判据）、重复安装不会反复改写声明（幂等）。
 
-**验证**：`node scripts/run-gates.mjs` = **50/50 passed, 0 skipped**；真机二分：关掉扩展 ⇒ 回复恢复；
-随后撤掉临时禁用、应用声明修法（真 profile 的 `dependencies` 已含该 `file:` 声明、staging 目录与
-`node_modules` 均在位）。
+**排查途中被作废的两个"像真凶"的假设**（留着免得重踩）：
+1. headless profile 里插一行"存在但未声明"的裸包名 —— **没触发**：那一行 inject
+   `webServer`/`workspaceRegistry`，headless 里没有这些服务 ⇒ 它**从未被激活**，而该扩展只看活动行
+   （`fiber.state === 2`）。这个"看似证伪"的实验其实什么都没测。
+2. 用真 profile 的插件集 + 无头 app 复现 —— 也没触发（缺 web app 的那些服务）。
+最终靠**探针插件**拿到里层 cause 才定案（见下一节）。
+
+## 2026-09-26 · 实机测试抓到的第三个缺陷：每一轮回复都失败（profile 清单缺 `version`）
+
+**症状**：侧栏里每一轮回复都失败，报
+`本轮运行失败 DeepSeek request extension preparation failed`。会话日志显示它在 `request/context`
+之后约 30 ms 就 `turn/end: error` ⇒ **HTTP 之前**、**没花任何 token**。
+
+**定位过程**（每一步都排除了一个看起来很像的嫌疑）：
+1. 上游只有一处抛这句话：`@deepseek-ai/dsh-llm-deepseek` 的 `prepareRequestExtensions`，它把真正的
+   `cause` 包在里层，UI 与会话日志**只留外层**；
+2. 贡献请求字段的插件只有两个，都在 `dsh-base`：`session-log-deepseek`（opt-in，默认关）与
+   `plugin-package-inventory-deepseek`（**默认开**）；后者的 `resolve()` 是唯一会抛的地方；
+3. 三次"端到端复现"都没触发（原因见上一节的两条作废假设）；
+4. 改用**探针插件**：在真 profile 里挂一行，把 `deepseekLlmApiExtensions.prepare` 包起来，捕获时把
+   `message`/`code`/`cause`/`aggregate`/活动行列进文件，并**临时吞掉**失败让用户先能用；
+5. 日志第一行就是铁证：
+   `plugin-package-inventory-deepseek: …\profiles\notes-assistant\package.json must declare non-empty name and version`。
+
+**根因**：profile 自己的 `package.json` **有 `name` 却缺 `version`**。链路是：该扩展解析**每一个活动行**
+的"归属清单"；**相对路径行**（`./math-memory.mjs`，正是离线通道的形态）走
+`nearestManifest()` 一路向上，落到 **profile 自己的 `package.json`**，然后上游
+`identityFromManifest(path, allowAnonymous = true)` 是这么写的：
+```js
+if (allowAnonymous && manifest.name === undefined) return undefined;   // 没有 name = loose module，放行
+if (!name || !version) throw new Error('… must declare non-empty name and version');
+```
+⇒ **有 name、缺 version 就抛**，而它在请求**准备**阶段抛，所以请求根本没发出去。
+`web` profile 从不触发，因为它所有行都是裸包名，压根不走那次向上查找——这解释了"为什么只有侧栏 profile 坏"。
+
+**修法**（三处，缺一不可）：
+- `dsh/profile/package.json` 补 `"version": "0.0.0"`（私有 profile 不需要真实版本号）；
+- `dsh/install.mjs` 新增并导出 `repairProfileManifest()`，在 `nativeInstall` 与
+  `directInstallProfile` 两条路径都调用——**因为 `copyFile` 默认保留用户可编辑文件，光改脚手架救不了
+  已装用户**；
+- `obsidian/main.template.js` 的引导里加同款 `repairProfileManifestFile()`，让 Obsidian 侧自愈。
+
+**守卫**：`test-installer.mjs` 新增 5 条断言——脚手架必须声明非空 `name`/`version`、装出来的清单两者
+都在、以及**变异式前置**（把 `version` 删掉再跑一次安装器，必须被补回，且 `dsh`/`dependencies` 不变）。
+
+**教训**：症状指向"上游适配"时，先想办法拿到**里层 cause**（这里是一个自建探针 + 一次真机复现），
+比端到端猜三轮都值；"没复现"不等于"不是它"——先确认实验真的压到了那条路径（本次两次假阴性都是
+"那一行压根不是活动行"）。
 
 ## 2026-09-26 · 实机测试抓到的第二个缺陷：卸载插件时漏掉代理监听
 

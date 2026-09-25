@@ -86,7 +86,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：99
+> 陷阱条数：100
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -333,6 +333,14 @@
     - **形态**：`syncGlobalPackageLinks` 存在的理由是"皮肤管理器把活动皮肤写进 `$DSH_HOME/cordis.patch.yml`，而那个全局层作用于**每一个** profile，所以侧栏 profile 也必须能解析 `@linxin666`"。但 skin-center **0.4.x 已经不再改写那个文件**（它自己的 README 原文：*"no reload, no cordis.patch.yml rewrite, no restart"*），并且它的 legacy bridge 会把 v1 的受管段**清掉**。本机 `$DSH_HOME/cordis.patch.yml` 里确实一行 skin 都没有 ⇒ 镜像的**全部理由**消失了，代码却仍在每次启动时建 18 条目录链接。
     - **为什么危险**：这类"为兼容上游行为而写的兜底"**不会随上游改变而报错**——它只是退化成一个纯副作用：在本机（全局禁止建链接、且刚经历过一次 harness home 全损、目录链接是疑似载体）悄悄建 18 条链接，而且**没有任何门禁能发现"前提已不成立"**，因为门禁测的是"镜像有没有清理干净"，而不是"还要不要镜像"。
     - **纪律**：① 写兜底/兼容代码时，把**它成立的前提**写进注释并给出**可复核的判据**（这里是"`$DSH_HOME/cordis.patch.yml` 里有没有 skin 行"）——下一次适配先跑那个判据；② 兜底要有**退出条件**，不能只有触发条件；③ 退役时**保留仍能独立成立的那部分防御**：机器级 patch 里若还有皮肤行，`buildSkinFallbackBlock` 仍会把它们 `disabled: true` 掉（这件事不依赖镜像）；④ 只为它存在的门禁（`check: mirror cleanup`）与代码一起删，别留着测死代码。
+
+100. **★ 一个"自己报了名、却没报版本"的清单文件，能让整条回复链路全废**（2026-09-26）。
+    - **形态**：实机侧栏里**每一轮回复**都失败，报 `本轮运行失败 DeepSeek request extension preparation failed`；会话日志显示 `request/context` 之后约 30 ms 就 `turn/end: error` ⇒ **HTTP 之前**、**没花 token**。真凶是 profile 自己的 `package.json`：它有 `name` 却**没有 `version`**。
+    - **为什么危险**：上游唯一抛那句话的地方是 `dsh-llm-deepseek` 的 `prepareRequestExtensions`，它把真正的 `cause` 包在里层（UI 与会话日志**只留外层**）⇒ 从症状读不出病因。而触发链很绕：`dsh-base` 里那个**默认开启**的 `@deepseek-ai/dsh-plugin-package-inventory-deepseek` 请求扩展会解析**每一个活动行**的"归属清单"；**相对路径行**（`./math-memory.mjs`，正是离线通道的形态）走 `nearestManifest()` 一路向上找到了 **profile 自己的 `package.json`**，然后上游的 `identityFromManifest(path, allowAnonymous=true)` 是这么写的：
+      `if (allowAnonymous && manifest.name === undefined) return undefined;`（**没有 name = 当作 loose module，放行**）
+      `if (!name || !version) throw new Error('… must declare non-empty name and version');`
+      ⇒ **有 name、缺 version 就抛**。`web` profile 从不触发，因为它所有行都是裸包名，压根不走那次向上查找。
+    - **纪律**：① 症状指向"上游/版本适配"时，先想办法拿到**里层 cause**——本轮最终靠的是"在真 profile 里挂一个包住 `prepare` 的探针插件，把 `cause`/`aggregate`/活动行列成文件"（探针同时**吞掉**失败，用户先能用），比猜三轮都值；② profile 清单这类"我以为是脚手架、其实参与解析"的文件，**只有 name 不够**：脚手架、安装器和插件引导都必须补齐 `version`，且**存量 profile 要能被修复**（`copyFile` 默认保留用户可编辑文件 ⇒ 光改脚手架救不了已装用户）；③ 中途两个"看起来证伪"的实验其实什么都没测——headless profile 里那一行 inject `webServer`/`workspaceRegistry`，没有这些服务就**不是活动行**，而该扩展只看活动行（`fiber.state === 2`）。**"没复现"不等于"不是它"**，先确认实验真的压到了那条路径。
 
 ## 5. 用户决策记录（不要推翻）
 

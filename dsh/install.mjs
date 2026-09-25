@@ -53,7 +53,7 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -246,6 +246,47 @@ function describePresetBody(profileRoot) {
 }
 
 /**
+ * Ensure a profile manifest declares non-empty `name` AND `version`.
+ *
+ * WHY (2026-09-26, real-machine failure). dsh's default-on request extension
+ * `@deepseek-ai/dsh-plugin-package-inventory-deepseek` resolves the owning manifest of
+ * every ACTIVE loader row. For a RELATIVE row (`./math-memory.mjs` — what the offline
+ * channel uses) `nearestManifest()` walks up and finds the PROFILE's own
+ * `package.json`, then dsh's `identityFromManifest(path, allowAnonymous = true)` runs:
+ *
+ *   if (allowAnonymous && manifest.name === undefined) return undefined;      // loose module: fine
+ *   if (!name || !version) throw new Error('… must declare non-empty name and version');
+ *
+ * So a manifest with a `name` but NO `version` THROWS — and because that extension runs
+ * during request PREPARATION, EVERY reply in such a profile failed with
+ * "DeepSeek request extension preparation failed" (the request was never sent). The
+ * `web` profile never hit it because all of its rows are bare package names, so the
+ * `nearestManifest` walk never happens.
+ *
+ * A private profile manifest needs no meaningful version; `0.0.0` satisfies the rule.
+ *
+ * @returns true when the file was repaired.
+ */
+export function repairProfileManifest(profileRoot) {
+  const manifestPath = join(profileRoot, "package.json");
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch {
+    return false; // no manifest yet: the scaffold copy that follows provides one
+  }
+  if (parsed === null || typeof parsed !== "object") return false;
+  const missingName = typeof parsed.name !== "string" || parsed.name.length === 0;
+  const missingVersion = typeof parsed.version !== "string" || parsed.version.length === 0;
+  if (!missingVersion && !missingName) return false;
+  const next = { ...parsed };
+  if (missingVersion) next.version = "0.0.0";
+  if (missingName) next.name = `dsh-profile-${basename(profileRoot) || "profile"}`;
+  writeFileSync(manifestPath, JSON.stringify(next, null, 2) + "\n", "utf8");
+  return true;
+}
+
+/**
  * Conflict string when the OTHER channel owns this profile, else null. The anchor
  * is the profile's `CHANNEL_MANIFEST` with the legacy `.agent-presets` marker as
  * a fallback — see `readChannelOwner` in ./host/channel-owner.mjs for why that
@@ -283,6 +324,10 @@ function nativeInstall(options, dshHome) {
   const profileRoot = join(dshHome, "profiles", options.profile);
   const firstRun = !existsSync(join(profileRoot, "package.json"));
   copyFile(options, join(PROFILE_DIR, "package.json"), join(profileRoot, "package.json"), firstRun || options.force);
+  // A profile manifest that names itself but declares no `version` makes dsh's
+  // default-on plugin-inventory request extension throw during EVERY request
+  // preparation (see repairProfileManifest) — repair both fresh and existing ones.
+  if (repairProfileManifest(profileRoot)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
   copyFile(options, join(PROFILE_DIR, "pnpm-workspace.yaml"), join(profileRoot, "pnpm-workspace.yaml"), firstRun);
 
@@ -325,6 +370,11 @@ async function directInstallProfile(options, dshHome) {
   }
   const firstRun = !existsSync(join(profileRoot, "package.json"));
   copyFile(options, join(PROFILE_DIR, "package.json"), join(profileRoot, "package.json"), firstRun || options.force);
+  // Repair an EXISTING manifest: `copyFile` above skips it unless forced, and a
+  // profile manifest that names itself but declares no `version` makes dsh's
+  // default-on plugin-inventory request extension throw during EVERY request
+  // preparation (see repairProfileManifest).
+  if (repairProfileManifest(profileRoot)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
   const postureExists = existsSync(join(profileRoot, "cordis.patch.yml"));
   copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), join(profileRoot, "cordis.patch.yml"), !postureExists || options.force);

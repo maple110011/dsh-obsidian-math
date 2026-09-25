@@ -13,8 +13,8 @@ const installer = join(repo, 'dsh', 'install.mjs');
 const run = (args) => spawnSync(process.execPath, [installer, ...args], { stdio: ['ignore', 'inherit', 'inherit'] });
 
 let failed = 0;
-const check = (label, cond) => {
-  console.log((cond ? '[ok]' : '[FAIL]'), label);
+const check = (label, cond, detail = '') => {
+  console.log((cond ? '[ok]' : '[FAIL]'), label + (detail === '' || cond ? '' : ` | ${detail}`));
   if (!cond) failed += 1;
 };
 
@@ -30,6 +30,39 @@ const profileRoot = join(home, 'profiles', 'notes-assistant');
 // overlay and its modules live in the profile directory). `uninstall` still
 // CLEANS UP a directory a pre-2026-09-26 install left behind — asserted in step 6.
 check('the retired .agent-presets directory is NOT created by --direct', !existsSync(presetRoot));
+
+// ── the profile manifest must declare name AND version ───────────────────────
+//
+// 2026-09-26 real-machine failure: every reply in this profile failed with
+// "DeepSeek request extension preparation failed" and NO request was ever sent.
+// Cause: dsh's default-on `plugin-package-inventory-deepseek` request extension
+// resolves the owning manifest of every ACTIVE row, and for our RELATIVE rows
+// (`./math-memory.mjs`) that walk lands on the profile's own `package.json`, where
+// dsh's identityFromManifest rejects a manifest that has a `name` but no `version`.
+// (A manifest with NO name is treated as a loose module and passes.) The shipped
+// scaffold lacked `version`, and `copyFile` preserves an existing user-editable file
+// — so both the scaffold and the repair path are asserted here.
+{
+  const shipped = JSON.parse(readFileSync(new URL('../dsh/profile/package.json', import.meta.url), 'utf8'));
+  check('shipped profile scaffold declares a non-empty name', typeof shipped.name === 'string' && shipped.name.length > 0, String(shipped.name));
+  check('shipped profile scaffold declares a non-empty version', typeof shipped.version === 'string' && shipped.version.length > 0, String(shipped.version));
+
+  const manifestPath = join(profileRoot, 'package.json');
+  const installed = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  check('installed profile manifest has name + version', typeof installed.name === 'string' && installed.name.length > 0 && typeof installed.version === 'string' && installed.version.length > 0,
+    JSON.stringify({ name: installed.name, version: installed.version }));
+
+  // Mutation-style precondition: strip `version`, re-run the installer, expect repair.
+  const { version: _dropped, ...withoutVersion } = installed;
+  writeFileSync(manifestPath, JSON.stringify(withoutVersion, null, 2) + '\n', 'utf8');
+  const rerun = run(installArgs);
+  const repaired = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  check('re-installing REPAIRS a version-less profile manifest',
+    typeof repaired.version === 'string' && repaired.version.length > 0,
+    `exit=${rerun.status} version=${String(repaired.version)}`);
+  check('the repair keeps the existing bundles and dependencies', JSON.stringify(repaired.dsh) === JSON.stringify(installed.dsh)
+    && JSON.stringify(repaired.dependencies) === JSON.stringify(installed.dependencies));
+}
 const files = [
   join(profileRoot, 'package.json'),
   join(profileRoot, 'cordis.yml'),

@@ -192,6 +192,42 @@ function ensureFile(target, content, overwrite = false) {
   return true;
 }
 
+/**
+ * Give a profile manifest a non-empty `name` and `version` when it lacks either.
+ *
+ * WHY: dsh's default-on request extension `plugin-package-inventory-deepseek` resolves
+ * the owning manifest of every ACTIVE loader row. For a RELATIVE row (`./math-memory.mjs`
+ * — what this offline channel installs) that resolution walks up to the PROFILE's own
+ * `package.json`; dsh's `identityFromManifest(path, allowAnonymous = true)` then throws
+ * when the manifest has a `name` but no `version`:
+ *
+ *   if (allowAnonymous && manifest.name === undefined) return undefined;   // loose module: fine
+ *   if (!name || !version) throw new Error('… must declare non-empty name and version');
+ *
+ * That throw happens during request PREPARATION, so EVERY reply failed with
+ * "DeepSeek request extension preparation failed" and the request was never sent
+ * (measured 2026-09-26 on a real vault). A private profile needs no real version.
+ *
+ * @returns true when the file was rewritten.
+ */
+function repairProfileManifestFile(manifestPath) {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return false;
+  }
+  if (parsed === null || typeof parsed !== 'object') return false;
+  const missingName = typeof parsed.name !== 'string' || parsed.name.length === 0;
+  const missingVersion = typeof parsed.version !== 'string' || parsed.version.length === 0;
+  if (!missingName && !missingVersion) return false;
+  const next = { ...parsed };
+  if (missingVersion) next.version = '0.0.0';
+  if (missingName) next.name = 'dsh-profile-notes-assistant';
+  writeFileSync(manifestPath, JSON.stringify(next, null, 2) + '\n', 'utf8');
+  return true;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1837,6 +1873,14 @@ function bootstrapDshConfig(plugin, force = false) {
 
   // Code always refreshes; user-editable files are preserved unless forced.
   if (ensureFile(join(profileRoot, 'package.json'), EMBEDDED_PRESET['profile-package.json'], force)) written.push('profile/package.json');
+  // ⚠️ An EXISTING manifest is not refreshed above, and a profile manifest that names
+  // itself but declares NO `version` breaks EVERY reply in that profile: dsh's default-on
+  // `plugin-package-inventory-deepseek` request extension resolves the owning manifest of
+  // each active row, and for our RELATIVE rows (`./math-memory.mjs`) that walk lands on
+  // this very file, where `identityFromManifest` throws "must declare non-empty name and
+  // version" — surfacing as "DeepSeek request extension preparation failed" before the
+  // request is even sent (measured 2026-09-26). Repair it on every bootstrap.
+  if (repairProfileManifestFile(join(profileRoot, 'package.json'))) written.push('profile/package.json (补齐 name/version)');
   if (ensureFile(join(profileRoot, 'cordis.yml'), EMBEDDED_PRESET['profile-cordis.yml'], true)) written.push('profile/cordis.yml');
   if (ensureFile(join(profileRoot, 'cordis.patch.yml'), EMBEDDED_PRESET['profile-cordis.patch.yml'], force)) written.push('profile/cordis.patch.yml');
   if (ensureFile(join(profileRoot, 'pnpm-workspace.yaml'), EMBEDDED_PRESET['profile-pnpm-workspace.yaml'], force)) written.push('profile/pnpm-workspace.yaml');

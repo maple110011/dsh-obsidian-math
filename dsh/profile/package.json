@@ -1,5 +1,6 @@
 {
   "name": "dsh-profile-notes-assistant",
+  "version": "0.0.0",
   "private": true,
   "dependencies": {},
   "dsh": {
