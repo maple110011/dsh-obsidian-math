@@ -45,6 +45,28 @@ dsh-math-memory install --direct --vault /path/to/你的Obsidian库
 
 Obsidian 插件**内置直写流程**（等价于方式 C 的 `--direct` 逻辑，因为插件必须离线可用、不依赖 node/pnpm），并写同样的 owner marker。三种方式功能等价，靠 owner marker 避免互相覆盖。
 
+### 三种方式在 dsh「内置插件 → 插件管理」页里的可见性不同（2026-09-26 实测）
+
+那一页列的是**包**，不是行。它的数据来自 dsh 自己的 `dsh-plugin-manager`：
+
+```
+names = dsh.profile.bundles ∪ profile.dependencies ∪ installation.dependencies
+```
+
+而且只有清单里声明了 **`dsh.bundle.patch`** 的包才会带版本号/描述/行列表被列出来（否则只在"被选中"时以 `not-bundle` 问题项出现）。
+
+| 安装方式 | 那一页里看到什么 |
+|---|---|
+| **方式 A**（把 bundle 加进 profile） | ✅ 能看到 `dsh-math-memory`，带版本、描述、它声明的行，可启用/禁用/移除 |
+| **方式 B**（安装程序，native） | ✅ 同上（B 内部就是 `dsh plugin add dsh-math-memory`） |
+| **方式 C / Obsidian 插件**（离线扁平拷贝） | ❌ **看不到**。这条通道刻意**不装包**：它把模块**平铺**进 profile 目录、用 overlay 里的**相对路径行**引用它们。没有包名/版本/`dsh.bundle.patch` ⇒ 那一页没有可列的东西。 |
+
+**这不是缺陷**：方式 C 存在的意义就是"不需要 pnpm/网络"，代价是它不由 dsh 的包管理器托管。**离线通道的启用/禁用/卸载在 Obsidian 插件的设置页里做**（这是该通道设计的 UX），CLI 侧用 `dsh-math-memory uninstall`。
+
+对照：用 `dsh plugin add` 装进去的第三方包（例如 `@linxin666/dsh-client-ui-skin-center`）**会**出现在那一页 ✓。
+
+> 让离线通道也"包化"（从而既可离线又能在那一页被管理）是一份**提案**，见 [`bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md)（状态：提案，未动代码）。
+
 ### 装进已有 `web` profile？
 
 可以，但会**失去 fail-closed 沙箱**（沿用 `web` profile 自己的沙箱策略）。安装程序检测到非专用 profile 时会打印醒目警告。想保证安全边界，请用专用的 `notes-assistant` profile。

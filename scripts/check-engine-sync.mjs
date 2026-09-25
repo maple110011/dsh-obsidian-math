@@ -341,11 +341,16 @@ if (undocumented === 0) {
 
 /**
  * Token-shape overlap at which two differently-named declarations are considered
- * the same code. MEASURED with `--sweep` (3537 cross-name pairs): the four
- * acknowledged pairs score 0.792–0.844, and the next candidate down is 0.662
+ * the same code. MEASURED with `--sweep`: the acknowledged pairs score 0.792–0.844,
+ * and the next candidate down is 0.662
  * (`parseLocalDay` ↔ `daysSinceText` — two short date helpers that merely share a
  * shape). 0.70 sits inside that gap, so the guard reports real duplicates without
  * asking anyone to acknowledge coincidences.
+ *
+ * The pair COUNT is deliberately not written here: it follows the symbol count and
+ * rotted once already (a comment said 3537 while `--sweep` measured 3225 on
+ * 2026-09-26 — reported in docs/decoupling-assessment-2026-09-26.md §2.5). Run
+ * `--sweep` and read the number it prints; the threshold above is the durable part.
  */
 const ESCAPE_THRESHOLD = 0.7;
 
