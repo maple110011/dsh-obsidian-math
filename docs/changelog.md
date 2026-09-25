@@ -85,6 +85,46 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 第一对重复实现真的合并了（P2-B 第二步）
+
+**做了什么**：把 `contentText`（preset）/ `captureContentText`（host）——**逐字同义、只差引号风格**——合并成
+一份实现，放进新的规范文件 `dsh/preset/engine-shared.mjs`。
+
+**为什么现在能合，而以前"两个产物不能共享 import"**：那句话成立的场景是 preset 体文件住在
+`$DSH_HOME/.agent-presets/<id>/`（一个没有 `node_modules` 的扁平目录）。**同一个相对 specifier 要在两种
+布局下都能解析**这件事，仓库里早有解法：`dsh/host/hook-frontmatter.mjs` 那个"规范文件 + 同名 re-export shim"。
+于是：
+
+- 规范文件 `dsh/preset/engine-shared.mjs`（离线通道**扁平**铺进 profile 目录）；
+- `dsh/host/engine-shared.mjs` = `export { contentText } from "../preset/engine-shared.mjs"`（package 布局下
+  让 `./engine-shared.mjs` 也能解析），并记进 `NOT_EMBEDDED`（内嵌会与规范文件同名冲突，理由与 hook-frontmatter 同源）；
+- 两侧都写 `import { contentText } from "./engine-shared.mjs"`：preset 侧解析到同目录规范文件、host 侧在
+  package 里解析到 shim、离线扁平布局解析到规范文件、内嵌产物解析到被内嵌的那份。
+
+**连带必须一起改的地方（都是门禁逼出来的，逐条都有价值）**：
+1. `PRESET_BODY_FILES` 加一项 ⇒ `check-preset-body-lists` 立刻报"闭包 == 清单"通过，但**同时抓到 Obsidian 模板
+   侧漏了两处**：`DIRECT_PROFILE_FILES` 没这项、也没写这个文件。这正是那条门禁存在的理由。
+2. `EMBEDDED_SOURCES` 加 `engine-shared.mjs`（构建是显式白名单，不加就抛错）。
+3. **内嵌加载器**：模板求值 `memory-admin.mjs` 时是把 `node:` import 剥掉、用注入的绑定求值的，它没有模块系统
+   ⇒ 现在把规范文件的源码**拼在模块体之前**（函数声明会提升）并剥掉那行相对 import，模拟"加载器把两个文件
+   物化到同一个目录"。`check-embedded-loader.mjs` 镜像着这条变换链，同步改（这是有意维护的"被检验的重复"）。
+4. `test-installer.mjs` 的 posture 计数 11 → 12，并把 `engine-shared.mjs` 加进存在性断言。
+
+**验证（三个布局都实测）**：
+- **离线扁平**：真 dsh 自举 profile 的门禁绿（`test: self-provisioned profile accepts a session`，10/10）——
+  它就是把 `PRESET_BODY_FILES` 铺进一个临时 profile 再启动的；
+- **package 布局**：`import('./dsh/host/memory-admin.mjs')` 与 `import('./dsh/host/math-memory-panel.mjs')`
+  都成功（31 / 5 个导出）⇒ shim 真的被解析到；
+- **内嵌求值**：`node scripts/check-embedded-loader.mjs <vault>` 跑到了捕获扫描（56 ms）——那条路径会调用
+  `contentText`，所以不是"只求值没执行"；
+- `node scripts/run-gates.mjs` = **47/49 passed, 2 skipped, 0 failed**。
+
+**守卫随合并自动收口**：那一对从 `KNOWN_ESCAPES` 里删掉（`--sweep` 里它不再出现，留着会因"条目过期"报红）。
+**读代码而不是信分数**还带出一个发现：`setTopFieldText`/`setTopField` 那对 0.836 的**并不是同义代码**——
+host 经 `joinFrontmatterLines` 会**剥掉开头空行**，preset 内联 join 不会（空 frontmatter 体时前者产出
+`key: value`、后者产出 `\nkey: value`）。我原先在守卫表里写的理由是错的，已改成 `action: 'divergent'` 并写明：
+合并它等于把 host 的行为（被修好的那一侧）搬给 preset，那是**行为变更**，要单独一条提交加测试。
+
 ## 2026-09-26 · 引擎守卫补上"改名逃逸"检测（P2-B 第一步）
 
 **问题**：`check-engine-sync.mjs` 的每一条判据都**按符号名配对**，所以"同一份代码换了名字"是它的

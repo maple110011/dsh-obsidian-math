@@ -138,11 +138,18 @@ const unknown = params.filter((name) => available[name] === undefined);
 if (unknown.length > 0) fail(`loader injects names this guard cannot supply: ${unknown.join(', ')}`);
 
 // Same transforms the template applies, in the same order, plus the same helper.
+// The relative `./engine-shared.mjs` import is handled the same way the template
+// handles it: the canonical shared source is spliced in ABOVE the module body and
+// the import line is dropped (the loader materializes both files into one
+// directory, so there the import really does resolve as a sibling).
+const sharedSource = readFileSync(join(repo, 'dsh', 'preset', 'engine-shared.mjs'), 'utf8')
+  .replace(/^export\s+/gm, '');
 const source = readFileSync(join(repo, 'dsh', 'host', 'memory-admin.mjs'), 'utf8');
-const body = source
+const body = sharedSource + source
   .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:fs["'];?\s*$/gm, '')
   .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:path["'];?\s*$/gm, '')
   .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:zlib["'];?\s*$/gm, '')
+  .replace(/^import\s*\{[^}]*\}\s*from\s*["']\.\/engine-shared\.mjs["'];?\s*$/gm, '')
   .replace(/^export\s+/gm, '')
   + helper
   + '\nreturn { ' + allowlist.join(', ') + ' };';

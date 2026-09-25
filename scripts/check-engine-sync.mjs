@@ -358,22 +358,16 @@ const MIN_ESCAPE_TOKENS = 30;
  */
 const KNOWN_ESCAPES = [
   {
-    preset: 'contentText',
-    host: 'captureContentText',
+    preset: 'decodeZstdSessionLog',
+    host: 'decodeSessionLog',
     action: 'dedup',
-    reason: 'the same "turn a message into the text we store" rule; the host name says WHAT it is for, the preset name says WHAT it returns'
+    reason: 'the same zstd-frame decoder over the loader-injected decompressor (the same divergence KNOWN_DIVERGENT records for readSessionHeader) — merging it means PARAMETERIZING the decompressor, not copying one side'
   },
   {
     preset: 'setTopFieldText',
     host: 'setTopField',
-    action: 'dedup',
-    reason: 'the same frontmatter single-field rewriter; the copies differ in whether the caller passes the raw or the escaped value'
-  },
-  {
-    preset: 'decodeZstdSessionLog',
-    host: 'decodeSessionLog',
-    action: 'dedup',
-    reason: 'the same zstd-frame decoder over the loader-injected decompressor (the same divergence KNOWN_DIVERGENT records for readSessionHeader)'
+    action: 'divergent',
+    reason: 'NOT actually the same code, despite the score: the host joins through joinFrontmatterLines, which STRIPS leading blank lines, while the preset joins inline. For an empty frontmatter body the host yields `key: value` and the preset yields `\\nkey: value`. Merging means adopting the host behaviour (the one that was fixed) in the preset — a behaviour change for the preset path, so it needs its own commit and test'
   },
   {
     preset: 'runSessionCapture',

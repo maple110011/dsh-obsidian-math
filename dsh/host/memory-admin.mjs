@@ -10,6 +10,11 @@ import {
 } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
+// The one place a helper both engine copies need may live. Resolved as a flat
+// sibling here: the canonical `dsh/preset/engine-shared.mjs` in the offline
+// profile layout, and its re-export shim `dsh/host/engine-shared.mjs` inside the
+// package — see either file's header.
+import { contentText } from "./engine-shared.mjs";
 
 // Receipts shown AFTER a feedback action. They state the object ("this card")
 // and the consequence, in the user's language — the old strings said
@@ -1044,15 +1049,6 @@ function captureClip(text, maxChars) {
   return `${text.slice(0, maxChars).replace(/\s+\S*$/, '')} …`;
 }
 
-function captureContentText(content) {
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n')
-    .trim();
-}
-
 function scanZstdFrames(buffer) {
   const frames = [];
   let offset = 0;
@@ -1287,10 +1283,10 @@ function distillSession(events, { userClip = 500, assistantClip = 320 } = {}) {
     } else if (event?.type === 'session/title' && typeof event.data?.title === 'string') {
       entry.title = event.data.title;
     } else if (event?.type === 'user/message' && event.data?.source?.kind === 'user') {
-      const text = captureContentText(event.data.content);
+      const text = contentText(event.data.content);
       if (text !== '') entry.messages.push({ role: 'user', text: captureClip(text, userClip), time: event.time ?? 0, seq: event.seq });
     } else if (event?.type === 'assistant/message') {
-      const text = captureContentText(event.data?.message?.content);
+      const text = contentText(event.data?.message?.content);
       if (text !== '') entry.messages.push({ role: 'assistant', text: captureClip(text, assistantClip), time: event.time ?? 0, seq: event.seq });
     }
   }

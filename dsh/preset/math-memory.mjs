@@ -58,6 +58,11 @@ import {
   stripFrontmatter,
   replaceFrontmatterBlock
 } from "./hook-frontmatter.mjs";
+// Helpers both copies of this engine use. The canonical file is staged flat beside
+// this one for the offline channel and re-exported by `dsh/host/engine-shared.mjs`
+// inside the package — see that file's header, and scripts/check-engine-sync.mjs for
+// what may and may not move here.
+import { contentText } from "./engine-shared.mjs";
 
 export const name = "math-memory";
 export const inject = ["tools", "fs", "systemPrompt", "loader"];
@@ -443,15 +448,6 @@ export function decodeZstdSessionLog(buffer) {
 }
 
 // ── text extraction ─────────────────────────────────────────────────────────
-
-function contentText(content) {
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((block) => block?.type === "text" && typeof block.text === "string")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-}
 
 /**
  * Truncate to a budget — and SAY SO.

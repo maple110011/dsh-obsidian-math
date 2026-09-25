@@ -77,10 +77,20 @@ const HOOK_FRONTMATTER = (() => {
 // injected from the plugin's CommonJS requires.
 const MEMORY_ADMIN = (() => {
   const source = EMBEDDED_PRESET['host-memory-admin.mjs'];
-  const body = source
+  // `memory-admin.mjs` imports the shared engine helpers as `./engine-shared.mjs`
+  // (see dsh/preset/engine-shared.mjs). The dsh loader materializes both files into
+  // ONE directory, so there the import resolves as a sibling; this in-body
+  // evaluation has no module system, so the shared source is spliced in ABOVE the
+  // module body (function declarations hoist) and the import line is dropped —
+  // the same treatment the `node:` imports get, one level up.
+  // scripts/check-embedded-loader.mjs re-applies this exact chain and fails when
+  // the two disagree, so the two must be changed together.
+  const shared = (EMBEDDED_PRESET['engine-shared.mjs'] ?? '').replace(/^export\s+/gm, '');
+  const body = shared + source
     .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:fs["'];?\s*$/gm, '')
     .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:path["'];?\s*$/gm, '')
     .replace(/^import\s*\{[^}]*\}\s*from\s*["']node:zlib["'];?\s*$/gm, '')
+    .replace(/^import\s*\{[^}]*\}\s*from\s*["']\.\/engine-shared\.mjs["'];?\s*$/gm, '')
     .replace(/^export\s+/gm, '')
     // probeService lives inside this evaluated body so `http` resolves here
     // rather than in the template's own scope (the loader has no closure over
@@ -1749,7 +1759,7 @@ const OWNER_CHANNEL = 'direct';
 const DIRECT_PROFILE_FILES = [
   'package.json', 'cordis.yml', 'cordis.patch.yml', 'pnpm-workspace.yaml',
   'math-memory-workspace.mjs', 'notes-assistant.patch.yml', 'memory-admin.mjs',
-  'math-memory-panel.mjs', 'hook-frontmatter.mjs',
+  'math-memory-panel.mjs', 'hook-frontmatter.mjs', 'engine-shared.mjs',
   // dsh >= 0.1.7: the agent preset's modules live in the profile directory.
   'math-memory.mjs', 'note-tools.mjs'
 ];
@@ -1789,6 +1799,10 @@ function bootstrapDshConfig(plugin, force = false) {
   if (ensureFile(join(profileRoot, 'memory-admin.mjs'), EMBEDDED_PRESET['host-memory-admin.mjs'], true)) written.push('profile/memory-admin.mjs');
   if (ensureFile(join(profileRoot, 'math-memory-panel.mjs'), EMBEDDED_PRESET['host-math-memory-panel.mjs'], true)) written.push('profile/math-memory-panel.mjs');
   if (ensureFile(join(profileRoot, 'hook-frontmatter.mjs'), EMBEDDED_PRESET['hook-frontmatter.mjs'], true)) written.push('profile/hook-frontmatter.mjs');
+  // Shared engine helpers (canonical copy): `math-memory.mjs` and `memory-admin.mjs`
+  // both import `./engine-shared.mjs`, which resolves to THIS flat sibling in the
+  // offline layout and to the re-export shim inside the installed package.
+  if (ensureFile(join(profileRoot, 'engine-shared.mjs'), EMBEDDED_PRESET['engine-shared.mjs'], true)) written.push('profile/engine-shared.mjs');
   // The agent preset's own modules must live IN THE PROFILE DIRECTORY on dsh
   // >= 0.1.7. The registry resolves a relative row `name:` (e.g.
   // `./math-memory.mjs` in the generated declaration inside cordis.patch.yml)

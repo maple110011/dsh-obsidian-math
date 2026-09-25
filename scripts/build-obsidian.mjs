@@ -32,6 +32,7 @@ const EMBEDDED_SOURCES = {
   "math-memory.mjs": "dsh/preset/math-memory.mjs",
   "note-tools.mjs": "dsh/preset/note-tools.mjs",
   "hook-frontmatter.mjs": "dsh/preset/hook-frontmatter.mjs",
+  "engine-shared.mjs": "dsh/preset/engine-shared.mjs",
   "preset-deploy.mjs": "dsh/preset/preset-deploy.mjs",
   "profile-package.json": "dsh/profile/package.json",
   "profile-cordis.yml": "dsh/profile/cordis.yml",
@@ -53,7 +54,8 @@ const EMBEDDED_SOURCES = {
 const NOT_EMBEDDED = {
   "dsh/host/index.mjs": "npm package entry (`main`); loads the host plugin from the installed package layout, never inside the Obsidian bundle",
   "dsh/host/channel-owner.mjs": "channel-ownership anchor (profile manifest + legacy fallback); runs from the installer/host package, not from the plugin — the Obsidian bootstrap has its own inline copy of the same precedence",
-  "dsh/host/hook-frontmatter.mjs": "re-export shim for the node_modules layout; the bundle already embeds the canonical parser (dsh/preset/hook-frontmatter.mjs) under the same key, so embedding this too would collide on materialization"
+  "dsh/host/hook-frontmatter.mjs": "re-export shim for the node_modules layout; the bundle already embeds the canonical parser (dsh/preset/hook-frontmatter.mjs) under the same key, so embedding this too would collide on materialization",
+  "dsh/host/engine-shared.mjs": "re-export shim for the node_modules layout (same trick as hook-frontmatter): the offline layout stages the canonical dsh/preset/engine-shared.mjs as a flat sibling, and embedding the shim too would collide with it on materialization"
 };
 
 /** Extensions that belong in the bundle when they live in an embedded dir. */

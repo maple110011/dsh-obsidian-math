@@ -49,7 +49,7 @@ export const PRESET_ID = 'notes-assistant';
  * closure of `dsh/preset/math-memory.mjs` and that every other list agrees — the
  * 2026-09-26 `--direct` break was one of those copies missing two names.
  */
-export const PRESET_BODY_FILES = ['math-memory.mjs', 'note-tools.mjs', 'hook-frontmatter.mjs'];
+export const PRESET_BODY_FILES = ['math-memory.mjs', 'note-tools.mjs', 'hook-frontmatter.mjs', 'engine-shared.mjs'];
 
 /** `$DSH_HOME/profiles/<profile>` for an absolute `$DSH_HOME`. */
 export function profileRootOf(home, profile = PRESET_ID) {

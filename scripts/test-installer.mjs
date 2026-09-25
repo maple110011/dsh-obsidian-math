@@ -39,6 +39,10 @@ const files = [
   join(profileRoot, 'notes-assistant.patch.yml'),
   join(profileRoot, 'memory-admin.mjs'),
   join(profileRoot, 'math-memory-panel.mjs'),
+  // Shared engine helpers: `math-memory.mjs` and `memory-admin.mjs` both import
+  // `./engine-shared.mjs`, which must be a SIBLING here (the offline layout has no
+  // node_modules, so the package-layout re-export shim is not what gets staged).
+  join(profileRoot, 'engine-shared.mjs'),
   // ⚠️ THE PRESET BODY must be in the PROFILE DIRECTORY: the overlay declares
   // `name: ./math-memory.mjs`, and the registry resolves that against the
   // profile dir. This assertion is what `--direct` was missing — it shipped a
@@ -57,7 +61,7 @@ for (const path of files) check('exists ' + path, existsSync(path));
 const manifest = JSON.parse(readFileSync(join(profileRoot, '.install-manifest.json'), 'utf8'));
 check('manifest owner=direct', manifest.owner === 'direct');
 check('no legacy .owner.json is written any more', !existsSync(join(presetRoot, '.owner.json')));
-check('manifest posture=11 files', Array.isArray(manifest.posture) && manifest.posture.length === 11,
+check('manifest posture=12 files', Array.isArray(manifest.posture) && manifest.posture.length === 12,
   Array.isArray(manifest.posture) ? String(manifest.posture.length) : 'not an array');
 check('manifest posture covers the preset body (so uninstall removes it)',
   ['math-memory.mjs', 'note-tools.mjs'].every((n) => manifest.posture.includes(n)),
