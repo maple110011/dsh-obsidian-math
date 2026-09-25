@@ -24,7 +24,7 @@ import { buildPresetDeclarationBlock } from './lib/preset-declaration.mjs';
 import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 let passed = 0;
@@ -98,6 +98,44 @@ if (!existsSync(binJs) || !existsSync(realPatch)) {
   console.log('  patch: ' + realPatch + ' (' + existsSync(realPatch) + ')');
   console.log(`__CHECKS__ ${passed}/${total}`);
   process.exit(0);
+}
+
+// ── static sanity of the DEPLOYED profile (2026-09-26, real-machine lesson) ──
+//
+// Everything below this gate's dynamic half only creates a SESSION — it never sends a
+// turn. Request-preparation failures therefore stay invisible to it, which is exactly how
+// the 2026-09-26 outage passed a green 50/50 at the same time the sidebar failed EVERY
+// reply with "DeepSeek request extension preparation failed". Two preconditions are
+// checkable statically, so they are checked here:
+//
+//   1. The profile manifest must declare non-empty `name` AND `version`. dsh's default-on
+//      `plugin-package-inventory-deepseek` request extension resolves the owning manifest
+//      of every ACTIVE row; for a RELATIVE row (`./math-memory.mjs` — what the offline
+//      channel installs) that walk lands on this very file, where `identityFromManifest`
+//      throws when a manifest has a name but no version. (A manifest with NO name is a
+//      loose module and passes — which is why the scaffold's missing `version` was fatal
+//      while dsh's own version-less profile scaffolds are not.)
+//   2. Every RELATIVE row in the deployed overlay must have its file in the profile
+//      directory: "row present, file absent" is the sibling failure (dsh prints nothing
+//      at boot and `session/create` answers `agent-preset/invalid`).
+const realProfileDir = dirname(realPatch);
+const realManifestPath = join(realProfileDir, 'package.json');
+if (existsSync(realManifestPath)) {
+  const manifest = JSON.parse(readFileSync(realManifestPath, 'utf8'));
+  check('已部署 profile 的清单声明了非空 name（相对行的归属清单判据）',
+    typeof manifest.name === 'string' && manifest.name.length > 0, String(manifest.name));
+  check('已部署 profile 的清单声明了非空 version（缺它 = 每轮回复都失败）',
+    typeof manifest.version === 'string' && manifest.version.length > 0, String(manifest.version));
+} else {
+  check('已部署 profile 有 package.json（相对行的归属清单）', false, realManifestPath);
+}
+{
+  const overlayText = readFileSync(realPatch, 'utf8');
+  const relativeRows = [...overlayText.matchAll(/^\s*name:\s*['"]?(\.\/[^'"\s]+)['"]?\s*$/gm)].map((m) => m[1]);
+  const missingFiles = relativeRows.filter((rel) => !existsSync(join(realProfileDir, rel)));
+  check('已部署 overlay 的每个相对行都有对应文件（行在文件不在 = 会话建不起来）',
+    relativeRows.length > 0 && missingFiles.length === 0,
+    missingFiles.length === 0 ? `${relativeRows.length} 个相对行` : `缺 ${missingFiles.join(', ')}`);
 }
 
 // 本次会话**真正用来启动 dsh** 的 home：临时目录里种一份副本（见 isolated-dsh-home.mjs 的 WHY）。
