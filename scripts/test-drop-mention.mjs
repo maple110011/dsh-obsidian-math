@@ -100,6 +100,13 @@ function makeDom() {
       if (selector !== '[contenteditable="true"]') return null;
       return document.elements.find((el) => el.matches(selector)) ?? null;
     },
+    // 落笔路径用 `querySelectorAll` 来数"页面上有几个可编辑元素"（诊断的一部分：真页面里
+    // `[contenteditable="true"]` 未必唯一，取第一个可能不是输入框）。假 DOM 必须提供它，
+    // 否则诊断会走 `query-threw` 分支 —— 那是"假 DOM 缺件"造成的假红，不是产品缺陷。
+    querySelectorAll(selector) {
+      if (selector !== '[contenteditable="true"]') return [];
+      return document.elements.filter((el) => el.matches(selector));
+    },
     addEventListener(type, handler, capture) { document.listeners.push({ type, handler, capture: capture === true }); },
     removeEventListener(type, handler, capture) {
       const i = document.listeners.findIndex((l) => l.type === type && l.handler === handler && l.capture === (capture === true));

@@ -17,12 +17,101 @@
 import { formatMention, parseObsidianDragText } from './parse.drop.mjs';
 import { installComposerDropMention } from './composer-drop.mjs';
 
+/** 诊断上报的 meta 名（与 `mention-stream` 同一个注入点，见 `DshWebProxy.mentionChannelMeta`）。 */
+export const MENTION_REPORT_META = 'dsh-math-memory-mention-report';
+
 /** 把库内路径写成一次合成 paste 所需的文本（与拖拽那条路完全一致）。 */
 export function mentionTextFor(rel) {
   const path = parseObsidianDragText(`obsidian://open?vault=x&file=${encodeURIComponent(String(rel ?? ''))}`);
   if (path === null) return null;
   const mention = formatMention(path);
   return mention === '' ? null : `${mention} `;
+}
+
+/**
+ * 落笔**为什么**失败（自述诊断）。
+ *
+ * WHY 需要它：`insertMentionText` 的每一处失败都只能返回 `false`（它是个"递出去没有"的布尔契约），
+ * 于是"拖进去没反应"在现场**没有任何线索** —— 2026-09-21 就是这样查了一轮：SSE 通道在进程层面
+ * 实测完全正常（POST 204 → `data: "路径"`），页面也确实订阅着（39217 上有来自渲染进程的 ESTABLISHED
+ * 连接），但草稿始终为空，而日志里一个字节都没有。**静默的失败分支必须自述。**
+ *
+ * 只在"路径拿在手里之后"调用（解析失败那条有确定答案，不需要现场信息）。
+ * 返回的字段都是**定长/定类**的：调用方会把它们拼上报 URL，所以不放路径原文（避免路径里的特殊字符
+ * 破坏上报；路径本身在服务端那条 POST 日志里已经有了）。
+ */
+export function describeMentionInsert(rel, opts = {}) {
+  const doc = opts.document ?? (typeof document === 'undefined' ? null : document);
+  const win = opts.window ?? (typeof window === 'undefined' ? null : window);
+  const out = { step: 'start', ok: false, hadDocument: doc !== null, hadWindow: win !== null, textLen: 0, editable: 'not-queried', target: 'none', error: '' };
+  if (doc === null || win === null) { out.step = 'no-global'; return out; }
+  const text = mentionTextFor(rel);
+  out.textLen = text === null ? 0 : text.length;
+  if (text === null) { out.step = 'no-text'; return out; }
+  let all = null;
+  try {
+    all = doc.querySelectorAll('[contenteditable="true"]');
+    out.editable = String(all.length);
+  } catch (error) {
+    out.editable = 'query-threw';
+    out.error = String(error?.message ?? error).slice(0, 60);
+    out.step = 'query';
+    return out;
+  }
+  const el = all.length === 0 ? null : all[0];
+  if (el === null) { out.step = 'no-element'; return out; }
+  try {
+    out.target = String(el.tagName ?? '?').toLowerCase() + '.' + String(el.className ?? '').split(' ').filter((x) => x !== '').slice(0, 2).join('.');
+  } catch { out.target = 'unknown'; }
+  try {
+    el.focus?.();
+    const dt = new win.DataTransfer();
+    dt.setData('text/plain', text);
+    el.dispatchEvent(new win.ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+    out.step = 'dispatched';
+    out.ok = true;
+    return out;
+  } catch (error) {
+    out.step = 'dispatch-threw';
+    out.error = String(error?.message ?? error).slice(0, 60);
+    return out;
+  }
+}
+
+/**
+ * 把一次落笔的结果发回 Obsidian 那侧，写进插件日志（fire-and-forget）。
+ *
+ * 走 `fetch(..., { mode: 'no-cors' })`：这是跨源写、且我们**不需要**读响应 —— `no-cors` 下响应是
+ * opaque，但请求照发，省掉一切 preflight/凭据纠缠。上报失败**绝不能**影响插入本身。
+ */
+export function reportMentionDiagnostic(diagnostic, opts = {}) {
+  const doc = opts.document ?? (typeof document === 'undefined' ? null : document);
+  const win = opts.window ?? (typeof window === 'undefined' ? null : window);
+  if (doc === null || win === null || typeof win.fetch !== 'function') return false;
+  const base = typeof opts.reportUrl === 'string' && opts.reportUrl !== '' ? opts.reportUrl : mentionReportUrlFromDocument(doc);
+  if (base === '') return false;
+  const q = new URLSearchParams();
+  for (const [key, value] of Object.entries(diagnostic ?? {})) {
+    if (value === undefined || value === null) continue;
+    q.set(key, String(value).slice(0, 120));
+  }
+  try {
+    win.fetch(`${base}${base.includes('?') ? '&' : '?'}${q.toString()}`, { mode: 'no-cors', cache: 'no-store', keepalive: true }).catch(() => {});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 从页面里读诊断上报地址（插件注入；没有就不上报）。 */
+export function mentionReportUrlFromDocument(doc) {
+  try {
+    const meta = doc?.querySelector?.(`meta[name="${MENTION_REPORT_META}"]`);
+    const content = meta === null || meta === undefined ? '' : (meta.getAttribute('content') ?? '');
+    return typeof content === 'string' ? content.trim() : '';
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -33,27 +122,7 @@ export function mentionTextFor(rel) {
  * @returns true 表示已经递出去（不代表宿主一定接受了；那由端到端探针保证）。
  */
 export function insertMentionText(rel, opts = {}) {
-  const doc = opts.document ?? (typeof document === 'undefined' ? null : document);
-  const win = opts.window ?? (typeof window === 'undefined' ? null : window);
-  if (doc === null || win === null) return false;
-  const text = mentionTextFor(rel);
-  if (text === null) return false;
-  let el = null;
-  try {
-    el = doc.querySelector('[contenteditable="true"]');
-  } catch {
-    el = null;
-  }
-  if (el === null) return false;
-  try {
-    el.focus?.();
-    const dt = new win.DataTransfer();
-    dt.setData('text/plain', text);
-    el.dispatchEvent(new win.ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
-    return true;
-  } catch {
-    return false;
-  }
+  return describeMentionInsert(rel, opts).ok;
 }
 
 /** 解析 LinkServer 的 SSE 数据行：`data: "<库内路径>"` → 路径（其他行返回 null）。 */
@@ -99,8 +168,22 @@ export function installMentionInbox(opts = {}) {
   const doc = opts.document ?? (typeof document === 'undefined' ? null : document);
   if (win === null || doc === null) return () => {};
 
+  // 自述诊断（只有真的跑起来才知道落笔死在哪一步，见 `describeMentionInsert` 的注释）。
+  //
+  // **每一次都上报**，成功与失败都报。为什么不"只在失败时报"：那要先判断返回值，而
+  // "处理器到底有没有被调用"本身正是最容易丢的那一环 —— 2026-09-21 现场就是"页面收到了消息、落笔
+  // 入口也在、直调也成功，但入口一次都没被调用"，而那种形状旧实现**一个字节都不会记**。
+  // 每一次落笔最多一行日志，换掉一整轮盲查是划算的。
+  let attemptNo = 0;
+  const attempt = (rel, via) => {
+    attemptNo += 1;
+    const diagnostic = describeMentionInsert(rel, { document: doc, window: win });
+    reportMentionDiagnostic({ ...diagnostic, via, n: attemptNo, rel }, { document: doc, window: win, reportUrl: opts.reportUrl });
+    return diagnostic.ok;
+  };
+
   // ① 直插入口：Obsidian 那侧调这个函数。装成 window 上的一等函数，方便那边一行调用。
-  const insert = (rel) => insertMentionText(rel, { document: doc, window: win });
+  const insert = (rel) => attempt(rel, 'direct');
   try { win.__dshMentionInsert = insert; } catch { /* window 被冻结：只剩推送那条路 */ }
 
   // ② 推送通道：地址优先取显式传参，其次取插件注入的 meta。
@@ -112,7 +195,7 @@ export function installMentionInbox(opts = {}) {
       source = new win.EventSource(url);
       source.addEventListener('message', (event) => {
         const rel = parseMentionSseLine(event?.data);
-        if (rel !== null) insert(rel);
+        if (rel !== null) attempt(rel, 'stream');
       });
       // 断线由 EventSource 自己重连；这里只留痕，便于排查"推送不通"。
       source.addEventListener('error', () => {

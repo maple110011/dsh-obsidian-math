@@ -412,7 +412,12 @@ export {
   insertMentionText,
   mentionTextFor,
   mentionStreamUrlFromDocument,
-  parseMentionSseLine
+  parseMentionSseLine,
+  // 自述诊断：让"落笔死在哪一步"能自己写进 Obsidian 侧的插件日志，而不是静默返回 false。
+  describeMentionInsert,
+  reportMentionDiagnostic,
+  mentionReportUrlFromDocument,
+  MENTION_REPORT_META
 } from "./drop-mention/mention-inbox.mjs";
 
 export const inject = ["slots"];

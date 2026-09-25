@@ -389,13 +389,26 @@ class LinkServer {
       //     → SSE；有新条目就推一条 `data: <路径>`；同时发心跳注释保活
       //
       // 只绑 127.0.0.1，且与 /open、/feedback 同一个 CSRF token。
-      if (url.pathname === '/mention' || url.pathname === '/mention-stream') {
+      if (url.pathname === '/mention' || url.pathname === '/mention-stream' || url.pathname === '/mention-report') {
         const authorized = this.token === '' || url.searchParams.get('t') === this.token;
         // SSE 是**跨源**读取（iframe 在 127.0.0.1:<dsh 端口>），必须显式允许；只允许 loopback 来源。
         const origin = String(req.headers?.origin ?? '');
         const originAllowed = origin === '' || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) || /^http:\/\/localhost(:\d+)?$/.test(origin);
         if (!authorized || !originAllowed) {
           finish(403, 'bad token');
+          return;
+        }
+        // 诊断上报：客户端把"落笔死在哪一步"写回来，进插件日志（页面自己看不到 Obsidian 的日志）。
+        // 只用查询参数、只取白名单字段、每个值截断 —— 这是**页面可控输入**，不能让它往日志里灌任意内容。
+        if (url.pathname === '/mention-report') {
+          const fields = ['via', 'step', 'ok', 'hadDocument', 'hadWindow', 'textLen', 'editable', 'target', 'error', 'rel'];
+          const parts = [];
+          for (const key of fields) {
+            const value = url.searchParams.get(key);
+            if (value !== null && value !== '') parts.push(`${key}=${value.slice(0, 120)}`);
+          }
+          writeDebugLog(`[drop] 落笔诊断 ${parts.join(' ')}`);
+          finish(204, '');
           return;
         }
         if (url.pathname === '/mention-stream') {
@@ -408,6 +421,9 @@ class LinkServer {
           });
           const client = { res };
           this.mentionClients.add(client);
+          // 留痕：订阅者数量是"页面到底有没有在听"的唯一直接证据。2026-09-21 排查时最缺的就是
+          // 这一条 —— 只看到 POST 回 204，无法区分"推给了 0 个订阅者"与"推了但没落笔"。
+          writeDebugLog(`[drop] /mention-stream 已连接（当前订阅者 ${this.mentionClients.size}）`);
           // 心跳：中间任何一层超时都会静默掐断 SSE，定期写一行注释成本极低。
           const beat = setInterval(() => {
             try { res.write(': keep-alive\n\n'); } catch { /* 连接已断 */ }
@@ -435,9 +451,13 @@ class LinkServer {
           const raw = Buffer.concat(chunks).toString('utf8');
           const normalized = normalizeVaultRelPath(raw);
           if (normalized === null) {
+            writeDebugLog('[drop] /mention body 不是合法库内路径，已拒绝：' + JSON.stringify(raw.slice(0, 80)));
             finish(400, 'bad path');
             return;
           }
+          // 先记订阅者数量**再**推：0 个订阅者意味着这条路径只会入队（最多 8 条）然后消失，
+          // 而那正是"响应 204、草稿却是空的"的形状。
+          writeDebugLog(`[drop] /mention 收到（订阅者 ${this.mentionClients.size}）：${normalized.rel}`);
           this.pushMention(normalized.rel);
           this.plugin?.service?.appendLog?.(`拖拽引用已送达 dsh：${normalized.rel}`);
           finish(204, '');
@@ -869,14 +889,22 @@ class DshWebProxy {
    * 导航 HTML，所以这里顺手把地址与令牌注入进去（与链接模板注入给模型的是同一对值）。
    *
    * 不注入任何可执行代码，只有一个 meta 标签；令牌本来就是页面自己那条链路用的同一个 CSRF 令牌。
+   *
+   * 第二个 meta 是**诊断上报**地址（`/mention-report`）。WHY 需要它：客户端落笔那段每一步失败都
+   * 只能返回 `false`，现场没有任何线索 —— 2026-09-21 查了一轮：SSE 在进程层面完全正常、页面也确实
+   * 订阅着，但草稿始终为空且日志里一个字节都没有。所以给客户端一个"往上说话"的通道，把
+   * "死在哪一步、页面上有几个可编辑元素、目标元素是谁"写进插件日志。
    */
   mentionChannelMeta() {
     const base = this.plugin?.linkServer?.baseUrl ?? '';
     if (base === '') return '';
     const token = this.plugin?.linkServer?.token ?? '';
-    const url = `${base}/mention-stream${token === '' ? '' : `?t=${encodeURIComponent(token)}`}`;
+    const query = token === '' ? '' : `?t=${encodeURIComponent(token)}`;
+    const url = `${base}/mention-stream${query}`;
+    const reportUrl = `${base}/mention-report${query}`;
     const escape = (value) => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-    return `<meta name="dsh-math-memory-mention-stream" content="${escape(url)}">`;
+    return `<meta name="dsh-math-memory-mention-stream" content="${escape(url)}">`
+      + `<meta name="dsh-math-memory-mention-report" content="${escape(reportUrl)}">`;
   }
 
   /** A navigation (not a fetch for CSS/JS/JSON): the only HTML we inject into. */
