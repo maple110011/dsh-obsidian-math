@@ -85,6 +85,49 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · `.deepseek/config.md` 的创建口径统一（P2-A3）
+
+**先说我为什么没做原计划的 P2-A（把设置搬进 dsh `Config`）**：dsh 0.1.7 确实自带
+`dsh-config-editor`（*"Persist plugin configuration through profile patches and Loader
+reconciliation"*）+ Settings→Plugins 表单，收益是真的。但声明 `Config` 需要静态
+`import z from "@deepseek-ai/schemastery"`，而我们的 preset 体文件住在 profile 目录里。
+用 Node 的真实解析器实测：
+
+```
+从离线 notes-assistant profile 解析  @deepseek-ai/schemastery -> MODULE_NOT_FOUND
+从 web profile 解析                  @deepseek-ai/schemastery -> .../web/node_modules/... ✓
+```
+
+`$DSH_HOME/profiles/node_modules`（app-boot 在 pnpm 装机时"heal"的那层）在离线装机上**不存在**
+⇒ 静态裸 import 一旦加上，离线通道的 preset 就挂不上，**每次新建会话都失败**（陷阱 70 的形态）。
+仓库自己的 `note-tools.mjs` 就为此写过动态加载（且那段注释还是按已退役的老路径写的）。
+⇒ 原计划的 A 在**主通道**上不成立，已按此结论收口；改为做 A3（口径统一）。
+
+**A3 修的是一处真实的语义漂移**：同一个"没有 `config.md` 就从脚手架创建"的操作有两个前端，
+它们给的内容不一样——
+
+| 键 | `dsh/templates/config.md`（权威） | 面板的字面量 |
+|---|---|---|
+| `autoArchive` | `true` | `false` |
+| `captureSubagents` | `false` | **缺失** |
+
+`autoArchive: true` 正是"体检把低效用卡移进 `.deepseek/archive/`"的开关，所以这不是文案差异而是
+**行为差异**：同一个 vault 的默认值取决于你先点了哪个 UI 创建那个文件。
+
+**改法**：
+- `math-memory-panel.mjs` 新增 `configScaffold()`：**优先读真模板**（`../templates/config.md`，npm/bundle
+  通道下可用，创建出的文件连字段说明都一致），读不到才退回字面量；字面量已按模板改正并 `export`。
+  路由从 `CONFIG_FALLBACK` 改为传 `configScaffold()`。
+- 新门禁 `check-config-scaffold.mjs`（**第 49 条**）：直接 `import()` 面板模块取**真实常量**（不是 grep
+  源码），与真模板比对 frontmatter 的**键集合、顺序、每个值**和标题行；再断言 `configScaffold()` 在模板
+  可达时确实返回模板本身。用共享的 `frontmatterSpan` 取块——重打分隔符正则会被
+  `check-frontmatter-source.mjs` 拒绝（这条门禁第一次跑就抓到了我自己犯的这个错）。
+- 变异验证：**M9** 把回退里的 `autoArchive` 改回 `false` ⇒ 红；**M10** 删掉 `captureSubagents` 行 ⇒
+  键集合与缺失值两条同时红；恢复后 exit 0。
+
+**验证**：`node scripts/run-gates.mjs` = **47/49 passed, 2 skipped, 0 failed**（门禁 48 → 49，AGENTS §4
+的计数由 `check-doc-counts.mjs` 守住）；`main.js` 已重建（720,829 字节）。
+
 ## 2026-09-26 · junction 镜像退役：侧栏皮肤中心改为显式安装（P2-D）
 
 **问题（先取证，因为它推翻了原计划）**：插件在 `onLayoutReady` 无条件调用

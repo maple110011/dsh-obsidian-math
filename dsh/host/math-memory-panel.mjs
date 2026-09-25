@@ -3,8 +3,10 @@
 // by reusing the pure functions in ./memory-admin.mjs. The browser client half
 // (Phase 2b) will consume these routes from a dsh web settings-section panel.
 
+import { readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { timingSafeEqual } from "node:crypto";
 import { pathInside, collectMemoryState, applyFeedback, archiveMemoryFile, setCapturePolicyMode, archiveOldEpisodes, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled } from "./memory-admin.mjs";
 import { parseHookFrontmatter } from "./hook-frontmatter.mjs";
@@ -147,19 +149,53 @@ const CAPTURE_POLICY_FALLBACK = [
   ""
 ].join("\n");
 
-const CONFIG_FALLBACK = [
+/**
+ * Minimal scaffold used when `.deepseek/config.md` has to be CREATED and the real
+ * template cannot be reached (see configScaffold below).
+ *
+ * ⚠️ Its frontmatter must stay equal — same keys, same order, same values — to the
+ * one in `dsh/templates/config.md`. Both the plugin's settings page and this panel
+ * perform the same "create the file when absent" operation, and they used to
+ * disagree: the panel wrote `autoArchive: false` (and no `captureSubagents`) while
+ * the template wrote `autoArchive: true`, so what a vault ended up with depended on
+ * which UI you touched first. `scripts/check-config-scaffold.mjs` pins them
+ * together; do not edit this literal alone.
+ */
+export const CONFIG_FALLBACK = [
   "---",
   "enabled: true",
   "dialogueIndex: true",
   "reminders: true",
   "audit: true",
-  "autoArchive: false",
+  "autoArchive: true",
   "sessionCapture: false",
+  "captureSubagents: false",
   "---",
   "",
-  "# 记忆系统设置",
+  "# 记忆系统设置（本工作区）",
   ""
 ].join("\n");
+
+/**
+ * The scaffold to create `.deepseek/config.md` from: the REAL vault template when
+ * this file can see it, else `CONFIG_FALLBACK`.
+ *
+ * WHY both paths. The template is the authoritative scaffold (it carries the field
+ * documentation the user reads), and it is byte-available whenever this module runs
+ * out of the installed package (`dsh-math-memory/dsh/host/…` → `../templates/…`) —
+ * the npm/bundle channel. The offline (`--direct` / Obsidian) channel stages this
+ * file into the profile directory, where no `templates/` sibling exists, so there we
+ * fall back to the literal — which `check-config-scaffold.mjs` keeps pinned to the
+ * template's frontmatter. Reaching for the file first means the two channels cannot
+ * drift in the common case; the gate covers the fallback.
+ */
+export function configScaffold() {
+  try {
+    return readFileSync(fileURLToPath(new URL("../templates/config.md", import.meta.url)), "utf8");
+  } catch {
+    return CONFIG_FALLBACK;
+  }
+}
 
 /**
  * The session-log store the capture routes scan.
@@ -249,7 +285,7 @@ export function apply(ctx) {
       }
       if (req.method === "POST" && pathname === "/memory-panel/session-capture-toggle") {
         if (typeof body.enabled !== "boolean") return json(res, fail("enabled required"), 400);
-        setSessionCapture(root, body.enabled, CONFIG_FALLBACK);
+        setSessionCapture(root, body.enabled, configScaffold());
         return json(res, ok({ enabled: body.enabled }));
       }
       return json(res, fail("not found"), 404);

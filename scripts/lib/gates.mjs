@@ -28,6 +28,11 @@ export const GATES = [
   { name: 'test: installer e2e', args: ['scripts/test-installer.mjs'] },
   { name: 'check: rename', args: ['scripts/check-rename.mjs'] },
   { name: 'check: skin fallback', args: ['scripts/check-skin-fallback.mjs'] },
+  // `.deepseek/config.md` 的"没有就从脚手架创建"有两个前端（Obsidian 设置页 / 面板路由），
+  // 它们曾经给出不同内容：面板的字面量写 `autoArchive: false` 且漏了 `captureSubagents`，而权威模板
+  // `dsh/templates/config.md` 写的是 `true` ⇒ 同一个 vault 的 `autoArchive` 默认值取决于你先点了哪个 UI
+  // （handoff §7）。这条门禁把回退字面量钉在模板上（键、顺序、值），并断言运行期仍优先读真模板。
+  { name: 'check: config scaffold parity', args: ['scripts/check-config-scaffold.mjs'] },
   // 原先这里还有一条 `check: mirror cleanup (dangling @linxin666 junctions)`：它守的是
   // "镜像循环只走 web 侧、被删掉的包永远不被回访，于是留下悬空 junction"（2026-09-25 实测 9 条）。
   // **2026-09-26 镜像本身退役了**（skin-center 0.4.x 已不再往全局 patch 写皮肤行，"镜像"失去了
