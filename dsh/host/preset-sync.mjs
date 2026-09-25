@@ -1,16 +1,31 @@
 /**
- * preset-sync — idempotent sync of the bundled `notes-assistant` agent preset
- * from this package into the harness agent-presets root (~/.dsh/.agent-presets).
+ * preset-sync — CHANNEL OWNERSHIP for this profile, plus the (now retired) tree
+ * sync this module was originally written for.
  *
- * Ported from @linxin666/dsh-liangshen's src/sync.ts (MIT) and simplified for a
- * single preset: byte-identical files are skipped, files the source no longer
- * has are pruned, and an owner marker (.owner.json) is written so install /
- * uninstall / conflict resolution can determine who owns the preset directory.
- * The source directory is authoritative; the target directory is never touched
- * outside the sync, and sibling user presets are never visited.
+ * WHAT IT OWNS TODAY
+ * ------------------
+ * `readChannelOwner()` + `profileDirFromCtx()` answer one question: **which
+ * install channel owns the profile that is booting** (`npm` bundle / `direct`)?
+ * Both the runtime conflict guard (`dsh/host/index.mjs`) and the installer's
+ * pre-flight refusal depend on that answer, and getting it wrong means two
+ * channels overwrite each other's files with no warning.
  *
- * The owner marker is only rewritten when its owner/version identity changes,
- * so the original installedAt is preserved across idempotent re-syncs.
+ * The anchor used to be `$DSH_HOME/.agent-presets/<id>/.owner.json` only — a
+ * directory dsh >= 0.1.7 no longer reads. That made the guard depend on a
+ * directory that looks deletable: "clean up the dead directory" silently
+ * disabled the guard. All three channels already write
+ * `<profile>/.install-manifest.json` with an `owner` field, so that is the
+ * anchor now, with the legacy marker kept as a FALLBACK (an install made before
+ * the change has only the legacy marker; treating it as unowned is exactly the
+ * silent-takeover this function exists to prevent). See docs/handoff.md §7.
+ *
+ * WHAT IT NO LONGER OWNS
+ * ----------------------
+ * `syncPresetTree()` is a leftover from the pre-0.1.7 layout: the preset is now
+ * declared in the bundle patch and its modules are reached through the installed
+ * package, so NOTHING in production syncs a preset directory any more. It is kept
+ * only because `scripts/test-preset-sync.mjs` still exercises it; the next step
+ * retires both together (see docs/handoff.md §7).
  */
 
 import {
@@ -25,9 +40,72 @@ import {
   writeFileSync
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MTIME_TOLERANCE_MS = 1000;
 export const OWNER_MARKER = ".owner.json";
+
+/** The profile-dir ownership manifest every channel writes. */
+export const CHANNEL_MANIFEST = ".install-manifest.json";
+
+/** The retired preset directory; still read as a fallback and still what `--direct` writes. */
+export const LEGACY_PRESET_DIR = ".agent-presets";
+
+/**
+ * Absolute directory of the profile that is CURRENTLY BOOTING, read from the
+ * plugin context. Returns null when the anchor is unavailable (callers then fall
+ * back and say so).
+ *
+ * MEASURED on dsh 0.1.7-rc.2 (2026-09-26): `ctx.baseUrl` is
+ * `file:///…/profiles/<the booting profile>/`, even for a row that came from a
+ * bundle patch inside a package. `process.cwd()` is the caller's shell, and the
+ * `DSH_PROFILE` environment variable is whatever the PARENT environment had —
+ * measured reading `"web"` while the process was booting `myvaultprofile`, so it
+ * is not an anchor. (Spelled without the `process.env.` prefix on purpose:
+ * `check-env-vars.mjs` greps for that literal to decide which variables the code
+ * READS, and a name mentioned in prose is not a read.)
+ */
+export function profileDirFromCtx(ctx) {
+  const baseUrl = ctx?.baseUrl;
+  if (typeof baseUrl !== "string" || baseUrl === "") return null;
+  let dir = null;
+  try {
+    dir = fileURLToPath(baseUrl);
+  } catch {
+    return null;
+  }
+  const trimmed = dir.replace(/[\\/]+$/, "");
+  return trimmed === "" ? dir : trimmed;
+}
+
+/**
+ * Which channel owns this profile. Profile manifest first, legacy marker as a
+ * fallback (see the module header for why that order is load-bearing).
+ *
+ * @param {{profileDir?: string|null, home?: string|null, presetId: string}} what
+ * @returns {{owner: string, version?: string, source: 'manifest'|'legacy', installedAt?: string}|null}
+ */
+export function readChannelOwner({ profileDir = null, home = null, presetId }) {
+  const candidates = [];
+  if (typeof profileDir === "string" && profileDir !== "") {
+    candidates.push({ path: join(profileDir, CHANNEL_MANIFEST), source: "manifest" });
+  }
+  if (typeof home === "string" && home !== "" && typeof presetId === "string" && presetId !== "") {
+    candidates.push({ path: join(home, LEGACY_PRESET_DIR, presetId, OWNER_MARKER), source: "legacy" });
+  }
+  for (const candidate of candidates) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(readFileSync(candidate.path, "utf8"));
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== "object") continue;
+    if (typeof parsed.owner !== "string" || parsed.owner === "") continue;
+    return { ...parsed, source: candidate.source };
+  }
+  return null;
+}
 
 /** Recursively list every file under `root` (never directories). */
 function filesUnder(root) {

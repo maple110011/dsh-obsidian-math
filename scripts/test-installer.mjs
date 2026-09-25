@@ -126,15 +126,32 @@ for (const [installed, source] of driftPairs) {
 r = run(installArgs);
 check('idempotent second run exit 0', r.status === 0);
 
-// 3. cross-channel conflict: simulate an npm-owned preset, direct install must refuse
-writeFileSync(join(presetRoot, '.owner.json'), JSON.stringify({ owner: 'npm', version: '9.9.9', installedAt: new Date().toISOString() }), 'utf8');
-r = run(installArgs);
-check('conflict: direct install refuses npm-owned preset (exit 1)', r.status === 1);
+// 3. cross-channel conflict. The AUTHORITATIVE anchor is the PROFILE manifest;
+//    the legacy `.agent-presets` marker is only a fallback. Both are exercised,
+//    because "which one wins" is exactly what silently broke when the anchor was
+//    the retired directory (see dsh/host/preset-sync.mjs).
+const manifestPath = join(profileRoot, '.install-manifest.json');
+const markerPath = join(presetRoot, '.owner.json');
 
-// 4. --force takes over
+// 3a. legacy-only install (no profile manifest): must still refuse.
+rmSync(manifestPath, { force: true });
+writeFileSync(markerPath, JSON.stringify({ owner: 'npm', version: '9.9.9', installedAt: new Date().toISOString() }), 'utf8');
+r = run(installArgs);
+check('conflict (legacy anchor only): direct install refuses an npm-owned profile (exit 1)', r.status === 1);
+
+// 3b. both anchors present and DISAGREEING: the profile manifest wins.
+writeFileSync(manifestPath, JSON.stringify({ owner: 'npm', version: '9.9.9', installedAt: new Date().toISOString() }, null, 2) + '\n', 'utf8');
+writeFileSync(markerPath, JSON.stringify({ owner: 'direct', version: '0.7.8', installedAt: new Date().toISOString() }), 'utf8');
+r = run(installArgs);
+check('conflict (manifest is authoritative): direct install still refuses (exit 1)', r.status === 1);
+
+// 4. --force takes over: BOTH anchors must end up saying direct.
 r = run([...installArgs, '--force']);
 check('--force takeover exit 0', r.status === 0);
-check('--force rewrites owner=direct', JSON.parse(readFileSync(join(presetRoot, '.owner.json'), 'utf8')).owner === 'direct');
+check('--force rewrites the profile manifest to owner=direct',
+  JSON.parse(readFileSync(manifestPath, 'utf8')).owner === 'direct');
+check('--force rewrites the legacy marker to owner=direct',
+  JSON.parse(readFileSync(markerPath, 'utf8')).owner === 'direct');
 
 // 5. uninstall dry-run (no --yes) leaves files in place
 r = run(['uninstall', '--dsh-home', home, '--vault', vault]);

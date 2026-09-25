@@ -85,6 +85,41 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 通道归属锚点从退役目录迁到 profile 目录（步骤 A/两步）
+
+**状态**：步骤 A 已实施（新锚点 + 旧锚点回退 + 三处读写归一）；步骤 B（删旧目录的写入与
+`syncPresetTree`）待做。
+
+**问题**：npm / direct 两条通道的冲突守卫，**唯一**能查的锚点是
+`$DSH_HOME/.agent-presets/<notes-assistant>/.owner.json`——而那个目录自 dsh 0.1.7 起
+**没有任何代码读它**。也就是说「把死目录清掉」这个看起来最顺手的动作，会让守卫
+**静默失效**：两条通道此后互相覆盖、一句提示都没有。讽刺的是，文档里到处写着"这个目录已经死了"。
+
+**修法（步骤 A）**：锚点换成 `<profile>/.install-manifest.json` 的 `owner`——**三条通道本来
+就都在写它**（`install.mjs` 的两条路、Obsidian 引导），所以这次不需要新增任何写入，只需要
+规定**读的优先级**：
+
+- `dsh/host/preset-sync.mjs` 新增 `readChannelOwner({profileDir, home, presetId})`：
+  **profile manifest 优先，退役的 `.owner.json` 仅作回退**（旧装机只有后者；把它当成
+  "无人拥有"正是这条函数要防的静默接管）与 `profileDirFromCtx(ctx)`（`ctx.baseUrl` 实测锚点）。
+- `dsh/host/index.mjs` 的运行时守卫、`install.mjs` 的三处冲突检查/`status`/`uninstall`
+  全部改走它；**一次查询**取代了原先"分别读两个 marker、可能各自得出不同结论"的写法。
+- `install.mjs` 原本自己写了一遍 `.owner.json` / `.install-manifest.json` 两个**文件名字面量**，
+  现在从 `preset-sync.mjs` 导入——第二份字面量正是两个锚点会各自漂移的入口。
+
+**验证**：
+- `test-preset-sync.mjs` 从 20 项扩到 **35 项**：锚点优先级 8 项（含"两个锚点冲突时 manifest 赢"、
+  "manifest 坏 JSON 不致命"、"没有 owner 的 manifest 不算拥有"、"没有任何锚点 ⇒ 无人拥有"）、
+  `profileDirFromCtx` 3 项，以及**运行时守卫的对照实验 4 项**——用带 cache-busting 的
+  in-process `import()` 起两份 `host/index.mjs` 实例（`apply` 有模块级 `mounted` 旗标，同进程只能
+  跑一次），差分条件是"manifest 说 direct、旧 marker 说 npm"：守卫必须跳过**并点名 manifest**，
+  且面板/工作区**一次都没被尝试**；无锚点的那份必须正常激活。
+- `test-installer.mjs` 的冲突用例拆成两条：**只有旧锚点**（旧装机）必须拒绝；
+  **两个锚点冲突**时 manifest 说了算，也必须拒绝；`--force` 之后**两个锚点都**变成 direct。
+- 端到端：把 manifest 改成 `npm` 后 `--direct` 装拒绝（exit 1）；**再把 `.agent-presets/` 整个删掉，
+  仍然拒绝** —— 这正是本次迁移的目的。
+- 变异验证：守卫退回"只读旧 marker" ⇒ 运行时那两条断言红（33/35）。
+
 ## 2026-09-25 · dsh 0.1.7 适配（P0 preset 断代 + V4 日志选择 + 悬空镜像）
 
 **状态**：P0 与两条 P1 已实施并有回归。完整评估、逐条证据与剩余项见

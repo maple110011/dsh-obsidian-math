@@ -17,14 +17,14 @@
  * (dsh/cordis.patch.yml) with no dsh source changes.
  *
  * `$DSH_HOME/.agent-presets/<id>/` is not a deploy target any more (dsh reads
- * nothing there); it survives only as the ownership marker both install channels
- * write, which is why it is still named below.
+ * nothing there). It survives only as the LEGACY channel-ownership marker; the
+ * anchor is now the profile's own `.install-manifest.json` (see
+ * `./preset-sync.mjs` → `readChannelOwner`, and docs/handoff.md §7).
  */
 
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { OWNER_MARKER } from "./preset-sync.mjs";
+import { profileDirFromCtx, readChannelOwner } from "./preset-sync.mjs";
 import { apply as applyPanel } from "./math-memory-panel.mjs";
 import { apply as applyWorkspace } from "../profile/math-memory-workspace.mjs";
 
@@ -32,14 +32,6 @@ export const name = "math-memory-host";
 export const inject = ["webServer", "workspaceRegistry"];
 
 const PRESET_ID = "notes-assistant";
-
-function readOwnerMarker(path) {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
 
 /** Harness home: $DSH_HOME, else ~/.dsh. */
 function dshHome() {
@@ -60,15 +52,17 @@ export async function apply(ctx, config) {
   // and skip panel/workspace too, because the direct install already mounts
   // them via its --patch overlay (double-mounting would collide).
   //
-  // The marker still lives under `.agent-presets/<id>/` even though dsh >= 0.1.7
-  // no longer reads that directory for presets: it is an ownership record
-  // written by both channels, not a preset lookup path. Moving it would orphan
-  // every existing install's marker and defeat the guard.
-  const ownershipRoot = join(dshHome(), ".agent-presets", PRESET_ID);
-  const existingOwner = readOwnerMarker(join(ownershipRoot, OWNER_MARKER));
-  if (existingOwner !== null && existingOwner.owner !== "npm") {
+  // The anchor is the PROFILE's `.install-manifest.json` (all three channels
+  // write it). The retired `.agent-presets/<id>/.owner.json` is only a FALLBACK:
+  // dsh >= 0.1.7 reads nothing in that directory, so anchoring solely there meant
+  // "clean up the dead directory" silently disabled this guard. The warning names
+  // which anchor decided, so that distinction is visible at runtime.
+  const profileDir = profileDirFromCtx(ctx);
+  const owner = readChannelOwner({ profileDir, home: dshHome(), presetId: PRESET_ID });
+  if (owner !== null && owner.owner !== "npm") {
     ctx.logger?.warn?.(
-      `dsh-math-memory: preset ${PRESET_ID} is owned by "${existingOwner.owner}" — ` +
+      `dsh-math-memory: this profile is owned by "${owner.owner}" ` +
+      `(${owner.source === "manifest" ? "profile .install-manifest.json" : "legacy .agent-presets marker"}) — ` +
       `skipping bundle activation. Run \`dsh-math-memory uninstall\` to remove the direct copy, ` +
       `or \`dsh-math-memory install --force\` to switch to the npm bundle channel.`
     );
