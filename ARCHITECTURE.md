@@ -35,7 +35,7 @@
 |---|---|
 | `manifest.json` / `main.js` / `styles.css` | Obsidian 社区插件发布物（`main.js` 由构建生成，勿手改） |
 | `locale/` + `icon.svg` | **dsh 插件管理页的卡片素材**（0.1.7 能力）：`dsh-app-boot` 的 `readPluginMeta` 读 `package.json.icon`（相对路径、≤256 KiB、包内真实文件）与 `<pkg>/locale/<lang>.json` 的 `meta.title`/`meta.description`（`en.json` 为基准）。三样都**静默降级**（缺失/不合格就回退到包名与默认图），所以由**真读取器**守卫：`scripts/check-plugin-manifest-meta.mjs`。`package.json` 的 `files` 必须带上这两项（发布集由 `check-release-paths.mjs` 钉住） |
-| `obsidian/main.template.js` | 插件源码：服务管理、LinkServer（/open + /feedback）、主进程反代（`DshWebProxy`：cookie 兑换 + 侧栏性能注入）、记忆面板、预览编辑、全局皮肤 patch 兜底（junction 镜像/降级）、设置页（含捕获策略下拉框与侧栏性能模式）、bootstrap |
+| `obsidian/main.template.js` | 插件源码：服务管理、LinkServer（/open + /feedback）、主进程反代（`DshWebProxy`：cookie 兑换 + 侧栏性能注入）、记忆面板、预览编辑、**皮肤中心的显式安装**（`installSkinCenterPackages`：`dsh plugin add` 两个 `@linxin666` 包；退役的 junction 镜像已删，见 `docs/changelog.md` 2026-09-26）、机器级皮肤行的 disable 兜底（`buildSkinFallbackBlock`）、设置页（含捕获策略下拉框与侧栏性能模式）、bootstrap |
 | `dsh/preset/` | **agent preset `notes-assistant`**：`preset.yml`（元信息）、`agent.cordis.yml`（装配：最小工具 + 记忆插件配置）、`math-memory.mjs`（记忆注入引擎 + 体检 + 对话索引 + 记号/捕获策略注入）、`note-tools.mjs`（笔记工具：note_recall（统一检索 + tag-only 枚举）/note_strategy/note_create/note_links + BM25 检索引擎） |
 | `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 `@linxin666` UI 插件**，保持独立）、`notes-assistant.patch.yml`（`--direct`/Obsidian 直写通道的 `--patch` overlay；native 模式由 bundle 提供，不用它）、`math-memory-workspace.mjs` |
 | `dsh/templates/` | **vault 模板**：`AGENTS.md`（工作协议，自动加载）、`profile.md`、`notation.md`（记号体系）、`topics-index.md`、`records-{readme,index}.md`、`theorems-*.md`、`templates-*.md`、`episodes-*.md`、`inbox-*.md`、`capture-policy.md` |

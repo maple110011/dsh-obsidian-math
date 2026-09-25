@@ -17,7 +17,7 @@
 | 你想知道 | 读 |
 |---|---|
 | 目录结构、模块职责、数据流 | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| 上手/交接：改哪里、跑什么、**98 条历史陷阱** | [`docs/handoff.md`](docs/handoff.md)（§2 入口地图、§4 陷阱、§7 未做清单）；**拖拽引用专题进展见 [`docs/drag-to-mention-progress-2026-09-25.md`](docs/drag-to-mention-progress-2026-09-25.md)** |
+| 上手/交接：改哪里、跑什么、**99 条历史陷阱** | [`docs/handoff.md`](docs/handoff.md)（§2 入口地图、§4 陷阱、§7 未做清单）；**拖拽引用专题进展见 [`docs/drag-to-mention-progress-2026-09-25.md`](docs/drag-to-mention-progress-2026-09-25.md)** |
 | **给 agent 的仓库维护方法（通用）** | [`docs/agent-repo-maintenance.md`](docs/agent-repo-maintenance.md)（**§0.5 = 八荣八耻、§0.6 = 业务项目测试纪律六条，动手前先读**） |
 | 可维护性审查与整改台账 | [`docs/maintainability-review-2026-09-11.md`](docs/maintainability-review-2026-09-11.md)（审计，只读）、[`docs/maintainability-fixes-2026-09-11.md`](docs/maintainability-fixes-2026-09-11.md)（状态 + 证据） |
 | 记忆系统的当前实现规格 | [`docs/memory/design.md`](docs/memory/design.md) |
@@ -56,7 +56,7 @@
 
 ## 4. 验证：什么才算"通过"
 
-**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 **49** 条门禁；**这个数字由 `scripts/lib/gates.mjs` 派生、由 `check-doc-counts.mjs` 守住**——它曾手写成「34/34」而在门禁增长到 41 条后仍在原地）。⚠️ 但"绿"要读三态：`ok` / `SKIP` / `FAIL`。**SKIP 只表示那条门禁在本机没比任何东西**（缺 dsh、缺已部署的 profile、沙箱不允许子进程写自身状态），汇总会**单独列出被跳过的门禁名与原因**；它**不是**通过。历史上 `test: deployed profile accepts a session` 曾长期 `0/0 断言 + exit 0`，而"45/45 全绿"把这件事盖住了（坑 69 的同族，2026-09-26 已改为三态汇总，详见坑 98）。见到 `SKIP` 就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
+**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 **48** 条门禁；**这个数字由 `scripts/lib/gates.mjs` 派生、由 `check-doc-counts.mjs` 守住**——它曾手写成「34/34」而在门禁增长到 41 条后仍在原地）。⚠️ 但"绿"要读三态：`ok` / `SKIP` / `FAIL`。**SKIP 只表示那条门禁在本机没比任何东西**（缺 dsh、缺已部署的 profile、沙箱不允许子进程写自身状态），汇总会**单独列出被跳过的门禁名与原因**；它**不是**通过。历史上 `test: deployed profile accepts a session` 曾长期 `0/0 断言 + exit 0`，而"45/45 全绿"把这件事盖住了（坑 69 的同族，2026-09-26 已改为三态汇总，详见坑 98）。见到 `SKIP` 就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
 
 ```bash
 node scripts/run-gates.mjs               # 全部门禁（= npm test）
@@ -100,7 +100,7 @@ node scripts/run-gates.mjs --only panel  # 只跑名字含 panel 的
 - **加守卫必须做变异验证**：故意制造它要抓的缺陷 → 确认它报错 → 恢复 → 确认 `git diff` 为空。验收标准是"**它在该报错时确实报错**"，不是"跑了没报错"。
 - **解析 frontmatter 不要自己写正则**：`/^---\r?\n([\s\S]*?)\r?\n---/` 曾被复制 15 次，是坑 21/22/43 三次数据损坏的共同根因。用 `dsh/preset/hook-frontmatter.mjs` 的 `frontmatterSpan`/`readFrontmatter`/`replaceFrontmatter`，守卫 `check-frontmatter-source.mjs` 会拒绝新的拷贝（坑 65）。
 - **只有一个自动发现的指令文件**：仓库根 `AGENTS.md`（就是本文件）。任何其它 `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `.github/copilot-instructions.md` 都会被 harness 当成"**本仓库**的指令"注入给 agent——不管它本来写给谁。本仓库已经中过两次（坑 60：`dsh/templates/AGENTS.md` 是给用户 vault 的协议；`scripts/qa/benchmark-vault/AGENTS.md` 是合成基准 vault 的协议，一动那个目录就被注入全文）。**守卫：`node scripts/check-agent-instructions.mjs`**——除根 `AGENTS.md` 外一律拒绝，"一个都没找到"也算失败。修法是**改源文件名**（安装名由清单映射），不是删文件，也不能只是"记得别打开它"。
-- 完整清单见 `docs/handoff.md` §4（**98 条**，数字由 `docs/handoff.md` §4 顶部的标记行 + `node scripts/check-doc-counts.mjs` 守卫保证不腐烂）——改动前扫一遍与你要动的东西相关的条目。
+- 完整清单见 `docs/handoff.md` §4（**99 条**，数字由 `docs/handoff.md` §4 顶部的标记行 + `node scripts/check-doc-counts.mjs` 守卫保证不腐烂）——改动前扫一遍与你要动的东西相关的条目。
 
 ## 7. 提交信息与工作方式
 

@@ -28,11 +28,11 @@ export const GATES = [
   { name: 'test: installer e2e', args: ['scripts/test-installer.mjs'] },
   { name: 'check: rename', args: ['scripts/check-rename.mjs'] },
   { name: 'check: skin fallback', args: ['scripts/check-skin-fallback.mjs'] },
-  // @linxin666 镜像必须清理"上游包已被删除"的悬空 junction。镜像循环只走 web 侧，
-  // 被删掉的包永远不会被再次访问，链接就一直指着不存在的目标；而 `existsSync` 会
-  // 跟随 junction，把断链也报成"不存在"，所以这个缺陷长期不可见。实测（2026-09-25，
-  // dsh-web-all 0.3.20 → 0.4.2 之后）本机 notes-assistant profile 有 9 条这样的链接。
-  { name: 'check: mirror cleanup (dangling @linxin666 junctions)', args: ['scripts/check-mirror-cleanup.mjs'] },
+  // 原先这里还有一条 `check: mirror cleanup (dangling @linxin666 junctions)`：它守的是
+  // "镜像循环只走 web 侧、被删掉的包永远不被回访，于是留下悬空 junction"（2026-09-25 实测 9 条）。
+  // **2026-09-26 镜像本身退役了**（skin-center 0.4.x 已不再往全局 patch 写皮肤行，"镜像"失去了
+  // 存在理由；而本机经历过一次 harness home 全损、目录链接是疑似载体，全局守卫此后禁止建链），
+  // 所以那条门禁与被测代码一起删除，而不是留着测一段死代码。
   { name: 'check: plugin id', args: ['scripts/check-plugin-id.mjs'] },
   // 0.1.7 的插件管理页用三样东西画一张卡片：`package.json.icon` 与
   // `<pkg>/locale/<lang>.json` 的 `meta.title`/`meta.description`。本插件此前**一样都没声明**，

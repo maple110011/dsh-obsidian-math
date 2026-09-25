@@ -85,6 +85,75 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · junction 镜像退役：侧栏皮肤中心改为显式安装（P2-D）
+
+**问题（先取证，因为它推翻了原计划）**：插件在 `onLayoutReady` 无条件调用
+`syncGlobalPackageLinks(home)`，用**目录链接**把 web profile 的整片 `@linxin666`
+镜像进笔记 profile（本机 **18 条**）。它存在的理由是：
+
+> 皮肤管理器把活动皮肤写进全局 `$DSH_HOME/cordis.patch.yml`，而全局层作用于**每一个**
+> profile，所以侧栏 profile 也必须能解析 `@linxin666`。
+
+取证发现**这个前提已经不成立**：`@linxin666/dsh-client-ui-skin-center@0.4.2` 的 README 原文是
+*"no reload, no **cordis.patch.yml rewrite**, no restart"*——皮肤 v2 是"纯资源目录 + 浏览器半
+实时切换"，v1 写进 home 根 `cordis.patch.yml` 的受管段还会被它的 legacy bridge **清掉**
+（issue #788）。本机实测：`$DSH_HOME/cordis.patch.yml` 里**只有 pretooluse-guard，一行 skin 都没有**。
+
+也就是说，**镜像的全部理由是历史**，而它留下的只是副作用：在本机（2026-09-25 全损过一次 harness
+home、目录链接是疑似载体、全局守卫此后禁止 agent shell 工具建链接）每次启动建 18 条链接，
+**而且守卫看不见**——它拦得住 `pwsh`/`node` 的 `mklink`/junction，拦不住 Obsidian 插件进程里的
+`symlinkSync`。
+
+**现在还需要 `@linxin666` 的只剩一处**：设置项 `enableSkinCenter` 往 overlay 追加
+`ui-skin-center` + `ui-web-ui-settings` 两行，让侧栏里也有那个选择器。这两个包带**真实运行时依赖**
+（`jpeg-js`、`lightningcss` + 其原生包、`yaml`、`schemastery`，共约 1.9 MB），所以"像客户端半个
+那样拷进 `node_modules`"会解析不了依赖——**`dsh plugin add` 是唯一正确的安装器**。
+
+**改法（用户选定"显式安装"）**：
+- **删除** `syncGlobalPackageLinks` 及其反向清理、`readSkinFallbackBlock` / `stripSkinFallbackBlock`，
+  以及 `onLayoutReady` 里那次无条件调用；`fs` 里 `lstatSync` / `rmSync` / `symlinkSync` 随之从
+  require 列表移除（它们在本文件已无其它用途）。
+- **新增** `installSkinCenterPackages(home, done)`：跑
+  `dsh plugin --profile notes-assistant add @linxin666/dsh-client-ui-skin-center @linxin666/dsh-client-ui-web-ui-settings`，
+  `stdio: 'ignore'`（受限环境禁止管道捕获子进程输出），**成功与否由文件系统判定**——
+  `close` 后重新检查那两个包在**本 profile**里是否真的存在，从不只看退出码。
+- **`skinCenterMountable()` 改为纯文件系统判据**（本 profile 里装着这两个包才挂那两行）：
+  `writeNotesAssistantPatch()` 每次启动都跑，而它**不能有副作用**——一旦把"顺带装个包"塞进去，
+  就变成在渲染进程里同步等一次 pnpm。
+- 设置页新增一个按钮「把皮肤中心装进侧栏 profile」，并显示当前状态（已装 / 有可装版本 / 无来源）；
+  开关打开但包没装时给出**指向那个按钮**的提示，而不是含糊的"未检测到皮肤包"。
+- **`SKIN_FALLBACK` 保留**，但它现在有了独立的理由：它读机器级 patch 里仍被引用的 `ui-skin-*` id
+  并写成 `disabled: true`。这件事**不依赖镜像**（对手工写过 v1 行的机器仍是有效防御），而且从
+  "只在 web profile 缺失时降级"变成**每次启动重算**（旧实现里那块内容是"被刷新擦掉再重放"，
+  时序上曾经失效过一次——见 CHANGELOG 2026-09-11 那条）。
+
+**删掉的门禁**：`check: mirror cleanup (dangling @linxin666 junctions)`（7 项、做过变异验证）——
+它测的是"镜像清理得干不干净"，而**被测代码整段退役了**。保留它只会养一段死代码，与本轮 B2 同一
+条纪律。门禁总数 **49 → 48**（由 `check-doc-counts.mjs` 守住）。
+
+**保留/更新的防御**：`check: skin fallback` **保留**（它断言 base profile 里不得硬挂任何
+`@linxin666`——在"包必须真装进本 profile"的新形态下，这条比过去更重要），只更新了头部注释。
+
+**首次启用成本要说清**：`enableSkinCenter` 在本机 `data.json` 里是 `true`，但这两个包**从未**装进
+笔记 profile（过去靠镜像"看起来装着"）。这次改动之后侧栏皮肤中心在**点一次按钮之前不生效**——
+为了避免用户以为功能坏了，开关的提示直说要点那个按钮。
+
+**新增的两条不变量断言**（都加进 `check-skin-fallback.mjs`，因为这个文件本来就在守"base profile 不得硬挂
+`@linxin666`"）：
+1. **挂载判据必须是本 profile 的 scope**（`skinCenterMountable` 里出现 `obsidianSkinScope(home)`、且
+   不再出现 `webSkinScope(home)`）——判据退回 web scope 就正好恢复了"镜像时代的条件"；
+2. **插件源码里不得出现建链接的调用**（`symlinkSync(` 与 `'junction'` 字面量）。注意用**调用形态**
+   而不是裸词匹配：本文件的注释里就写着这两个名字（解释它们为什么被删掉），裸词匹配会自伤。
+
+**变异验证**（新守卫必须证明它在该报错时确实报错）：
+- **M7** 把 `skinCenterMountable` 的判据改回 `webSkinScope(home)` ⇒ 两条断言红、exit 1；
+- **M8** 重新插入一行 `symlinkSync('a','b','junction')` ⇒ 两条断言红、exit 1；恢复后 exit 0。
+
+**验证**：`node scripts/run-gates.mjs` = **46/48 passed, 2 skipped, 0 failed**（两次 SKIP 仍是本机
+没有已部署的 `notes-assistant` profile）；`npm run qa` = seed-probe 8/8。
+`node --check obsidian/main.template.js` 通过；`main.js` 已重建（718,895 字节，14 个内嵌源），
+`check-bundle-freshness` 逐字节确认提交的 `main.js` == 用当前模板的全新构建。
+
 ## 2026-09-26 · 退役 `.agent-presets/`（步骤 B2：删掉死代码并改名）
 
 **状态**：已实施。这一步**不改变任何行为**，只把 B1 之后确定无人调用/无人读的东西清掉。

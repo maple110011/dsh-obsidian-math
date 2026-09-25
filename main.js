@@ -9,7 +9,7 @@
 const { Plugin, ItemView, Notice, PluginSettingTab, Setting, Modal } = require('obsidian');
 const { shell } = require('electron');
 const { spawn, spawnSync } = require('child_process');
-const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, lstatSync, rmSync, renameSync, symlinkSync, appendFileSync, appendFile, openSync, readSync, closeSync } = require('fs');
+const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, appendFileSync, appendFile, openSync, readSync, closeSync } = require('fs');
 const { join, dirname, resolve } = require('path');
 const { homedir } = require('os');
 const { randomBytes } = require('crypto');
@@ -1557,29 +1557,27 @@ const SKIN_FALLBACK_START = "# --- skin-disable fallback (auto-added: web profil
 const SKIN_FALLBACK_END = "# --- end skin-disable fallback ---";
 
 // Optional skin center mount (settings.enableSkinCenter): the @linxin666 skin
-// picker + its settings card host. Appended to the plugin-owned
-// notes-assistant.patch.yml overlay only when BOTH the toggle is on AND a web
-// profile exists to mirror the @linxin666 packages from; degrade mode (no web
-// profile) skips it so boot never dies with ERR_MODULE_NOT_FOUND.
+// picker + its settings card host, appended to the plugin-owned
+// notes-assistant.patch.yml overlay.
 //
-// Status under dsh 0.1.5 / dsh-web-all 0.3.20 (docs/dsh-0.1.5-adaptation.md
-// §3.5): the aggregate web bundle now mounts its own `web-ui-skin-center` row,
-// so on a machine that has the aggregate this block is REDUNDANT — the host
-// half runs once and the browser half is deduped by package name, i.e. it is
-// harmless but adds nothing. It still carries its weight on the one setup the
-// aggregate cannot cover: a `web` profile whose skin packages exist WITHOUT the
-// aggregate, where this is the only way the Obsidian-side UI gets a skin
-// picker. Kept intentionally; the default stays off.
+// ⚠️ THE ROW IS APPENDED ONLY WHEN THE PACKAGES ARE ALREADY INSTALLED IN THIS
+// PROFILE (`skinCenterMountable` is a pure filesystem check). This plugin used to
+// make that true implicitly, by mirroring the whole web profile's @linxin666 scope
+// into this profile with directory junctions on every start. That is gone
+// (2026-09-26): the machine has been through a total loss of the harness home in
+// which a directory link was the suspected vector, and a global guard now forbids
+// link creation — this plugin must not be the one component still creating links
+// where nothing can see it (`symlinkSync` from a renderer is invisible to that
+// guard). Installing is now an explicit action (settings page → 安装到侧栏 profile),
+// which runs `dsh plugin add` and reports failure instead of pretending.
 const SKIN_CENTER_INSERT = [
   '',
   '# Optional skin center (settings.enableSkinCenter): mount the @linxin666 skin',
-  '# picker + its settings card host. Only appended when the web profile exists',
-  '# to mirror the @linxin666 packages from; otherwise boot would fail with',
-  '# ERR_MODULE_NOT_FOUND, so degrade mode skips this block.',
-  '# NOTE: when the web profile ships the @linxin666/dsh-web-all aggregate, that',
-  '# bundle already mounts its own web-ui-skin-center row and this insert is a',
-  '# no-op in practice (host half runs once, browser half deduped by package',
-  '# name). See docs/dsh-0.1.5-adaptation.md §4 B2.',
+  '# picker + its settings card host. Only appended when those packages are',
+  '# installed in THIS profile — installing them is an explicit settings action',
+  '# (`dsh plugin add`, needs pnpm/network), because they carry real runtime',
+  '# dependencies (jpeg-js, lightningcss + its native binary, yaml, schemastery).',
+  '# A row whose package cannot resolve would not boot this profile.',
   '- insert:',
   "    - id: ui-skin-center",
   "      name: '@linxin666/dsh-client-ui-skin-center'",
@@ -1588,30 +1586,16 @@ const SKIN_CENTER_INSERT = [
 ].join('\n');
 
 /**
- * Extract the machine-local skin-disable fallback block (if present) so the
- * plugin-owned refresh below never wipes it. The block is appended by
- * syncGlobalPackageLinks when the web profile is missing; without this
- * preservation, the auto-start path overwrites notes-assistant.patch.yml right
- * after the fallback is added and the degraded profile dies on boot again.
- */
-function readSkinFallbackBlock(patchPath) {
-  try {
-    const existing = readFileSync(patchPath, 'utf8');
-    const start = existing.indexOf(SKIN_FALLBACK_START);
-    const end = existing.indexOf(SKIN_FALLBACK_END, start);
-    if (start < 0 || end < 0) return '';
-    return existing.slice(start, end + SKIN_FALLBACK_END.length).trim();
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Read every `ui-skin-*` id the global skin-manager patch
- * ($DSH_HOME/cordis.patch.yml) references — both the `id:` form and the
- * `@linxin666/dsh-client-ui-skin-*` package-name form — so the degrade block
- * disables exactly the skins that would otherwise break a web-profile-less
- * boot. No hardcoded skin list: a new/renamed skin is picked up automatically.
+ * Read every `ui-skin-*` id the machine-level patch ($DSH_HOME/cordis.patch.yml)
+ * references — both the `id:` form and the `@linxin666/dsh-client-ui-skin-*`
+ * package-name form — so the disable block below neutralizes exactly the skins
+ * this profile cannot resolve. No hardcoded skin list: a new/renamed skin is
+ * picked up automatically.
+ *
+ * (skin-center 0.4.x no longer writes such rows at all — it says so in its own
+ * README, "no cordis.patch.yml rewrite", and its legacy bridge strips the v1
+ * managed section. This stays as the defensive net for a machine still carrying
+ * v1 rows; with none present it produces an empty block.)
  */
 function readGlobalSkinIds(home) {
   const globalPatch = join(home, 'cordis.patch.yml');
@@ -1629,7 +1613,12 @@ function readGlobalSkinIds(home) {
   }
 }
 
-/** Build the machine-local skin-disable fallback block from the global patch (no hardcoded list). */
+/**
+ * Build the machine-local skin-disable block from the global patch (no hardcoded
+ * list). Recomputed on every start by `writeNotesAssistantPatch`, so it can never
+ * go stale, and it is why this profile no longer needs a mirrored @linxin666
+ * scope: an unresolvable skin row is disabled rather than chased with a link.
+ */
 function buildSkinFallbackBlock(home) {
   const ids = readGlobalSkinIds(home);
   if (ids.length === 0) return '';
@@ -1637,27 +1626,81 @@ function buildSkinFallbackBlock(home) {
   return `\n${SKIN_FALLBACK_START}\n${rows}\n${SKIN_FALLBACK_END}\n`;
 }
 
-/** Remove any existing skin-fallback block so a regenerate can replace it in place. */
-function stripSkinFallbackBlock(text) {
-  const start = text.indexOf(SKIN_FALLBACK_START);
-  const end = text.indexOf(SKIN_FALLBACK_END, start);
-  if (start < 0 || end < 0) return text;
-  return text.slice(0, start) + text.slice(end + SKIN_FALLBACK_END.length);
+/** The @linxin666 scope this profile resolves packages from. */
+function obsidianSkinScope(home) {
+  return join(home, 'profiles', PRESET_NAME, 'node_modules', '@linxin666');
 }
 
-/** The web profile's @linxin666 scope that the skin packages mirror from. */
+/** The web profile's @linxin666 scope — where the packages can be COPIED FROM (source availability only). */
 function webSkinScope(home) {
   return join(home, 'profiles', 'web', 'node_modules', '@linxin666');
 }
 
+
 /** The two @linxin666 packages the optional skin center actually mounts. */
 const SKIN_CENTER_PACKAGES = ['dsh-client-ui-skin-center', 'dsh-client-ui-web-ui-settings'];
 
-/** True when the skin center can be mounted: toggle on AND both skin-center packages actually exist in the web profile. */
+/** True when every given package exists under `scope`. */
+function packagesPresent(scope, packages = SKIN_CENTER_PACKAGES) {
+  return packages.every((pkg) => existsSync(join(scope, pkg)));
+}
+
+/**
+ * True when the skin center can be MOUNTED: the toggle is on AND both packages
+ * are installed in THIS profile. Pure filesystem check on purpose — this runs
+ * inside `writeNotesAssistantPatch`, which must never have side effects.
+ */
 function skinCenterMountable(settings, home) {
   if (settings.enableSkinCenter !== true) return false;
-  const scope = webSkinScope(home);
-  return SKIN_CENTER_PACKAGES.every((pkg) => existsSync(join(scope, pkg)));
+  return packagesPresent(obsidianSkinScope(home));
+}
+
+/**
+ * True when the packages could still be OBTAINED: the web profile has them, so
+ * `dsh plugin add` has a version to install (it may also fetch from the registry).
+ */
+function skinCenterInstallable(home) {
+  return packagesPresent(webSkinScope(home));
+}
+
+/**
+ * Install the optional skin-center packages into THIS profile.
+ *
+ * WHY AN EXPLICIT ACTION (2026-09-26). The plugin used to guarantee
+ * `skinCenterMountable` by mirroring the web profile's whole @linxin666 scope
+ * into this profile with directory junctions on every start. See the
+ * SKIN_CENTER_INSERT comment for why that is gone. Copying files instead is not
+ * an option either: these packages carry real runtime dependencies (jpeg-js,
+ * lightningcss + its native binary, yaml, schemastery), so `dsh plugin add` is
+ * the only correct installer — and that needs pnpm/network, which is exactly why
+ * it runs when the user asks for it.
+ *
+ * @param {string} home harness home ($DSH_HOME)
+ * @param {(result: {ok: boolean, detail: string}) => void} done
+ */
+function installSkinCenterPackages(home, done) {
+  const specs = SKIN_CENTER_PACKAGES.map((pkg) => '@linxin666/' + pkg);
+  const args = ['plugin', '--profile', PRESET_NAME, 'add', ...specs];
+  let child = null;
+  try {
+    child = spawn('dsh', args, {
+      env: { ...process.env, DSH_HOME: home },
+      shell: process.platform === 'win32',
+      // stdio: 'ignore' — the sandbox forbids capturing a child's output through
+      // pipes, and the install’s own log is not what we report. Success is decided
+      // by the filesystem below, never by an exit code.
+      stdio: 'ignore'
+    });
+  } catch (error) {
+    done({ ok: false, detail: String(error) });
+    return;
+  }
+  child.on('error', (error) => done({ ok: false, detail: String(error) }));
+  child.on('close', () => {
+    // Never trust the exit code alone: the packages must be resolvable HERE.
+    const ok = skinCenterMountable({ enableSkinCenter: true }, home);
+    done({ ok, detail: ok ? '已安装到 ' + obsidianSkinScope(home) : '安装命令已结束，但 ' + obsidianSkinScope(home) + ' 里仍找不到这两个包' });
+  });
 }
 
 /** Build the plugin-owned notes-assistant.patch.yml content (embedded base + optional skin center). */
@@ -1671,13 +1714,12 @@ function buildNotesAssistantPatch(settings, home) {
 
 /**
  * Write notes-assistant.patch.yml: refresh the embedded content, append the
- * optional skin-center block, and re-apply the machine-local degrade fallback
- * in one write so a degraded boot never sees a patch file missing its block.
+ * optional skin-center block, and recompute the machine-local skin-disable block
+ * in ONE write (so a boot never sees a patch file with a stale disable list).
  */
 function writeNotesAssistantPatch(plugin, home) {
   const patchPath = join(home, 'profiles', PRESET_NAME, 'notes-assistant.patch.yml');
-  const fallback = readSkinFallbackBlock(patchPath);
-  const content = buildNotesAssistantPatch(plugin.settings, home) + (fallback === '' ? '' : '\n\n' + fallback + '\n');
+  const content = buildNotesAssistantPatch(plugin.settings, home) + buildSkinFallbackBlock(home);
   mkdirSync(dirname(patchPath), { recursive: true });
   writeFileSync(patchPath, content, 'utf8');
   return patchPath;
@@ -1773,105 +1815,6 @@ function bootstrapDshConfig(plugin, force = false) {
   }, null, 2) + '\n', 'utf8');
 
   return { home, written };
-}
-
-/**
- * Durable fix for the global skin-manager patch: $DSH_HOME/cordis.patch.yml
- * inserts the ACTIVE web skin (an @linxin666 package) into EVERY profile, but
- * the obsidian profile carries none of those packages — boot then dies with
- * ERR_MODULE_NOT_FOUND. Instead of maintaining a list of skin ids, mirror
- * every @linxin666 package from the web profile's node_modules into the
- * obsidian profile via junctions (no admin rights needed, one-time per
- * package). Resolution then always succeeds; entries the obsidian profile
- * deliberately disables stay disabled, and any future skin simply resolves.
- */
-function syncGlobalPackageLinks(home) {
-  const webScope = join(home, 'profiles', 'web', 'node_modules', '@linxin666');
-  const obsScope = join(home, 'profiles', PRESET_NAME, 'node_modules', '@linxin666');
-  if (!existsSync(webScope)) {
-    // Degraded mode: no web profile to mirror from. The global skin-manager
-    // patch ($DSH_HOME/cordis.patch.yml) inserts the ACTIVE skin into every
-    // profile; disable exactly the skins it references (read at runtime, no
-    // hardcoded list) so a web-profile-less boot survives.
-    const overlay = join(home, 'profiles', PRESET_NAME, 'notes-assistant.patch.yml');
-    try {
-      if (existsSync(overlay)) {
-        let text = readFileSync(overlay, 'utf8');
-        text = stripSkinFallbackBlock(text);
-        const block = buildSkinFallbackBlock(home);
-        if (block !== '') text = text.replace(/\s+$/, '') + block;
-        writeFileSync(overlay, text, 'utf8');
-      }
-    } catch {
-      // best-effort; boot will surface the real error if this fails
-    }
-    return { linked: 0, degraded: true };
-  }
-  mkdirSync(obsScope, { recursive: true });
-  // `existsSync` FOLLOWS a junction, so a link whose target was removed by a
-  // web-profile reinstall (or a package rename — the 0.3.20 aggregate replaced
-  // `dsh-web-ui-all`, retired `dsh-perf`/`dsh-desktop-launcher`, …) reports
-  // "absent", `symlinkSync` then fails EEXIST, and the bare catch swallowed it:
-  // the durable skin fix silently stopped working forever. Detect the entry with
-  // lstat, and drop it only when it is a junction whose target is gone.
-  let linked = 0;
-  let repaired = 0;
-  let stale = 0;
-  const failures = [];
-  for (const name of readdirSync(webScope)) {
-    const target = join(obsScope, name);
-    let entry = null;
-    try {
-      entry = lstatSync(target);
-    } catch {
-      entry = null;
-    }
-    if (entry !== null) {
-      if (existsSync(target)) continue; // healthy link or real directory
-      if (!entry.isSymbolicLink()) continue; // real file/dir: never touch it
-      try {
-        rmSync(target, { force: true });
-        repaired += 1;
-      } catch (error) {
-        failures.push(`${name}: ${String(error)}`);
-        continue;
-      }
-    }
-    try {
-      symlinkSync(join(webScope, name), target, 'junction');
-      linked += 1;
-    } catch (error) {
-      // Skip unlinkable entries; the profile must still boot.
-      failures.push(`${name}: ${String(error)}`);
-    }
-  }
-  // Second pass, opposite direction. The loop above only visits names that STILL
-  // exist in the web profile, so a package deleted there (the 0.4.0 aggregate
-  // folded `dsh-perf` / `dsh-doctor` / `dsh-skins` / `dsh-web-ui-all` into the
-  // one package) is never revisited: its junction here keeps pointing at a
-  // target that is gone and survives every future sync. Measured 2026-09-25 —
-  // 9 such links in the obsidian profile. Walk this side too, and drop only
-  // junctions whose web target no longer exists. Real directories and real
-  // files are never touched, and a healthy link is never re-created.
-  for (const name of readdirSync(obsScope)) {
-    const link = join(obsScope, name);
-    let entry = null;
-    try {
-      entry = lstatSync(link);
-    } catch {
-      entry = null;
-    }
-    if (entry === null || !entry.isSymbolicLink()) continue;
-    if (existsSync(join(webScope, name))) continue;
-    try {
-      rmSync(link, { force: true });
-      stale += 1;
-    } catch (error) {
-      failures.push(`${name} (stale): ${String(error)}`);
-    }
-  }
-  if (failures.length > 0) writeDebugLog('[skin] 镜像失败 ' + failures.length + ' 项：' + failures.slice(0, 3).join(' | '));
-  return { linked, repaired, stale, degraded: false };
 }
 
 function bootstrapVaultTemplates(plugin, force = false) {
@@ -3146,19 +3089,6 @@ class DshObsidianMathPlugin extends Plugin {
         }
       });
     }
-    // Mirror the web profile's @linxin666 packages into the obsidian profile
-    // so the global skin insert can always resolve (durable skin fix).
-    this.app.workspace.onLayoutReady(() => {
-      try {
-        const location = this.service.location();
-        if (location !== null) {
-          const result = syncGlobalPackageLinks(location.home);
-          if (result.linked > 0) this.service?.appendLog(`已为 obsidian profile 建立 ${result.linked} 个包链接（皮肤兼容）`);
-        }
-      } catch (error) {
-        this.service?.appendLog(`包链接同步失败：${String(error)}`);
-      }
-    });
     if (this.settings.autoArchiveEpisodes) {
       this.app.workspace.onLayoutReady(() => {
         try {
@@ -3419,7 +3349,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('挂载皮肤中心 UI（高级 / 通常无需开启）')
-      .setDesc('在笔记 profile 里额外挂载皮肤中心（皮肤选择 + 背景透明度）与它的设置卡宿主。注意两点：(1) 自 dsh-web-all 0.3.20 起聚合包已自带皮肤中心，装了聚合包的机器上这个开关是冗余的（宿主半边只跑一次、浏览器半边按包名去重）；它只覆盖「有皮肤包、没有聚合包」的 web profile。(2) 关掉它**不会**关掉皮肤——皮肤本体由全局 $DSH_HOME/cordis.patch.yml + junction 镜像生效，侧栏照样跟随你在主 web 界面选的皮肤；这个开关只管那个选择器 UI 要不要出现在这里。改动需重启 dsh 服务后生效。')
+      .setDesc('在笔记 profile 里额外挂载皮肤中心（皮肤选择 + 背景透明度）与它的设置卡宿主。注意：(1) 自 dsh-web-all 0.3.20 起聚合包已自带皮肤中心，装了聚合包的机器上这个开关是冗余的（宿主半边只跑一次、浏览器半边按包名去重）；它只覆盖「有皮肤包、没有聚合包」的 web profile。(2) **侧栏与皮肤的关系已经改简单了**：插件过去用目录链接（junction）把 web profile 的 @linxin666 整片镜像过来，那是本机上唯一还在自动建链接的机制，已于 2026-09-26 退役。现在这两个包需要**真的装进笔记 profile**——点下面的按钮做一次（走 dsh plugin add，需要 pnpm / 网络），装好之前这个开关即使打开也不会挂载（挂一个解析不到的包会起不来）。(3) 皮肤**本体**不再依赖全局 cordis.patch.yml 插入（skin-center 0.4.x 已不再改写它），所以关掉这个开关就只是没有那个选择器 UI。改动需重启 dsh 服务后生效。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.enableSkinCenter).onChange(async (value) => {
         this.plugin.settings.enableSkinCenter = value;
         await this.plugin.saveSettings();
@@ -3428,7 +3358,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
           if (location !== null) {
             writeNotesAssistantPatch(this.plugin, location.home);
             if (value && !skinCenterMountable(this.plugin.settings, location.home)) {
-              new Notice('已开启皮肤中心，但未检测到完整的 web profile 皮肤包（需 @linxin666/dsh-client-ui-skin-center 与 web-ui-settings），皮肤中心暂不生效。');
+              new Notice('已开启皮肤中心，但这两个包还没装进笔记 profile：请点下面的「把皮肤中心装进侧栏 profile」按钮。');
             } else {
               new Notice(value ? '皮肤中心已开启，重启 dsh 服务后生效。' : '皮肤中心已关闭，重启 dsh 服务后生效。');
             }
@@ -3438,6 +3368,36 @@ class DshObsidianSettingTab extends PluginSettingTab {
         }
         this.display();
       }));
+
+    // The ONE place that puts @linxin666 into this profile — explicit, because it
+    // needs pnpm/network (the packages carry real runtime dependencies) and
+    // because doing it implicitly was what the junction mirror used to hide.
+    new Setting(containerEl)
+      .setName('把皮肤中心装进侧栏 profile')
+      .setDesc(this.plugin.service.location() === null
+        ? '未检测到 dsh：先在设置里配置 dsh 安装目录。'
+        : (skinCenterMountable({ enableSkinCenter: true }, this.plugin.service.location().home)
+          ? '✅ 已安装（' + obsidianSkinScope(this.plugin.service.location().home) + '）。'
+          : (skinCenterInstallable(this.plugin.service.location().home)
+            ? '运行 `dsh plugin --profile ' + PRESET_NAME + ' add @linxin666/dsh-client-ui-skin-center @linxin666/dsh-client-ui-web-ui-settings`。需要 pnpm 与网络，可能要几十秒。'
+            : '未检测到 web profile 里的皮肤包，暂时没有可装的版本。')))
+      .addButton((button) => button
+        .setButtonText('安装到侧栏')
+        .setDisabled(this.plugin.service.location() === null)
+        .onClick(() => {
+          const location = this.plugin.service.location();
+          if (location === null) return;
+          button.setDisabled(true);
+          new Notice('开始安装皮肤中心包（可能需要几十秒）…');
+          installSkinCenterPackages(location.home, async (result) => {
+            if (result.ok) {
+              new Notice('皮肤中心包已装进笔记 profile：重启 dsh 服务后生效。');
+            } else {
+              new Notice('皮肤中心包安装未完成：' + result.detail);
+            }
+            this.display();
+          });
+        }));
 
     new Setting(containerEl)
       .setName('侧栏性能模式（默认开启）')
