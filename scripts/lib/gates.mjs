@@ -28,6 +28,11 @@ export const GATES = [
   { name: 'test: installer e2e', args: ['scripts/test-installer.mjs'] },
   { name: 'check: rename', args: ['scripts/check-rename.mjs'] },
   { name: 'check: skin fallback', args: ['scripts/check-skin-fallback.mjs'] },
+  // @linxin666 镜像必须清理"上游包已被删除"的悬空 junction。镜像循环只走 web 侧，
+  // 被删掉的包永远不会被再次访问，链接就一直指着不存在的目标；而 `existsSync` 会
+  // 跟随 junction，把断链也报成"不存在"，所以这个缺陷长期不可见。实测（2026-09-25，
+  // dsh-web-all 0.3.20 → 0.4.2 之后）本机 notes-assistant profile 有 9 条这样的链接。
+  { name: 'check: mirror cleanup (dangling @linxin666 junctions)', args: ['scripts/check-mirror-cleanup.mjs'] },
   { name: 'check: plugin id', args: ['scripts/check-plugin-id.mjs'] },
   { name: 'check: version consistency', args: ['scripts/check-version-consistency.mjs'] },
   { name: 'check: doc consistency', args: ['scripts/check-doc-consistency.mjs'] },
@@ -39,6 +44,17 @@ export const GATES = [
   { name: 'check: embedded loader', args: ['scripts/check-embedded-loader.mjs'] },
   { name: 'check: embedded writers', args: ['scripts/check-embedded-writers.mjs'] },
   { name: 'check: engine sync (preset vs host)', args: ['scripts/check-engine-sync.mjs'] },
+  // 0.1.7 把 preset 变成「组合包里的一行声明」，于是"体文件清单"一度存在四份，而其中
+  // 三份是错的：`install --direct` 那份**缺两个文件**，产出的 profile 每次建会话都
+  // `agent-preset/invalid`，而当时所有门禁都是绿的（installer 门禁断言的是**已退役**的
+  // `.agent-presets/` 布局）。这条门禁把清单收敛到 preset-deploy.mjs 的**相对 import
+  // 闭包**，并钉住两个通道各自的 name 形态（bundle 走包内 specifier、overlay 走 `./`）——
+  // 后者是首次冷启动能不能建出会话的分界线。变异验证：清单漏一项 → 红（已跑）。
+  { name: 'check: preset body lists agree', args: ['scripts/check-preset-body-lists.mjs'] },
+  // 声明块是生成的，两个通道两种形态。生成器自己的 `--check` 就是漂移守卫——
+  // 此前 build-preset-declaration.mjs 与 lib/preset-declaration.mjs 的注释都引用了一个
+  // **不存在**的 `check-preset-declaration.mjs`，于是漂移只被 test-agent-preset 顺带看到。
+  { name: 'check: preset declaration is current', args: ['scripts/build-preset-declaration.mjs', '--check'] },
   { name: 'check: frontmatter single source', args: ['scripts/check-frontmatter-source.mjs'] },
   { name: 'check: env vars vs docs/env-vars.md', args: ['scripts/check-env-vars.mjs'] },
   { name: 'check: doc constants (tools/papers)', args: ['scripts/check-doc-constants.mjs'] },
@@ -56,6 +72,12 @@ export const GATES = [
   { name: 'check: shipped yaml parses', args: ['scripts/check-patch-yaml.mjs'] },
   { name: 'check: release artifact paths', args: ['scripts/check-release-paths.mjs'] },
   { name: 'check: client bundle freshness', args: ['scripts/check-client-bundle.mjs'] },
+  // 记忆面板的**客户端半个**是一个安装时才生成的包。它曾经把宿主入口拷到包根、再手挑
+  // 四个兄弟文件 —— 0.1.7 给 `host/index.mjs` 加了一个相对 import 之后，那份手写清单少了
+  // 三个目标，包**根本 import 不起来**（`ERR_MODULE_NOT_FOUND …/preset/preset-deploy.mjs`），
+  // 而安装器打印的是"包已就位"。现在改成复制**相对 import 闭包**，并由这条门禁真的
+  // `import()` 一次产物（两个宿主半分支各一次）。变异验证：闭包截断成只剩入口 → 红（已跑）。
+  { name: 'check: client package layout', args: ['scripts/check-client-package-layout.mjs'] },
   { name: 'check: main.js bundle freshness', args: ['scripts/check-bundle-freshness.mjs'] },
   { name: 'syntax: scripts/lit-import.mjs', args: ['--check', 'scripts/lit-import.mjs'] },
   { name: 'syntax: dsh/host/memory-admin.mjs', args: ['--check', 'dsh/host/memory-admin.mjs'] },
@@ -84,5 +106,16 @@ export const GATES = [
   // 链接跳转服务的端口/令牌必须跨插件加载稳定：否则旧回复里的笔记链接会静默失效
   // （端口没人听 / 令牌 403）。2026-09-14 用户实测的"双链点了没反应"就是这个。
   { name: 'test: link server port+token stability', args: ['scripts/test-link-server.mjs'] },
-  { name: 'test: agent preset mounts (real dsh, no tokens)', args: ['scripts/test-agent-preset.mjs'] }
+  { name: 'test: agent preset mounts (real dsh, no tokens)', args: ['scripts/test-agent-preset.mjs'] },
+  // 阶段 3 验收：自己离线装一份**bundle 形态**的 profile（profile 名故意不叫
+  // `notes-assistant`），冷启动它，并真建一个会话。与上一条的分工：上一条用仓库里的
+  // 文件自己铺 preset（证明**仓库**对），这一条走官方插件管理留下的那份形状
+  // （证明**装出来的那份**对）。
+  //
+  // 这条门禁取代了 `test: deployed profile accepts a session`——那一条从机器上已部署的
+  // profile 出发，2026-09-25 它抓到了真实缺陷，但现场随 `$DSH_HOME` 一起没了之后它就
+  // 只会 SKIP（0/0 断言、exit 0），于是"45/45 全绿"里含一条什么都没比的门禁。而它测的
+  // 那种形状恰好是**唯一没坏**的那种：实测另有三种形态全坏（profile 名 ≠ 常量、
+  // 冷启动第一次、`--direct`），一条都没被覆盖。现在它自带 profile，这三种一起钉住。
+  { name: 'test: self-provisioned profile accepts a session (real dsh)', args: ['scripts/test-real-profile-accept.mjs'] }
 ];

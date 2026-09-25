@@ -61,7 +61,7 @@ const installDir = join(process.env.APPDATA || join(homedir(), 'AppData', 'Roami
 const binJs = join(installDir, 'lib', 'bin.js');
 const patch = join(dshHome, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
 if (!existsSync(binJs) || !existsSync(patch)) {
-  console.log('panel-auth-e2e: SKIP (needs an installed dsh + notes-assistant profile)');
+  console.log('__SKIP__ panel-auth-e2e (needs an installed dsh + notes-assistant profile)');
   console.log(`  binJs: ${binJs} (${existsSync(binJs)})`);
   console.log(`  patch: ${patch} (${existsSync(patch)})`);
   process.exit(0);
@@ -180,8 +180,9 @@ try {
 
 if (skipReason !== null) {
   // Declared SKIP, same contract as the "no local dsh" path above: no
-  // `__CHECKS__` line, exit 0, and check-doc-consistency treats it as skipped.
-  console.log('panel-auth-e2e: SKIP (the environment forbids the dsh child its own state files)');
+  // `__CHECKS__` line, exit 0, and the runner reports it as SKIPPED rather than
+  // counted-as-passed (see `__SKIP__` in scripts/run-gates.mjs).
+  console.log('__SKIP__ panel-auth-e2e (the environment forbids the dsh child its own state files)');
   console.log('  ' + skipReason);
   console.log('  Environment boundary, not a proxy defect — this gate runs for real in CI.');
   process.exit(0);

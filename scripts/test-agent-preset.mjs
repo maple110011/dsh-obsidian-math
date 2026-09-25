@@ -17,9 +17,10 @@
 //
 // 零 token：只创建会话，不发消息。需要本机已安装 dsh + notes-assistant profile，
 // 否则按设计 SKIP 并 exit 0（与 scripts/test-panel-auth.mjs 同一约定）。
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, rmSync, openSync, closeSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, rmSync, openSync, closeSync, copyFileSync, writeFileSync } from 'node:fs';
 import { pruneWorkspaces } from './lib/workspace-registry.mjs';
 import { seedIsolatedHome, removeIsolatedHome } from './lib/isolated-dsh-home.mjs';
+import { buildPresetDeclarationBlock } from './lib/preset-declaration.mjs';
 import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
@@ -42,17 +43,59 @@ check('preset 里有 persona 行', personaBlock.length > 0);
 check('persona 用 `prefix:`（dsh-persona ≥0.1.5-rc.1 的必填字段）', /^\s{4}prefix:\s*>-/m.test(personaBlock), personaBlock.match(/^\s{4}\w+:/m)?.[0]?.trim() ?? '(none)');
 check('persona 不再用旧字段 `text:`（旧写法会让 preset 挂载失败）', !/^\s{4}text:/m.test(personaBlock));
 
+// ── ⓪ dsh 0.1.7：preset 必须被「声明」，而不是放进目录 ──────────────────────
+// 0.1.7 起 `$DSH_HOME/.agent-presets/` 不再被读取（`.agent-presets` / `preset.yml`
+// / `includeUserRoot` 在全库 0 命中），preset 变成一条普通的 Cordis 行
+// `name: '@deepseek-ai/dsh-agent-preset'`。这条声明由
+// `scripts/build-preset-declaration.mjs` 从 `agent.cordis.yml` + `preset.yml`
+// **生成**并写进两个通道的 patch 文件；这里断言生成物没有漂移，并断言它真的
+// 出现在 profile 的 patch 层里（声明缺失 = 会话直接建不起来）。
+const presetYmlText = readFileSync(join('dsh', 'preset', 'preset.yml'), 'utf8');
+const overlayPatch = readFileSync(join('dsh', 'profile', 'notes-assistant.patch.yml'), 'utf8');
+const bundlePatch = readFileSync(join('dsh', 'cordis.patch.yml'), 'utf8');
+const packageName = JSON.parse(readFileSync('package.json', 'utf8')).name;
+
+// ONE composition, TWO name forms (scripts/lib/preset-declaration.mjs):
+//   · the overlay is copied into the profile dir and the body is staged there
+//     before dsh starts  ⇒ `./math-memory.mjs`
+//   · a bundle row cannot stage anything in time on a cold first boot, so it
+//     names the module as a subpath of the INSTALLED PACKAGE
+// `check-preset-body-lists.mjs` pins both; these two assertions keep the
+// "declaration is generated from the composition" property visible here too.
+const overlayDeclaration = buildPresetDeclarationBlock({
+  id: 'notes-assistant',
+  compositionText: presetYml,
+  presetYmlText
+});
+const bundleDeclaration = buildPresetDeclarationBlock({
+  id: 'notes-assistant',
+  compositionText: presetYml,
+  presetYmlText,
+  localPrefix: `${packageName}/dsh/preset`
+});
+check('overlay 通道带相对形态的声明（Obsidian / --direct）',
+  overlayPatch.includes(overlayDeclaration.trim()) && overlayPatch.includes('./math-memory.mjs'),
+  'run: node scripts/build-preset-declaration.mjs');
+check('bundle 通道带包内 specifier 形态的声明（npm 安装路径）',
+  bundlePatch.includes(bundleDeclaration.trim()) && bundlePatch.includes(`${packageName}/dsh/preset/math-memory.mjs`),
+  `${packageName}/dsh/preset`);
+check('bundle 通道不含相对形态（冷启动时没人来得及铺那些文件）',
+  !bundlePatch.includes('name: ./math-memory.mjs'),
+  'a relative row here means the first boot after install fails with agent-preset/invalid');
+
 // 真实 home：**只读**，用来判断"这套装好了没"以及给下面对照源码漂移。
 const realDshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
 const installDir = join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh');
 const binJs = join(installDir, 'lib', 'bin.js');
 const realPatch = join(realDshHome, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
-const installedPreset = join(realDshHome, '.agent-presets', 'notes-assistant', 'agent.cordis.yml');
-if (!existsSync(binJs) || !existsSync(realPatch) || !existsSync(installedPreset)) {
-  console.log('agent-preset-e2e: SKIP (needs an installed dsh + notes-assistant profile; 零 token 部分已跑)');
-  console.log(`  binJs: ${binJs} (${existsSync(binJs)})`);
-  console.log(`  patch: ${realPatch} (${existsSync(realPatch)})`);
-  console.log(`  installed preset: ${installedPreset} (${existsSync(installedPreset)})`);
+// The retired `.agent-presets/notes-assistant/agent.cordis.yml` used to gate this
+// SKIP; nothing writes that path for a healthy 0.1.7 install any more, so
+// requiring it would have hidden the dynamic half in exactly the case this gate
+// exists for. The profile overlay is the right precondition.
+if (!existsSync(binJs) || !existsSync(realPatch)) {
+  console.log('__SKIP__ agent-preset-e2e (needs an installed dsh + a notes-assistant profile)');
+  console.log('  binJs: ' + binJs + ' (' + existsSync(binJs) + ')');
+  console.log('  patch: ' + realPatch + ' (' + existsSync(realPatch) + ')');
   console.log(`__CHECKS__ ${passed}/${total}`);
   process.exit(0);
 }
@@ -68,11 +111,42 @@ const dshHome = mkdtempSync(join(tmpdir(), 'dsh-preset-home-'));
 seedIsolatedHome(dshHome, realDshHome, { withPreset: true });
 const patch = join(dshHome, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
 
-/** Deployed copy vs repo source: the installed preset is what dsh actually reads. */
-const deployed = readFileSync(installedPreset, 'utf8');
-const deployedPersona = deployed.slice(deployed.indexOf('- id: persona'), deployed.indexOf('- id: agent-instructions'));
-check('已安装的 preset 也用 `prefix:`（插件不会强制刷新它，必须与仓库一致）', /^\s{4}prefix:\s*>-/m.test(deployedPersona));
-check('已安装的 preset 不再用 `text:`', !/^\s{4}text:/m.test(deployedPersona));
+// Stage what dsh 0.1.7 actually needs, into the PROFILE directory: the preset
+// body files (the registry resolves `./math-memory.mjs` against the profile
+// baseUrl — see dsh/preset/preset-deploy.mjs) and the generated declaration in
+// the profile's own patch layer. Doing it here keeps this gate independent of
+// which channel deployed the real profile, and it is exactly the shape both
+// channels must produce.
+//
+// The declaration goes into BOTH overlay files on purpose, because both are live
+// in the Obsidian launch (`cordis.patch.yml` is read by the profile, and
+// `notes-assistant.patch.yml` is passed as `--patch`). That mirrors production,
+// which is how the 2026-09-25 real-machine acceptance caught a stale deployed
+// copy: the row was in one file but not the other, so the preset was still
+// "not found" while `--dump-config` looked healthy.
+const isolatedProfile = join(dshHome, 'profiles', 'notes-assistant');
+for (const name of ['math-memory.mjs', 'note-tools.mjs', 'hook-frontmatter.mjs']) {
+  copyFileSync(join('dsh', 'preset', name), join(isolatedProfile, name));
+}
+for (const overlay of ['cordis.patch.yml', 'notes-assistant.patch.yml']) {
+  const overlayPath = join(isolatedProfile, overlay);
+  const current = readFileSync(overlayPath, 'utf8');
+  if (!current.includes(overlayDeclaration.trim())) {
+    writeFileSync(overlayPath, current.replace(/\s*$/, '') + '\n\n' + overlayDeclaration, 'utf8');
+  }
+}
+check('探针 home 的 profile 里已铺 preset 体文件（0.1.7 的解析锚点）',
+  ['math-memory.mjs', 'note-tools.mjs', 'hook-frontmatter.mjs'].every((n) => existsSync(join(isolatedProfile, n))));
+check('两个 overlay 都带着相对形态的声明（两处都是 Obsidian 启动路径的一部分）',
+  ['cordis.patch.yml', 'notes-assistant.patch.yml'].every((o) => readFileSync(join(isolatedProfile, o), 'utf8').includes(overlayDeclaration.trim())));
+
+// What the machine actually has. The preset body is no longer part of this
+// check: the bundle channel does not stage it at all (it names the modules as
+// package subpaths), and the offline channels stage it before boot.
+const deployedOverlay = readFileSync(realPatch, 'utf8');
+check('已部署的 overlay 带着相对形态的 preset 声明（侧栏启动读的就是它）',
+  deployedOverlay.includes(overlayDeclaration.trim()),
+  'overlay 没有声明 ⇒ 侧栏会报 agent-preset/not-found');
 
 // ── ② 动态：真的建一个会话 ──────────────────────────────────────────────────
 //

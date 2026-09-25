@@ -32,6 +32,7 @@ const EMBEDDED_SOURCES = {
   "math-memory.mjs": "dsh/preset/math-memory.mjs",
   "note-tools.mjs": "dsh/preset/note-tools.mjs",
   "hook-frontmatter.mjs": "dsh/preset/hook-frontmatter.mjs",
+  "preset-deploy.mjs": "dsh/preset/preset-deploy.mjs",
   "profile-package.json": "dsh/profile/package.json",
   "profile-cordis.yml": "dsh/profile/cordis.yml",
   "profile-cordis.patch.yml": "dsh/profile/cordis.patch.yml",

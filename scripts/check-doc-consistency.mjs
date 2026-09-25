@@ -48,8 +48,16 @@ function runSuite(rel, { optional = false } = {}) {
   const stdout = r.output;
   const m = /__CHECKS__ (\d+)\/(\d+)/.exec(stdout);
   if (m === null) {
-    if (optional && /\bSKIP\b/.test(stdout)) {
-      console.log(`SKIP  ${rel}: ${(/^.*\bSKIP\b.*$/m.exec(stdout) ?? [''])[0].trim()}`);
+    // The machine-readable marker is `__SKIP__` (scripts/run-gates.mjs reads the
+    // same one). `\bSKIP\b` alone does NOT match `__SKIP__` — `_` is a word
+    // character, so there is no boundary — which is how this guard would have
+    // started failing the moment a suite switched to the marker.
+    const skipLine = /^.*__SKIP__.*$/m.exec(stdout) ?? /^.*\bSKIP\b.*$/m.exec(stdout);
+    if (optional && skipLine !== null) {
+      // Strip the child's `__SKIP__` marker when echoing it: this gate IS running
+      // and comparing its anchors, so its own output must not look like a skip to
+      // whoever parses it next (scripts/run-gates.mjs reads that same marker).
+      console.log(`SKIP  ${rel}: ${skipLine[0].replace('__SKIP__', '').trim()}`);
       return null;
     }
     fail(`${rel}: no __CHECKS__ line in its output`);

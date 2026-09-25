@@ -1707,7 +1707,9 @@ const OWNER_CHANNEL = 'direct';
 const DIRECT_PROFILE_FILES = [
   'package.json', 'cordis.yml', 'cordis.patch.yml', 'pnpm-workspace.yaml',
   'math-memory-workspace.mjs', 'notes-assistant.patch.yml', 'memory-admin.mjs',
-  'math-memory-panel.mjs', 'hook-frontmatter.mjs'
+  'math-memory-panel.mjs', 'hook-frontmatter.mjs',
+  // dsh >= 0.1.7: the agent preset's modules live in the profile directory.
+  'math-memory.mjs', 'note-tools.mjs'
 ];
 
 function readOwnerMarker(path) {
@@ -1750,6 +1752,17 @@ function bootstrapDshConfig(plugin, force = false) {
   if (ensureFile(join(profileRoot, 'memory-admin.mjs'), EMBEDDED_PRESET['host-memory-admin.mjs'], true)) written.push('profile/memory-admin.mjs');
   if (ensureFile(join(profileRoot, 'math-memory-panel.mjs'), EMBEDDED_PRESET['host-math-memory-panel.mjs'], true)) written.push('profile/math-memory-panel.mjs');
   if (ensureFile(join(profileRoot, 'hook-frontmatter.mjs'), EMBEDDED_PRESET['hook-frontmatter.mjs'], true)) written.push('profile/hook-frontmatter.mjs');
+  // The agent preset's own modules must live IN THE PROFILE DIRECTORY on dsh
+  // >= 0.1.7. The registry resolves a relative row `name:` (e.g.
+  // `./math-memory.mjs` in the generated declaration inside cordis.patch.yml)
+  // against the profile ctx `baseUrl` — the profile directory — not against the
+  // directory of the patch that declared the preset. Measured, with a control:
+  // the same patch with the modules beside it fails with
+  // `math-memory (./math-memory.mjs): never started` (see
+  // .scratch-p0-preset-probe.md §2). `hook-frontmatter.mjs` above is already a
+  // profile-root file, so only the two new names are added here.
+  if (ensureFile(join(profileRoot, 'math-memory.mjs'), EMBEDDED_PRESET['math-memory.mjs'], true)) written.push('profile/math-memory.mjs');
+  if (ensureFile(join(profileRoot, 'note-tools.mjs'), EMBEDDED_PRESET['note-tools.mjs'], true)) written.push('profile/note-tools.mjs');
 
   // Record ownership so the npm bundle / CLI installer can detect this direct
   // install and skip (or be skipped by) it instead of silently clobbering.
@@ -1807,6 +1820,7 @@ function syncGlobalPackageLinks(home) {
   // lstat, and drop it only when it is a junction whose target is gone.
   let linked = 0;
   let repaired = 0;
+  let stale = 0;
   const failures = [];
   for (const name of readdirSync(webScope)) {
     const target = join(obsScope, name);
@@ -1835,8 +1849,33 @@ function syncGlobalPackageLinks(home) {
       failures.push(`${name}: ${String(error)}`);
     }
   }
+  // Second pass, opposite direction. The loop above only visits names that STILL
+  // exist in the web profile, so a package deleted there (the 0.4.0 aggregate
+  // folded `dsh-perf` / `dsh-doctor` / `dsh-skins` / `dsh-web-ui-all` into the
+  // one package) is never revisited: its junction here keeps pointing at a
+  // target that is gone and survives every future sync. Measured 2026-09-25 —
+  // 9 such links in the obsidian profile. Walk this side too, and drop only
+  // junctions whose web target no longer exists. Real directories and real
+  // files are never touched, and a healthy link is never re-created.
+  for (const name of readdirSync(obsScope)) {
+    const link = join(obsScope, name);
+    let entry = null;
+    try {
+      entry = lstatSync(link);
+    } catch {
+      entry = null;
+    }
+    if (entry === null || !entry.isSymbolicLink()) continue;
+    if (existsSync(join(webScope, name))) continue;
+    try {
+      rmSync(link, { force: true });
+      stale += 1;
+    } catch (error) {
+      failures.push(`${name} (stale): ${String(error)}`);
+    }
+  }
   if (failures.length > 0) writeDebugLog('[skin] 镜像失败 ' + failures.length + ' 项：' + failures.slice(0, 3).join(' | '));
-  return { linked, repaired, degraded: false };
+  return { linked, repaired, stale, degraded: false };
 }
 
 function bootstrapVaultTemplates(plugin, force = false) {

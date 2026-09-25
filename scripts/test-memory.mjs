@@ -6,7 +6,7 @@
 // quality is tracked through passive usage signals instead (see
 // docs/memory/v2-proposal.md §6).
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, readdirSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
@@ -1048,6 +1048,73 @@ rmSync(v3Path, { force: true });
 check('v3: with the successor gone the V2 original is read again',
   findSessionLogs(v3Root, 20)[0]?.path === v2Path
   && runSessionCapture(root, v3Root).captured.some((c) => c.id === 'session-v3-1'));
+
+// ── 25b. dsh 0.1.7 session data format V4 (docs/dsh-0.1.7-adaptation.md) ────
+// V4 adds a THIRD artifact name, `session.v4.jsonl.zstd`, and the migration
+// keeps the V3 original next to it — so v3+v4 coexistence is a long-lived state
+// (measured on this machine: 2 session directories, V4 newer in both). The
+// authority rule must therefore compare the GENERATION NUMBER, not a single
+// `.v3.` label: the old rule returned `false` for `isNewerArtifact(v4, v3)`,
+// which made the stale V3 file win every time. Fixtures below use V4 shapes
+// captured from real 0.1.7-rc.2 logs (see .scratch-adapter-probe.md §A2), and
+// the mtimes are DELIBERATELY CROSSED (v4 older, v3 newer) so generation
+// preference is proven independently of mtime.
+const v4Root = join(root, 'sessions-v4');
+const v4SessionDir = join(v4Root, 'v4proj', 'session-v4-1');
+mkdirSync(v4SessionDir, { recursive: true });
+const v4V3Path = join(v4SessionDir, 'session.v3.jsonl.zstd');
+const v4Path = join(v4SessionDir, 'session.v4.jsonl.zstd');
+writeFileSync(v4V3Path, zstdCompressSync(Buffer.from([
+  JSON.stringify({ type: 'session', version: 3, id: 'session-v4-1', cwd: root, createdAt: Date.now() - 7200000, isSeeded: false, delegationDepth: 0, agentPreset: 'notes-assistant' }),
+  JSON.stringify({ type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'V3 代里的旧提问' }] } }),
+  JSON.stringify({ type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'text', text: 'V3 代旧回答' }] }, stream: [] } })
+].join('\n') + '\n', 'utf8')));
+writeFileSync(v4Path, zstdCompressSync(Buffer.from([
+  JSON.stringify({ type: 'session', version: 4, id: 'session-v4-1', cwd: root, createdAt: Date.now() - 7200000, isSeeded: false, delegationDepth: 0, agentPreset: 'notes-assistant' }),
+  JSON.stringify({ type: 'permission/preset', seq: 0, time: 0, data: { preset: 'math-memory-locked' } }),
+  JSON.stringify({ type: 'user/message', seq: 1, time: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'V3 代里的旧提问' }] } }),
+  JSON.stringify({ type: 'assistant/message', seq: 2, time: 2, data: { message: { content: [{ type: 'reasoning', text: '内部思考' }, { type: 'text', text: 'V3 代旧回答' }] }, stream: [] } }),
+  JSON.stringify({ type: 'user/message', seq: 3, time: 3, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'V4 继任代的新提问' }] } }),
+  JSON.stringify({ type: 'assistant/message', seq: 4, time: 4, data: { message: { content: [{ type: 'text', text: 'V4 新回答' }] }, stream: [] } })
+].join('\n') + '\n', 'utf8')));
+// Cross the mtimes on purpose: V3 is the NEWER file on disk.
+const now = Date.now();
+utimesSync(v4Path, new Date(now - 60000), new Date(now - 60000));
+utimesSync(v4V3Path, new Date(now), new Date(now));
+
+check('v4: the higher generation wins even when the older generation is the newer FILE',
+  (() => {
+    const kept = selectAuthoritativeLogs([
+      { path: v4V3Path, mtimeMs: now },
+      { path: v4Path, mtimeMs: now - 60000 }
+    ]);
+    return kept.length === 1 && kept[0].path === v4Path;
+  })());
+check('v4: a v2/v3/v4 triple collapses to the V4 artifact',
+  (() => {
+    const kept = selectAuthoritativeLogs([
+      { path: join(v4SessionDir, 'session.jsonl.zstd'), mtimeMs: now },
+      { path: v4V3Path, mtimeMs: now },
+      { path: v4Path, mtimeMs: now }
+    ]);
+    return kept.length === 1 && kept[0].path === v4Path;
+  })());
+check('v4: the store scan selects the V4 file and counts one session',
+  findSessionLogs(v4Root, 20).length === 1 && findSessionLogs(v4Root, 20)[0]?.path === v4Path);
+
+// Real capture pass: the V4 artifact is what advances, so its lastSeq (4) is
+// what the capture state must record — anchoring on the stale V3 file would
+// pin `lastSeq` at 2 and make every later turn look like "no delta".
+const v4Captured = runSessionCapture(root, v4Root);
+check('v4: capture takes the V4 artifact as authoritative (lastSeq = 4, not 2)',
+  v4Captured.captured.some((c) => c.id === 'session-v4-1')
+  && v4Captured.captured.find((c) => c.id === 'session-v4-1')?.lastSeq === 4);
+check('v4: the V4-only turn lands in the episode (and reasoning stays out)', (() => {
+  const files = readdirSync(epDir).filter((f) => f.includes('session-v4-1'));
+  if (files.length !== 1) return false;
+  const t = readFileSync(join(epDir, files[0]), 'utf8');
+  return t.includes('V4 继任代的新提问') && t.includes('V4 新回答') && !t.includes('内部思考');
+})());
 
 // ── 26. frontmatter writers: offsets, not replacement strings ───────────────
 // The 2026-09-10 audit found two silent-corruption modes in the writers that

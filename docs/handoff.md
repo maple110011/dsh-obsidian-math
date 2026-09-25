@@ -39,7 +39,7 @@
 | **`docs/drag-to-mention-progress-2026-09-25.md`** | **拖拽引用的接续入口（未完成）**：已修好并实测证实的缺陷（客户端半个从未被加载）、**已复现但尚未判定**的那一环（页面收到了投递、草稿却为空）、四个分层探针各自的量法与最近结果、自述诊断的日志格式、夹具坑、以及"探针会改用户持久状态"的教训。**接手拖拽这件事先读它。** |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
-| `scripts/test-memory.mjs` | 零 token 记忆回归（386 项断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 记忆回归（391 项断言，进 `npm test`） |
 | `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（47 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、四条写入型端点；进 `npm test`） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 项：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写回归） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 项，对真实 dsh；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
@@ -86,7 +86,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：91
+> 陷阱条数：98
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -108,7 +108,7 @@
 16. **面板前端 fetch 空 root**：`root` 为空时 fetch 会拿到 SPA HTML（`<!doctype`）导致 `Unexpected token '<'`。root 输入 + localStorage（`dsh-math-memory.panelRoot`）守卫；工作区列表走 `GET /memory-panel/workspaces`。
 17. **本机有两个 dsh 安装**：Obsidian 插件 `dshInstallDir` 可能指向非 npm 全局的 dsh（如 `E:/software/deepseek-harness/dsh` v0.1.0-rc.6），其 dsh-web-frontend bundle 与 npm 全局版（v0.1.1-rc.2）文件名与渲染器变量都不同。前端补丁必须同时改写 `new URL(u).protocol` 与 `new URL(s).protocol` 两种写法；排查「补丁未命中」先看插件 `data.json` 的 `dshInstallDir` 到底指向哪个 dsh。
 18. **乱码 workspace 会话目录会让 dsh 崩溃**：`$DSH_HOME/sessions/` 里若出现含 `~FFFD~`（Unicode 替换字符）的乱码目录，dsh 0.1.1-rc.2 在 session identity 校验时报 `corrupt session log` 并 boot 失败。把乱码目录移出 `sessions/`（备份，勿直接删）即可恢复。
-19. **dsh ≥ 0.1.5：一个会话可能有两份日志**（会话格式 V3）——迁移生成 `session.v3.jsonl.zstd` 并**保留** V2 原件，两份都以 `.jsonl.zstd` 结尾，同目录长期共存；新会话只写 V3，`version` 字段在头行（`0`/`2` = 旧，`3` = 新）。⇒ 任何"扫 `$DSH_HOME/sessions`"的代码都必须**按会话去重**（`sessionLogKey` + `selectAuthoritativeLogs`，**显式优先 `.v3.` 变体**：迁移件与原件 mtime 可能落在同一时间戳刻度上，只看 mtime 会选错），否则同一个会话会被计两次/索引两次。旧版本文档里的 `findSessionLogs` 平铺夹具（`s1.jsonl.zstd`）也已改为真实 `<session-id>/session.jsonl.zstd` 目录布局。
+19. **dsh ≥ 0.1.5：一个会话可能有多份日志**（每次格式升级都保留旧代原件）——V2 → V3 迁移生成 `session.v3.jsonl.zstd`、V3 → V4 生成 `session.v4.jsonl.zstd`，都**保留**原件，同目录长期共存；新会话只写最新一代，`version` 字段在头行（`0`/`2` = 旧，`3` = V3，`4` = V4）。⇒ 任何"扫 `$DSH_HOME/sessions`"的代码都必须**按会话去重并取最新世代**（`sessionLogKey` + `selectAuthoritativeLogs`：`artifactGeneration` 先比 `vN` 世代号，mtime 只作同代兜底），否则同一个会话会被计两次/索引两次，**或者（更隐蔽）一直读旧代导致新轮次永不落盘**——2026-09-25 实测本机 2 个会话目录 v3+v4 并存且 V4 更新，旧的"显式优先 `.v3.`"判据正是这样选错的（见 `docs/dsh-0.1.7-adaptation.md` §4.2）。旧版本文档里的 `findSessionLogs` 平铺夹具（`s1.jsonl.zstd`）也已改为真实 `<session-id>/session.jsonl.zstd` 目录布局。
 20. **V3 里没有逐块流事件**：`assistant/chunk` / `reasoning-chunks` / `text-chunks` / `tool-call-chunks` 在 V3 中不再存在（内容进 `assistant/message.data.stream[]`），事件量显著变小。依赖"逐块事件"的任何新逻辑在 V3 上会静默拿不到数据。—— 以上两条的完整取证见 `docs/dsh-0.1.5-adaptation.md`。
 21. **`String.replace(a, b)` 的 `b` 是替换"模板"不是字面量**：agent 写的 frontmatter 里 `$$`／`$&`／`$'`／`` $` `` 会被展开（`title: 关于 $$ 的表示` → `关于 $ 的表示`；`$&` 把整段 frontmatter 注入标题）。写文件的代码一律用 `replaceFrontmatter`（按偏移量拼接）或 `replace(x, () => y)`；同一个坑 `scripts/build-obsidian.mjs:57-59` 早有注释记录。
 22. **空 frontmatter（`---\n\n---\nbody`）是合法输入**：`replace("", x)` 会在偏移 0 **插入**而非替换，把收尾 `---` 推到文件中间——而调用方仍收到 `{ok:true}`。写入器一律走 `frontmatterSpan` 定位。
@@ -294,6 +294,41 @@
     - **为什么危险**：工作区登记是**持久**的（写在 json 里、不是进程内状态），而且探针"零 token、可随意跑"这个表述**诱导人把它当成无副作用**。它的副作用还与排查混在一起：列表被垃圾项填满后，页面会先显示"选择工作区"而不是直接给输入框 —— **看起来像功能坏了**，实际是我的探针弄脏了用户环境。
     - **纪律**：① 探针前先问"它会写哪些**持久**状态"（workspace.json、settings、`.agent-presets`、会话目录…），会写就**用完立刻清**；② 清理要做成**按判据**的脚本（`scripts/qa/clean-probe-workspaces.mjs`：只删系统临时目录下的登记、先写 `.bak`、默认 dry-run），而不是手改 json —— `test-agent-preset.mjs` 早就有这条纪律（固定探针路径 + 用完摘登记），新探针必须照做；③ 探针的 vault 目录要用**唯一名字**，同名既让夹具无法确定性点中，也让垃圾项更难辨认；④ **"用完清理"不够，最好让它一开始就写不到**：`scripts/lib/isolated-dsh-home.mjs` 给探针种一个临时 `$DSH_HOME`（复制 profile 要点 + junction 链 node_modules），登记于是写进副本。注意两个反例：**删目录前要先读登记表**（顺序反了 `catch` 会返回 0 ⇒ 断言永远绿），以及**路径比较必须归一化**（`dsh` 写的是反斜杠路径，拿正斜杠前缀 `startsWith` 一条都匹配不到 —— 这是同一条断言"永远绿"的第二个原因；两处都做过变异验证）。
 
+    - **补充（2026-09-25）**：本机残留的 10 条已在适配时清掉，那之后 `test: agent preset mounts` 由 16/17 变 17/17。**但这条断言本身就是"锚在用户环境数据上"的**：它读真实 `$DSH_HOME` 的工作区表，所以任何历史残留都会让它红——它是**告警**，不是回归。见到它红先跑 `node scripts/qa/clean-probe-workspaces.mjs`（dry-run）确认是不是旧垃圾，**不要**改断言。
+92. **★ dsh ≥ 0.1.7：preset 里相对 `name:` 的解析锚点是 profile 目录，不是你写声明的地方**（2026-09-25，做 0.1.7 适配时踩到）。
+    - **形态**：0.1.7 起 preset 变成一条普通 Cordis 行（`name: '@deepseek-ai/dsh-agent-preset'`，`config.plugins` 放组合）。把 `./math-memory.mjs` 这类相对行名按"和组合文件同目录"去理解（上一轮 V3 适配留下的直觉），于是把 `.mjs` 与声明它们的 patch 放在一起 ⇒ preset 审计报 `math-memory (./math-memory.mjs): never started`、`session/create` 返回 `agent-preset/invalid`；把**同一份** patch 里的 `.mjs` 只换位置（放进 `$DSH_HOME/profiles/<profile>/`）就一次通过（做过双 marker 差分：只有 `PROFILE_DIR:imported` 出现）。
+    - **根因**：`agentPresetRegistry.register()` 捕获的是**registry 服务自己的 ctx**（`dsh-agent-preset-registry/lib/index.js:500-501,534` → `mountPreset(scope.ctx.extend({ baseUrl: record.context.baseUrl }))`），而 registry 行挂在 profile 里 ⇒ 相对行名锚定 **profile 目录**。`…/dsh/lib/profile-boot-*.js` 的注释也写了同一件事：*"the Loader needs a real include root to anchor `baseUrl` at the profile directory"*。
+    - **纪律**：① 迁移这类"声明与实体分离"的机制时，**锚点要靠实测定位，不能靠"文件应该在哪"的直觉**——判据是"换个位置就通/不通"的差分实验，不是读代码猜；② 跨版本适配**不要从上一轮的结论外推**（V3 那轮"和组合文件同目录"是对的，0.1.7 就不是了）；③ 我们的落地形状：`dsh/preset/preset-deploy.mjs` 把体文件铺进 profile 目录，声明由 `scripts/build-preset-declaration.mjs` 生成进两个通道的 patch，两者由 `test: agent preset mounts` 一起钉住。
+93. **★ import 失败在 preset 审计里只有一句 "never started"，真实异常被吞掉**（2026-09-25）。
+    - **形态**：模块解析失败时**看不到** `ERR_MODULE_NOT_FOUND`。`cordis-plugin-loader/src/config/entry.ts:221-235` 的 `_init()` 把 `tree.import()` 的异常 `ctx.logger.error(error)` 之后**直接 return**（fiber 永不创建），于是 registry 的审计只能报 `math-memory (./math-memory.mjs): never started`；dsh 的启动 stdout/stderr 全文里也只有那一行 URL。
+    - **为什么危险**：诊断文本指向"这个插件没起来"，但**不告诉你为什么**；而"没起来"与"起来后抛错"在审计里长得不一样、修法也完全不同（前者是装配/解析，后者看 apply）。若拿报错文本去 grep 模块名，会一条都搜不到。
+    - **纪律**：① **门禁不要锚在错误文本上**：判据用"`agentPresets/list` 里有没有无 `broken` 的本 preset" + "`session/create` 是否 `ok:true`"；② 要知道"异步 apply 抛错是会被审计抓到的"（有对照实验：故意让 apply throw ⇒ 审计报 `broken`），所以"全程无 broken"可以当"apply 跑完了"的证据；③ 自己写插件时，装配失败要**主动自述**（照坑 90 的纪律），别指望宿主把它翻译出来。
+94. **★ "仓库门禁全绿"不等于"机器上那份是好的"：声明在一个 overlay 里、却不在真正启动的那个里**（2026-09-25，阶段 3 真机验收时抓到）。
+    - **形态**：把 preset 迁移做完、`npm test` 全绿之后，真机验收仍然报 `agent-preset/not-found`。原因不在代码：**已部署**的 `$DSH_HOME/profiles/notes-assistant/cordis.patch.yml` 里没有那条声明，而 `--dump-config` 看起来是"好的"（它把各层合起来看）。真正被当作 `--patch` 传进去的是 **`notes-assistant.patch.yml`**——`cordis.patch.yml` 走的是另一条路。**同一个 profile 的两个 overlay 都是真实启动路径的一部分，只在一个里放声明，就还是"认不出来"。**
+    - **为什么危险**：仓库侧门禁是**自己铺自己验**（从仓库文件重建一份隔离 home），它证明的是"仓库对"；而真机上那份是**安装/引导写出来的**，两者可以不一致而不被任何仓库门禁发现。这是"夹具替产品撒谎"的又一个变体（坑 56 / 87 同族）：**验证的形状对了，被验证的对象不是现场那个**。
+    - **纪律**：① 交付"配置类"改动时，**必须从现场（已部署的那份）再验一次**，不能只用"从仓库重建"的夹具；② 多 overlay 的启动链要**逐个**确认哪一层真的被读（这里靠实跑定位：`--patch` 参数就是答案）；③ 修完把"从现场出发"的验收**固化成门禁**：新增 `test: deployed profile accepts a session (real dsh)`——它从真实 profile 起隔离副本、只回填引导会写的东西，然后真建一个会话；两条路（仓库 / 现场）分开钉，才能各自说话。
+    - **附带**：这一轮的临时验收脚本第一版**又踩了坑 91**（往真实工作区表塞了 3 条 `dsh-real-accept-*`，已用 `clean-probe-workspaces.mjs --apply` 摘掉）。教训照旧且更硬：**新探针默认先建隔离 home，而不是"记得清理"**。
+    - **另附（工具纪律）**：本轮的文档计数更新一度用 PowerShell `Get-Content -Raw` + `[IO.File]::WriteAllText` 往返，把 `AGENTS.md` 与 `handoff.md` 的中文整篇变成了 mojibake（文件本身仍是合法 UTF-8，所以没有任何门禁发现；是 `git diff` 里满屏 `鈥?` 才暴露）。⇒ **改仓库文本文件一律用 read/edit/write 工具，不要用 PowerShell 把整份读进来再写回去**；`git diff` 中文字符的显示本身不可信（控制台编码），判断编码要看字节与工具读数。
+
+95. **★ "没有调用方的导出"不被任何门禁执行：一个坏模块可以一直躺在发布包里**（2026-09-26）。
+    - **形态**：`dsh/preset/preset-deploy.mjs` 的 `presetBodyDeployed()` 用了 `existsSync`，而该文件的 import 行里**没有它** ⇒ 一调就 `ReferenceError: existsSync is not defined`（实测跑过一次）。它从 0.1.7 适配那一轮就写在那儿，注释还写着"给安装器/status 用"。
+    - **为什么没被发现**：① `node --check` 只查语法，而 `existsSync` 是运行时名字，语法层看不见；② `gates.mjs` 里没有它的 `--check` 条目；③ **全仓零调用方**——想调它的代码从来没写过，所以没有任何测试路径会碰到它。三条合起来 = "发布包里躺着一段一执行就崩的代码"。
+    - **纪律**：① 守卫要**真的执行**导出，而不是只读源码文本：新门禁 `check: preset body lists agree` 直接 `deployPresetBody(...)` 写一个临时目录、再用 `presetBodyDeployedIn(...)` 各问一次，这类坏导出从此必红；② **零调用方的导出要么删、要么有守卫执行它**——"没有调用方"不等于"没有风险"，它只是"没有证据"。
+96. **★ "四份清单"的漂移：`install --direct` 少铺两个文件，而门禁把错的布局写成了期望**（2026-09-26）。
+    - **形态**：preset 体文件清单（`math-memory.mjs` / `note-tools.mjs` / `hook-frontmatter.mjs`）一度存在**四处**：`preset-deploy.mjs` 的 `PRESET_BODY_FILES`、`obsidian/main.template.js` 的 `DIRECT_PROFILE_FILES`、`dsh/install.mjs` 的 `DIRECT_PROFILE_FILES`、以及生成声明里的相对 `name:`。0.1.7 适配改了 Obsidian 那份与 npm 那条路，**漏了 `install.mjs`** ⇒ `install --direct` 产出的 profile 里声明写着 `name: ./math-memory.mjs`，而那个文件从没被铺进去。
+    - **症状与判据（实测）**：`agentPresets/list` 里 preset 带 `broken:"math-memory (./math-memory.mjs): never started"`、`session/create` → `agent-preset/invalid`，**启动日志零告警**。把两个文件手工补进 profile 目录 → 立刻 `ok:true`（对照实验，因果确立）。
+    - **为什么门禁没拦住**：`test-installer.mjs` 当时断言的是**已退役**的 `.agent-presets/notes-assistant/*` 布局（preset 解析锚点改成 profile 目录之后没人动这段期望）⇒ **它守着一个已经没人读的目录**，同时给坏通道盖章。而"清单与声明对得上"那条断言只检查 `preset-deploy.mjs` 里有没有那两个字符串，看不到 `install.mjs` 那份缺项。
+    - **纪律**：① 一份清单只能有一处**权威**，其余要么派生、要么由守卫比对：现在权威 = `PRESET_BODY_FILES`，判它完不完备的判据是 `dsh/preset/math-memory.mjs` 的**相对 import 闭包**（`check: preset body lists agree`）；② 改一条通道的期望时，**同一提交里**要把断言其它通道的门禁一起改，否则"绿"只说明没人比。
+97. **★ bundle 通道的 preset 不能用相对 `name:`：冷启动第一次必坏，第二次就好**（2026-09-26）。
+    - **形态**：preset 的模块改成"由宿主行 `apply()` 铺进 profile 目录"之后，`dsh plugin --profile <名> add dsh-math-memory` 的**第一次**启动必然失败：`agentPresets/list` 报 `broken:"math-memory (./math-memory.mjs): never started"`、`session/create` → `agent-preset/invalid`，**而启动日志一行都没有**；第二次启动（文件已在）一切正常。最小复刻里把"铺文件的行使者"放在声明行**之前**那次是通的，所以这**不是**"顺序写没写对"的问题。
+    - **根因**：registry 挂载 preset 的 `plugins` 行发生在**声明行激活时**，而那时宿主行**还在 import 自己**（动态 import 是异步的）。任何"宿主先铺文件、声明再解析相对名"的设计都天然有一拍窗口，插件侧关不掉。
+    - **修法（实测）**：bundle 通道把 preset 入口行写成**包内 specifier**（`dsh-math-memory/dsh/preset/math-memory.mjs`）——包本来就是 `dsh plugin add` 装进 `profile/node_modules` 的，**不需要任何东西先存在**，冷启动一次就通；同一 profile 名故意不叫 `notes-assistant` 也照样通。离线通道（Obsidian 引导、`install --direct`）继续用 `./name`，因为那两条**在 dsh 启动前**就把体文件写进 profile 目录了。
+    - **纪律**：① 判据必须是"**冷启动一次**能不能建出会话"，不能接受"重启一次就好了"；② 两种 name 形态由同一次生成产出、由守卫**分别**钉住（`check: preset body lists agree`），**不要手改生成物**；③ 见到只有一句 `never started` 的报错，先按坑 93 换判据，别去 grep 错误文本。
+98. **★ 门禁会退化成 `0/0 断言 + exit 0`，而汇总把它算成"通过"**（2026-09-26）。
+    - **形态**：`test: deployed profile accepts a session` 的起点是**机器上已部署**的 profile。2026-09-25 那次整机事故把 `$DSH_HOME` 清掉之后，它的前置条件永久不成立 ⇒ 打印 SKIP 并 `exit 0`、**一条断言都没跑**；而 `run-gates.mjs` 当时**只按退出码统计**，汇总于是报"45/45 gates passed"。真相反过来：它测的那种形状是**唯一没坏的**，另有三种形态全坏（profile 名 ≠ 常量、冷启动第一次、`--direct`），一条都没被覆盖。
+    - **为什么危险**：SKIP 与 PASS 在汇总里长得一模一样，而"全绿"是人做判断的依据。更要命的是**门禁越依赖现场就越容易退化成这样**：现场会消失（事故、换机器、CI），而它不会因此变红。
+    - **纪律**：① 门禁要**自带前置条件**而不是依赖现场：这条现在自己离线装一份 bundle 形态的 profile（`node_modules` 也是拷的，不联网、不用 pnpm），profile 名**故意不叫 `notes-assistant`**，冷启动一次再建会话——三种坏形态一网打尽；② 汇总必须**三态**（`ok` / `SKIP` / `FAIL`）并**列出被跳过的门禁名与原因**，`__SKIP__ <原因>` 是套件声明跳过的唯一标记；③ 合成型门禁（自己再跑别的套件的那种）**不要回显子套件的 `__SKIP__`**，否则父门禁会被误判成跳过（`check-doc-consistency.mjs` 现在回显前会剥掉该标记）。附带一个容易踩的细节：`\bSKIP\b` **匹配不到** `__SKIP__`（`_` 是词字符，没有词边界），本轮差点因此让 `check-doc-consistency` 直接 FAIL。
+
 ## 5. 用户决策记录（不要推翻）
 
 - **单仓**（不拆双 git 仓库），两个产物独立分发（npm 包 + Obsidian 插件）+ 仓库内文献库/面板子系统。
@@ -315,7 +350,7 @@
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 386 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
+npm test                        # 391 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile
@@ -366,7 +401,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **`baseline.json` 是死产物，去留待定** | `e2e.mjs` 会写 `scripts/qa/runs/*/baseline.json`（已提交 3 份），但**没有任何代码读它** ⇒ `testing.md` 的「CI 可比对基线」是目标而非现状。两条路：① **让守卫真的消费它**（比对阈值 / 回归门禁，需要先定义"退步"的判据）；② **移出 git**（当作本机运行产物）。在此之前不要在文档里声称"可比对"。已提交的证据不删，等决定 | 中 |
 | **自指式期望与脆弱断言（审查 P3）** | ① `test-memory.mjs` 断言 `navSection.length <= MAX_TOTAL_MEMORY_CHARS`，而该常量**从被测模块 import**；另一处断言模块自己的 `HOOK_SCHEMA_VERSION > 0`——**改大常量即可让断言永远成立**。② 47 处 `includes('中文文案')` 断言（改文案即红，属维护成本而非缺陷）。③ 无锚点魔法数（`posture.length === 9`、`r.files === 5`、反代 31）。修法方向：自指项改成**独立推导的期望值**（或把常量从夹具注入）；魔法数改成**从清单/代码推出**。同族坑 68 | 低 |
 | **`engine-probe.mjs` 的 ground truth 绑定私有 vault** | 期望路径指向维护者的真实 vault（`数学/Picard-Banach定理.md` 等），与 `testing.md` 声称的"合成夹具探针"不符 ⇒ 真实语料上的排序结论在别的机器与 CI 上**不可复现**。修法需要一次"夹具化 ground truth"的设计（把真实用例抽象成合成 vault 里的等价语料），并保留现有真实 vault 探针作为本机验收。**2026-09-20 实测的新证据**：本机跑成 **11/12**，唯一红项「定理索引命中」（期望 `.deepseek/memory/theorems/index.md`）在 `git stash` 到 HEAD 后**复现同一红** ⇒ 这是 vault 内容漂移，不是检索回归；两侧都红也说明这条 ground truth 需要随 vault 维护或夹具化 | 中 |
-| **记忆引擎去重（P0-3 的目标态）** | `dsh/preset/math-memory.mjs` 与 `dsh/host/memory-admin.mjs` 仍有 22 个同名符号、其中 6 个已实质偏离（`check-engine-sync.mjs` 已逐条登记理由）。彻底做法是把共享引擎抽成一个模块、两边各自薄封装——现在至少有守卫，不会再静默漂移 | 中 |
+| **记忆引擎去重（P0-3 的目标态）** | `dsh/preset/math-memory.mjs` 与 `dsh/host/memory-admin.mjs` 仍有 23 个同名符号、其中 6 个已实质偏离（`check-engine-sync.mjs` 已逐条登记理由）。彻底做法是把共享引擎抽成一个模块、两边各自薄封装——现在至少有守卫，不会再静默漂移 | 中 |
 | **大函数拆分** | `buildAuditReport`(582 行) / `MemoryView`(537) / `apply`(471) / `DshWebProxy`(387) / `DshObsidianSettingTab`(298)（审查报告 P1-5） | 低 |
 | **可溯源（source 链 + 引用次数）** | `control-panel.md` §2.3 要求的「每条记忆显示 source 证据链与引用次数」**仍未交付**：`collectMemoryState` 至今不解析 `source`，两个面板都没有 | 中 |
 | **发布 0.7.5（推 tag）** | ✅ 已发布（2026-09-11 推 tag `0.7.5`）。**发布 0.7.6（2026-09-14）也已发布**：`git push origin main` + `git push origin 0.7.6` 后，CI 双平台绿 → Release `0.7.6`（4 个资产）→ `dsh-math-memory@0.7.6` 上 npm（latest，带 provenance）。⚠️ 本次又踩到"**publish 步成功但 registry 还没可见**"：`Confirm the registry state` 在 60 s 内看到 missing → 开 issue #3 并判失败；实测约 **60–80 秒**后 registry 才出现 0.7.6，随后 **Re-run failed jobs** 即转绿并自动关掉 issue #3。⇒ **看到 npm 那条红，先查 registry 实际状态、等一两分钟再 re-run，不要改代码**（已记入 `docs/release.md` §2 与坑 73）。| 完成 |
@@ -383,7 +418,12 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **多视图 max-pool 复测** | 本轮实测 Δ=0 且排名变差，保持单袋默认；出现「标题精确命中却排在 5 名之后」的真实稀释案例时，先补 ground-truth 用例再复测（`retrieval-v3.md` §7.2） | 低（有触发条件） |
 | **（可选）settings.section i18n** | `label` 已可用；若需多语言再补 | 低 |
 | **拖拽引用：把 Obsidian 笔记拖进侧栏 dsh** | ⚠️ **部分实现 —— 未完成，接续入口见 [`docs/drag-to-mention-progress-2026-09-25.md`](drag-to-mention-progress-2026-09-25.md)**。**已修好并实测证实**的缺陷：客户端半个（拖拽的接收端）此前**从未被加载** —— 包躺在 `node_modules` 里，但 loader 行写进了不参与启动、且每次开机被内嵌副本覆盖的 `cordis.patch.yml`。现在那一行住在权威源 `dsh/profile/notes-assistant.patch.yml`（随 `main.js` 内嵌），安装器只"装包 + 校验行在"，门禁按**恰好出现一次**守（含零次/两次变异验证）。证：修前 `/` 的 HTML 里 `memory-panel` 出现 **0 次**，修后出现 client bundle 且实例干净启动。**仍未判定的一环**：真实侧栏上 `__dshMentionInsert` 存在且直调就能落笔、页面也确实订阅并**收到了** SSE 消息（`errors:0`），**但草稿仍为空** ⇒ "消息处理器是否调用了落笔"还没定论（产品已加自述诊断，下一次拖拽会写进插件日志）。⚠️ **用户更正：这个问题在 dsh 升级前就存在**，不是升级引入的。规格与落地记录见 [`docs/drag-drop-design-2026-09-21.md`](drag-drop-design-2026-09-21.md) | **未完成** |
-| **dsh 0.1.7 适配：preset 不再是 `.agent-presets/` 目录** | 用户机器上的 `@deepseek-ai/dsh` 于 2026-09-25 升到 **`0.1.7-rc.2`**，它**不再读** `$DSH_HOME/.agent-presets/<id>/`（内置技能 `editing-cordis-compositions` 原文：*"Nothing reads that directory any more."*）。preset 改为 `@deepseek-ai/dsh-agent-preset` 的**插件行声明**（`presets/<id>.patch.yml`）。后果：`notes-assistant` preset 认不出来 ⇒ **会话完全起不来**（连 composer 都不会出现）。实测报错 `agent-preset/not-found: Unknown agent preset: notes-assistant`，`available=["standard","ptc","minimal","cordis"]`。判据：`node scripts/run-gates.mjs --only 'agent preset mounts'` 红，且**在纯净 HEAD 上一样红** ⇒ **环境结果，不是本仓回归**（按 AGENTS.md §4 不要去改断言/文档"修"它）。修法（须由维护者按 0.1.7 的 bundle 声明格式迁移 preset，用户 2026-09-25 决定**新开会话专门做**） | **高（阻塞侧栏可用）** |
+| ✅ **dsh 0.1.7 适配：preset 不再是 `.agent-presets/` 目录** | **两轮做完**。① 2026-09-25：按 bundle 声明迁移 preset（生成块进两个通道的 patch），P0 解除（`agent-preset/not-found`）。② **2026-09-26 收口**：真机复验发现**三条激活形态仍然全坏**——`dsh plugin --profile <名> add`（profile 名 ≠ 常量时体文件落错目录）、冷启动第一次（注册表在宿主行 import 完之前就挂载 preset）、`install --direct`（少铺两个体文件），而当时"45/45 全绿"里含一条 **0/0 断言**的门禁（见坑 96/97/98）。修法：bundle 通道改用**包内 specifier**、`--direct` 补铺体文件、门禁改为自带 profile 并三态汇总。三条形态现在各有实测与门禁。 | 完成（2026-09-26） |
+| **`.agent-presets/` 只余归属标记，等待迁移** | preset 实体已经不落这个目录（0.1.7 无人读它），但**两条通道仍往里写 `.owner.json`**，而且它是 npm/direct **通道冲突守卫的唯一锚点**（`dsh/host/index.mjs` 读、`install.mjs` 与 `main.template.js` 写）。⇒ **不能直接删目录**，顺序必须是"先加新锚点（带旧锚点回退）→ 稳定一版 → 再删旧读写 + `preset-sync.mjs` 的 `syncPresetTree` 与它那两条门禁"。 | 中 |
+| **`web` profile 不会自动装记忆面板客户端半个** | 装包的那一步（`dsh/client-panel/install-into-profile.mjs`，2026-09-26 已修好**包本身可 import**）**没有任何自动调用方针对 `web` profile**：`install.mjs --direct` 只装 `notes-assistant`，native 通道不跑它。而插件默认设置里 `memoryPanelUrl = http://127.0.0.1:3080/`（就是 web profile）⇒ **3080 上那个"记忆面板"入口从来没被装上过**。修法：安装路径覆盖 `web`，或在插件启动时按 profile 装一次。 | 中 |
+| **`autoArchive` 的兜底值与模板相反** | host 面板的兜底是 `autoArchive: false`（`dsh/host/math-memory-panel.mjs`），而 `dsh/templates/config.md` 写的是 `true` ⇒ 同一台机器上"没有 config.md 时"的行为按读取方不同而不一致。修法：统一取值，并让兜底从模板派生（同一个"两处不一致"的家族）。 | 低 |
+| **`math-memory.mjs` 的 `session.messages` 分支是死代码** | 上游 `Session` **没有 `messages` 成员**（只有 `deriveMessages()` 与 `surface.messages`），所以 `Array.isArray(session.messages)` 那一支永不命中；同一行对 `session.log`（TS `private`、运行时存在）的直读仍是绕过公开 API 的私有读（上游已弃用 `snapshotEvents`/`eventAt`/`ownEvents`，但三者仍在）。修法：删死支 + 评估改用公开读取面。 | 低 |
+| **记忆引擎的"改名逃逸"重复实现** | `check-engine-sync.mjs` 按**符号名**配对，所以三对近似重复不被它看见：`contentText`/`captureContentText`、`setTopFieldText`/`setTopField`、`decodeZstdSessionLog`/`decodeSessionLog`；另有一处结构性逃逸——host 的 112 行捕获循环 `scanSessionCapture` 从未与 preset 循环体比对（清单里登记的是 10 行包装 `runSessionCapture`）。清单见 `AGENTS.md` §3.3。 | 中 |
 | **`math-memory-workspace.mjs` 的登记副作用** | 它把 `DSH_WORKSPACE_ROOT` **登记**进 `$DSH_HOME/storages/workspace.json`（持久）。所有 QA 探针都用临时 vault 起 dsh ⇒ 每跑一次就在用户侧栏多一条垃圾工作区（2026-09-25 累计 38 条，已用 `scripts/qa/clean-probe-workspaces.mjs` 摘除）。**探针侧规矩**已写进陷阱 91；可选的产品侧改进：给登记加"探针/临时目录不登记"的开关，或让探针用独立 `DSH_HOME` | 中 |
 | **`working.md` 的 500 字符上限** | 它是注入里唯一的「工作上下文」，但模板五字段（当前问题/子目标/已证·已失败/已检索·已排除/下一步）光标签就约 120 字符，500 装不下真正的进度 ⇒ 实际能承载的只有一两行。提到 800–1000 或精简模板，二选一；**要与注入体积一起量**再定。⚠️ 原文引用的行号（`math-memory.mjs:3797`）与「`clip()` 对它是头截断」已在 2026-09-21 变更——`clip` 现为**头尾都保**，行号以当时代码为准 | 低（需先量） |
 | **拖拽：文件夹与编辑器选中文字的载荷未实测** | `scripts/qa/drag-payload-probe.mjs` 只测出了**文件树里拖一篇笔记**的载荷（`obsidian://open?vault=…&file=…`）。**文件夹**（要先把文件夹展开 + 真实鼠标动作）与**编辑器里选中文字**两种没测出来；实现按"解不出 `file=` 就忽略"处理，**不猜**。要支持它们，先补探针再改解析器 | 中 |

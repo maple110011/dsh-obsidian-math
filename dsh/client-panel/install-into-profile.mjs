@@ -1,9 +1,18 @@
 // dsh/client-panel/install-into-profile.mjs — 把记忆面板的**客户端半个**装进一个 dsh web profile。
 //
 // 面板 = 宿主半（`host/math-memory-panel.mjs`：`/memory-panel/*` 路由）+ 客户端半
-// （`lib/client.js`：Settings 面板 + **拖拽引用**）。本脚本装的是**包**：把两份文件放进
-// `profile/node_modules/@dsh-math-memory/client-ui-memory-panel/`，然后**校验**那一行 loader 确实
-// 挂在权威 overlay 上（见 `OVERLAY_FILE`：本脚本**不再自己写那一行**）。
+// （`lib/client.js`：Settings 面板 + **拖拽引用**）。本脚本装的是**包**：把宿主入口
+// `dsh/host/index.mjs` 的**相对 import 传递闭包**按同样的目录深度铺进
+// `profile/node_modules/@dsh-math-memory/client-ui-memory-panel/`（`host/`、`preset/`、
+// `profile/`），然后**校验**那一行 loader 确实挂在权威 overlay 上（见 `OVERLAY_FILE`：
+// 本脚本**不再自己写那一行**）。
+//
+// ⚠️ **为什么要铺整条闭包**（2026-09-26 实测）：上一版把 `host/index.mjs` 拷到包**根**，
+// 再手挑四个兄弟文件 —— 其中三个缺失，包**根本 import 不起来**
+// （`ERR_MODULE_NOT_FOUND …/@dsh-math-memory/preset/preset-deploy.mjs`）。那份手写清单是
+// 0.1.7 给 `host/index.mjs` 加了 `../preset/preset-deploy.mjs` 之后没人更新的结果，所以现在
+// 改成走闭包（`collectDshImportClosure`），并由 `scripts/check-client-package-layout.mjs`
+// 真的 `import()` 一次产物来守。
 //
 // ⚠️ **两个 profile 都需要它**（2026-09-21 踩到）：`web` profile 走这条路是为了 3080 的记忆面板；
 // 而 **Obsidian 侧栏跑的 `notes-assistant` profile 默认只有宿主半个** —— 于是"从文件树拖一篇笔记
@@ -16,14 +25,64 @@
 // 具体原因见 `OVERLAY_FILE` 的注释，那里也是这个功能的真实故障记录。
 //
 // 用法（CLI）：node dsh/client-panel/install-into-profile.mjs --profile-home <dir>
-import { mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const repo = resolve(root, "..", "..");
 export const CLIENT_PKG = "@dsh-math-memory/client-ui-memory-panel";
 const PKG = CLIENT_PKG;
+
+/**
+ * The entry module of the package this installer builds, as a repo-relative
+ * path. It must stay at the SAME depth as `dsh/host/index.mjs`, because that
+ * module's own relative imports (`../preset/preset-deploy.mjs`,
+ * `../profile/math-memory-workspace.mjs`, `./math-memory-panel.mjs`) are written
+ * for the repo layout. The first version copied `host/index.mjs` to the package
+ * ROOT and hand-picked four siblings — three of them missing, so the package
+ * could not even be imported:
+ *   ERR_MODULE_NOT_FOUND …/@dsh-math-memory/preset/preset-deploy.mjs
+ * (measured 2026-09-26). Copying the whole closure under the same tree removes
+ * the hand-written list that caused it.
+ */
+export const CLIENT_ENTRY_REL = "dsh/host/index.mjs";
+
+/**
+ * The relative-import closure of an ESM entry inside the repo's `dsh/` tree.
+ * Walks `from './x'` and `import('./x')` specifiers — our modules always spell
+ * the extension — and refuses to leave `dsh/`.
+ *
+ * @param {string} entryRel - repo-relative entry, e.g. {@link CLIENT_ENTRY_REL}.
+ * @param {string} repoRoot - repo root (overridable so a gate can point at it).
+ * @returns {string[]} sorted repo-relative paths, entry first.
+ */
+export function collectDshImportClosure(entryRel = CLIENT_ENTRY_REL, repoRoot = repo) {
+  const specifier = /\bfrom\s*['"](\.[^'"]+)['"]|import\s*\(\s*['"](\.[^'"]+)['"]/g;
+  const dshRoot = join(repoRoot, "dsh");
+  const seen = new Set();
+  const order = [];
+  const queue = [entryRel];
+  while (queue.length > 0) {
+    const rel = queue.shift();
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    order.push(rel);
+    const abs = join(repoRoot, rel);
+    if (!existsSync(abs)) throw new Error(`closure: missing module ${rel}`);
+    const text = readFileSync(abs, "utf8");
+    for (const m of text.matchAll(specifier)) {
+      const spec = m[1] ?? m[2];
+      const target = resolve(dirname(abs), spec);
+      const inside = relative(dshRoot, target);
+      if (inside === "" || inside.startsWith("..") || inside.includes(`..${sep}`)) {
+        throw new Error(`closure: ${rel} imports ${spec}, which leaves dsh/`);
+      }
+      queue.push(join("dsh", inside));
+    }
+  }
+  return order;
+}
 /**
  * 这一行的 id **必须**与宿主半个的 id 不同，且必须在所有已应用的 patch 层里唯一。
  *
@@ -124,8 +183,28 @@ export function installClientIntoProfile(profileHome, opts = {}) {
   const hasStandaloneHost = existsSync(join(home, "math-memory-panel.mjs"));
   try {
     mkdirSync(pkgDir, { recursive: true });
+    // Mirror the entry's WHOLE relative-import closure under the same tree
+    // (`host/…`, `preset/…`, `profile/…`) so `host/index.mjs` keeps working
+    // verbatim — whatever relative import a later change adds. The previous
+    // hand-picked list had three of four targets missing, so the package could
+    // not be imported at all.
+    for (const rel of collectDshImportClosure()) {
+      const dest = join(pkgDir, relative(join(repo, "dsh"), join(repo, rel)));
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(join(repo, rel), dest);
+    }
+    copyFileSync(join(root, "lib", "client.js"), join(pkgDir, "client.js"));
+    // Older installs put the entry at the package ROOT; drop that copy so
+    // nothing can load it (its relative imports pointed outside the package).
+    rmSync(join(pkgDir, "index.mjs"), { force: true });
     if (hasStandaloneHost) {
-      writeFileSync(join(pkgDir, "index.mjs"), [
+      // The profile already mounts its OWN host half (`math-memory-panel.mjs`,
+      // inserted by notes-assistant.patch.yml), so this package's host half must
+      // be EMPTY: it exists only so the patch row has something to load, while
+      // `./client` is what we ship. Two host halves would register the
+      // /memory-panel prefix twice and dsh refuses to boot the whole profile
+      // (`duplicate prefix route`) — 2026-09-21, see the file header.
+      writeFileSync(join(pkgDir, "host", "index.mjs"), [
         "// 自动生成（dsh/client-panel/install-into-profile.mjs）——本 profile 已有独立的宿主半个",
         "// （`math-memory-panel.mjs`，由 notes-assistant.patch.yml 挂载），本包因此只提供",
         "// **客户端半个**（`./client`）。宿主侧留空，避免两个条目重复注册 /memory-panel 路由。",
@@ -133,13 +212,7 @@ export function installClientIntoProfile(profileHome, opts = {}) {
         "export function apply() {}",
         ""
       ].join("\n"), "utf8");
-    } else {
-      copyFileSync(join(repo, "dsh", "host", "index.mjs"), join(pkgDir, "index.mjs"));
-      copyFileSync(join(repo, "dsh", "host", "preset-sync.mjs"), join(pkgDir, "preset-sync.mjs"));
     }
-    copyFileSync(join(repo, "dsh", "host", "memory-admin.mjs"), join(pkgDir, "memory-admin.mjs"));
-    copyFileSync(join(repo, "dsh", "preset", "hook-frontmatter.mjs"), join(pkgDir, "hook-frontmatter.mjs"));
-    copyFileSync(join(root, "lib", "client.js"), join(pkgDir, "client.js"));
   } catch (error) {
     result.error = `拷贝失败: ${String(error)}`;
     log(result.error);
@@ -150,16 +223,18 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     name: PKG,
     version: "0.1.0",
     type: "module",
-    main: "index.mjs",
-    exports: { ".": "./index.mjs", "./client": "./client.js", "./package.json": "./package.json" },
+    // The entry lives at `host/index.mjs`, not the package root: that is the
+    // depth its relative imports were written for (see CLIENT_ENTRY_REL).
+    main: "host/index.mjs",
+    exports: { ".": "./host/index.mjs", "./client": "./client.js", "./package.json": "./package.json" },
     dsh: {
       client: {
-        // Informational only: dsh >= 0.1.5 documents `dsh.client.inject` as
-        // load/prefetch metadata, never apply sequencing — the real requirements
-        // are the cordis service names the plugin injects at runtime
-        // (`slots`, `locale`). The names below are the 0.1.5 cohort's providers;
-        // the pre-0.1.5 `dsh-client-runtime` / `dsh-client-ui-slots` faces no
-        // longer exist in an installed tree (docs/dsh-0.1.5-adaptation.md §3.5).
+        // Package-name DEPENDENCY EDGES (load-order), not Cordis service
+        // injection: dsh-client-modules uses them to decide whose factories must
+        // arrive before this row materializes. The three names below are the
+        // 0.1.7 cohort's providers the panel actually talks to (`slots` reaches
+        // it through dsh-client-ui-settings), and all three exist in the
+        // installed tree — asserted by scripts/check-client-package-layout.mjs.
         inject: ["@deepseek-ai/dsh-client-modules", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-settings"],
         platform: "web"
       }

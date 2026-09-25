@@ -1219,10 +1219,30 @@ function selectAuthoritativeLogs(logs) {
   return [...flat, ...best.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
+/**
+ * Generation number of a session artifact's filename: `session.jsonl.zstd` = 0,
+ * `session.v3.jsonl.zstd` = 3, `session.v4.jsonl.zstd` = 4. The untagged V2
+ * name is generation 0, which is also the convention the old `.v3.`-only rule
+ * silently implemented.
+ */
+function artifactGeneration(path) {
+  const match = /\.v(\d+)\./.exec(path);
+  return match === null ? 0 : Number(match[1]);
+}
+
+/**
+ * True when `candidate` should replace `incumbent` as the authoritative artifact.
+ *
+ * The generation NUMBER decides first: each migration preserves the older
+ * generation beside its successor, so the successor is authoritative even when
+ * its mtime is older (measured: two session directories on this machine carry
+ * v3+v4 with V4 newer). mtime is only the tie-break, for the case where one
+ * directory somehow holds two artifacts of the same generation.
+ */
 function isNewerArtifact(candidate, incumbent) {
-  const candidateV3 = /\.v3\./.test(candidate.path);
-  const incumbentV3 = /\.v3\./.test(incumbent.path);
-  if (candidateV3 !== incumbentV3) return candidateV3;
+  const candidateGeneration = artifactGeneration(candidate.path);
+  const incumbentGeneration = artifactGeneration(incumbent.path);
+  if (candidateGeneration !== incumbentGeneration) return candidateGeneration > incumbentGeneration;
   return candidate.mtimeMs > incumbent.mtimeMs;
 }
 

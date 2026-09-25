@@ -2,21 +2,29 @@
  * dsh-math-memory host plugin (the package's `main` export, referenced by the
  * bundle patch's insert row by package name). A single host-plane entry that
  * on startup:
- *   1. syncs the bundled `notes-assistant` preset into ~/.dsh/.agent-presets
- *      (idempotent byte-compare + owner marker, see ./preset-sync.mjs),
- *   2. registers the /memory-panel routes (reusing math-memory-panel.mjs),
- *   3. auto-registers the vault workspace (reusing math-memory-workspace.mjs).
+ *   1. registers the /memory-panel routes (reusing math-memory-panel.mjs),
+ *   2. auto-registers the vault workspace (reusing math-memory-workspace.mjs).
  *
- * No browser half, no routes of its own, no agent tools — the preset itself
- * provides the tools. The capability is hot-pluggable: it is mounted by the
- * bundle patch (dsh/cordis.patch.yml) with no dsh source changes.
+ * IT DOES NOT DEPLOY THE PRESET BODY, on purpose. It used to (and that was the
+ * 2026-09-26 bug): the bundle channel's preset declares its modules as subpaths
+ * of this installed package, so nothing has to be staged — and staging here was
+ * one boot too late anyway, because the agent-preset registry mounts the preset
+ * while this row is still being imported. See `scripts/lib/preset-declaration.mjs`
+ * ("TWO NAME FORMS, ONE COMPOSITION") and `dsh/preset/preset-deploy.mjs`.
+ *
+ * No browser half of its own, no agent tools — the preset provides the tools.
+ * The capability is hot-pluggable: it is mounted by the bundle patch
+ * (dsh/cordis.patch.yml) with no dsh source changes.
+ *
+ * `$DSH_HOME/.agent-presets/<id>/` is not a deploy target any more (dsh reads
+ * nothing there); it survives only as the ownership marker both install channels
+ * write, which is why it is still named below.
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { syncPresetTree, OWNER_MARKER } from "./preset-sync.mjs";
+import { OWNER_MARKER } from "./preset-sync.mjs";
 import { apply as applyPanel } from "./math-memory-panel.mjs";
 import { apply as applyWorkspace } from "../profile/math-memory-workspace.mjs";
 
@@ -39,19 +47,6 @@ function dshHome() {
   return raw && raw.trim() !== "" ? raw : join(homedir(), ".dsh");
 }
 
-/** Absolute path of the bundled preset tree inside this package. */
-function bundledPresetDir() {
-  return fileURLToPath(new URL("../preset/", import.meta.url));
-}
-
-function packageVersion() {
-  try {
-    return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
-
 // Guard against double-apply across a re-mount (module-level: this plugin is
 // host-plane and mounted once per profile roster).
 let mounted = false;
@@ -60,13 +55,17 @@ export async function apply(ctx, config) {
   if (mounted) return;
   mounted = true;
 
-  const targetPresetDir = join(dshHome(), ".agent-presets", PRESET_ID);
-
-  // Conflict guard: a `--direct` (Obsidian/offline) install owns the preset as
+  // Conflict guard: a `--direct` (Obsidian/offline) install owns the profile as
   // "direct". This bundle owns it as "npm". Never clobber the other channel —
   // and skip panel/workspace too, because the direct install already mounts
   // them via its --patch overlay (double-mounting would collide).
-  const existingOwner = readOwnerMarker(join(targetPresetDir, OWNER_MARKER));
+  //
+  // The marker still lives under `.agent-presets/<id>/` even though dsh >= 0.1.7
+  // no longer reads that directory for presets: it is an ownership record
+  // written by both channels, not a preset lookup path. Moving it would orphan
+  // every existing install's marker and defeat the guard.
+  const ownershipRoot = join(dshHome(), ".agent-presets", PRESET_ID);
+  const existingOwner = readOwnerMarker(join(ownershipRoot, OWNER_MARKER));
   if (existingOwner !== null && existingOwner.owner !== "npm") {
     ctx.logger?.warn?.(
       `dsh-math-memory: preset ${PRESET_ID} is owned by "${existingOwner.owner}" — ` +
@@ -76,30 +75,14 @@ export async function apply(ctx, config) {
     return;
   }
 
-  // 1. sync the preset into the harness agent-presets root
-  try {
-    mkdirSync(dshHome(), { recursive: true });
-    const result = syncPresetTree(bundledPresetDir(), targetPresetDir, {
-      owner: "npm",
-      version: packageVersion()
-    });
-    if (result.failed) {
-      ctx.logger?.warn?.(`dsh-math-memory: preset ${PRESET_ID} sync failed: ${result.failed}`);
-    } else if (result.changed) {
-      ctx.logger?.info?.(`dsh-math-memory: preset ${PRESET_ID} synced (${result.files} files)`);
-    }
-  } catch (error) {
-    ctx.logger?.warn?.(`dsh-math-memory: preset sync failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  // 2. memory-panel routes
+  // 1. memory-panel routes
   try {
     applyPanel(ctx);
   } catch (error) {
     ctx.logger?.warn?.(`dsh-math-memory: panel routes failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // 3. auto-register the vault workspace (best-effort)
+  // 2. auto-register the vault workspace (best-effort)
   try {
     await applyWorkspace(ctx, config);
   } catch (error) {

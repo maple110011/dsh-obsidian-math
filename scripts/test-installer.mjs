@@ -26,6 +26,8 @@ check('direct install exit 0', r.status === 0 && !r.error);
 const presetRoot = join(home, '.agent-presets', 'notes-assistant');
 const profileRoot = join(home, 'profiles', 'notes-assistant');
 const files = [
+  // The channel marker + the retired directory's contents (still written by
+  // `--direct`; the marker is the npm-vs-direct guard's only anchor).
   join(presetRoot, 'preset.yml'),
   join(presetRoot, 'agent.cordis.yml'),
   join(presetRoot, 'math-memory.mjs'),
@@ -39,6 +41,14 @@ const files = [
   join(profileRoot, 'notes-assistant.patch.yml'),
   join(profileRoot, 'memory-admin.mjs'),
   join(profileRoot, 'math-memory-panel.mjs'),
+  // ⚠️ THE PRESET BODY must be in the PROFILE DIRECTORY: the overlay declares
+  // `name: ./math-memory.mjs`, and the registry resolves that against the
+  // profile dir. This assertion is what `--direct` was missing — it shipped a
+  // profile that answered `agent-preset/invalid` for every session while this
+  // suite stayed green (it only checked the retired `.agent-presets/` copy).
+  join(profileRoot, 'math-memory.mjs'),
+  join(profileRoot, 'note-tools.mjs'),
+  join(profileRoot, 'hook-frontmatter.mjs'),
   join(vault, 'AGENTS.md'),
   join(vault, '.deepseek', 'memory', 'profile.md'),
   join(vault, '.deepseek', 'memory', 'records', 'index.md')
@@ -50,7 +60,11 @@ const presetMarker = JSON.parse(readFileSync(join(presetRoot, '.owner.json'), 'u
 check('preset owner=direct', presetMarker.owner === 'direct');
 const manifest = JSON.parse(readFileSync(join(profileRoot, '.install-manifest.json'), 'utf8'));
 check('manifest owner=direct', manifest.owner === 'direct');
-check('manifest posture=9 files', Array.isArray(manifest.posture) && manifest.posture.length === 9);
+check('manifest posture=11 files', Array.isArray(manifest.posture) && manifest.posture.length === 11,
+  Array.isArray(manifest.posture) ? String(manifest.posture.length) : 'not an array');
+check('manifest posture covers the preset body (so uninstall removes it)',
+  ['math-memory.mjs', 'note-tools.mjs'].every((n) => manifest.posture.includes(n)),
+  manifest.posture.join(','));
 
 // drift detection (always-refresh files must match repo sources)
 //
@@ -62,6 +76,9 @@ const driftPairs = [
   [join(presetRoot, 'math-memory.mjs'), join(repo, 'dsh', 'preset', 'math-memory.mjs')],
   [join(presetRoot, 'note-tools.mjs'), join(repo, 'dsh', 'preset', 'note-tools.mjs')],
   [join(presetRoot, 'hook-frontmatter.mjs'), join(repo, 'dsh', 'preset', 'hook-frontmatter.mjs')],
+  // The deployed body is what dsh actually imports for this channel.
+  [join(profileRoot, 'math-memory.mjs'), join(repo, 'dsh', 'preset', 'math-memory.mjs')],
+  [join(profileRoot, 'note-tools.mjs'), join(repo, 'dsh', 'preset', 'note-tools.mjs')],
   [join(profileRoot, 'notes-assistant.patch.yml'), join(repo, 'dsh', 'profile', 'notes-assistant.patch.yml')],
   [join(profileRoot, 'memory-admin.mjs'), join(repo, 'dsh', 'host', 'memory-admin.mjs')],
   [join(profileRoot, 'cordis.patch.yml'), join(repo, 'dsh', 'profile', 'cordis.patch.yml')],
@@ -90,7 +107,9 @@ for (const [installed, source] of driftPairs) {
   check('notes-assistant.patch.yml: host half row still present alongside the client row',
     ids.includes('math-memory-panel') && ids.includes('math-memory-workspace'), ids.join(','));
   const pkg = join(profileRoot, 'node_modules', '@dsh-math-memory', 'client-ui-memory-panel');
-  check('client half package installed', existsSync(join(pkg, 'client.js')) && existsSync(join(pkg, 'index.mjs')));
+  // The host entry lives at host/index.mjs (its own relative imports need that
+  // depth); a package whose entry cannot be imported is the 2026-09-26 defect.
+  check('client half package installed', existsSync(join(pkg, 'client.js')) && existsSync(join(pkg, 'host', 'index.mjs')));
   check('client half package.json points ./client at client.js',
     JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')).exports['./client'] === './client.js');
   // The id must appear EXACTLY once in the whole profile: cordis treats a repeated loader
@@ -133,6 +152,8 @@ check('fixture: the vault cache exists before uninstall', existsSync(join(vault,
 r = run(['uninstall', '--purge', '--purge-data', '--yes', '--confirm', 'DELETE MY MATH MEMORY', '--dsh-home', home, '--vault', vault]);
 check('full uninstall exit 0', r.status === 0);
 check('preset removed', !existsSync(presetRoot));
+check('deployed preset body removed from the profile dir', !existsSync(join(profileRoot, 'math-memory.mjs'))
+  && !existsSync(join(profileRoot, 'note-tools.mjs')));
 check('posture removed', !existsSync(join(profileRoot, 'cordis.patch.yml')));
 check('manifest removed', !existsSync(join(profileRoot, '.install-manifest.json')));
 check('vault AGENTS.md removed', !existsSync(join(vault, 'AGENTS.md')));

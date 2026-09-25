@@ -3,9 +3,14 @@
 # A patch replaces the targeted row's whole config, so each row below
 # restates the keys it owns.
 
-# The agent this profile defaults to: file read/write/search, dedicated note
-# tools (note_recall / note_strategy / note_create / note_links), ask_user, plus
-# the cross-session memory plugin.
+# The agent preset registry: names the default preset for sessions created
+# later. dsh 0.1.7 renamed this loader row (`agent-presets` → the shipped row is
+# `agent-preset-registry`, see dsh-web-app/cordis.patch.yml), and the row's
+# schema is now exactly `{ default, selectedDefault }` — the old `includeUserRoot`
+# key went away with directory-based presets, because the registry no longer
+# scans `$DSH_HOME/.agent-presets/` at all. A patch that matches no row is only
+# warned about and skipped, so the stale id silently dropped this whole entry
+# (verified on 0.1.7-rc.2: `patch: entry "agent-presets" not found`).
 #
 # ⚠️ The blank line above the first row is NOT cosmetic. This file's first entry
 # used to sit on the SAME line as this comment (`…plugin.- id: agent-presets`),
@@ -15,10 +20,9 @@
 # boots the profile (`failed to parse overlay …: YAMLException: end of the
 # stream or a document separator is expected`), which is why the preset gate
 # caught it and the YAML-shaped gates did not.
-- id: agent-presets
+- id: agent-preset-registry
   config:
     default: notes-assistant
-    includeUserRoot: true
 
 # Confine every model write to the Obsidian vault (reads stay unrestricted,
 # matching the harness read model). Set DSH_OBSIDIAN_VAULT to override the

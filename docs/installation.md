@@ -19,7 +19,9 @@ dsh-math-memory 由**两层**组成，安装方式不同：
 dsh plugin --profile web add dsh-math-memory
 ```
 
-把我们的 bundle 加进**已存在**的 `web` profile（它自带 in-box 的 dsh-base + dsh-web-app）。装完后**重启 dsh**，bundle 宿主插件会在启动时把 preset 同步进 `~/.dsh/.agent-presets/`，新建会话即可选「数学笔记助手」。
+把我们的 bundle 加进**已存在**的 `web` profile（它自带 in-box 的 dsh-base + dsh-web-app）。bundle 自带的补丁层会往 profile 里插一条宿主行和一条 preset 声明，preset 的模块按**包内路径**解析（包已在 `profile/node_modules` 里），所以什么都**不需要**在启动前先落盘。装完后**重启 dsh**，新建会话即可在预设选择器里看到「数学笔记助手」。
+
+> 这种方式**不会**把它设为默认预设——默认预设由 profile 自己的 `cordis.patch.yml` 里 `agent-preset-registry` 那行的 `default` 决定，只有专门的 `notes-assistant` profile（方式 B / C / Obsidian 插件）才会写它。在 `web` 里请在新建会话时手动选。旧文档说的"同步进 `~/.dsh/.agent-presets/`"自 dsh 0.1.7 起已不成立（那个目录不再被任何代码读取）。
 
 **注意**：`@deepseek-ai/dsh-web-app` 是 dsh 的 **in-box bundle**（随 dsh 安装自带），**不能** `dsh plugin add`（会去注册表拉一个版本对不上的副本）。新建专用 profile 请用方式 B（安装程序会写骨架），方式 A 只适合往已有 `web` profile 里加 bundle。方式 A 也**没有** fail-closed 沙箱（沿用 web 的沙箱）。
 
@@ -37,7 +39,7 @@ dsh-math-memory install --vault /path/to/你的Obsidian库
 dsh-math-memory install --direct --vault /path/to/你的Obsidian库
 ```
 
-把随包发布的 preset/profile 文件直接写进 `~/.dsh`（不需要 pnpm / 网络），并写同样的 owner marker。功能与方式 B 等价，只是「能力」不是由 bundle 在启动时同步，而是命令式落盘。
+把随包发布的 preset/profile 文件直接写进 `~/.dsh`（不需要 pnpm / 网络），并写同样的 owner marker。功能与方式 B 等价，差别在**能力怎么送达**：方式 B 由 bundle 的补丁层声明 preset（模块走包内路径），方式 C 把 preset 的模块**命令式落盘到 profile 目录**、并在 `--patch` overlay 里用相对路径引用它们（这两条都在 dsh 启动前完成，所以不存在"第一次启动来不及"的问题）。
 
 ### Obsidian 插件安装
 
@@ -54,11 +56,11 @@ Obsidian 插件**内置直写流程**（等价于方式 C 的 `--direct` 逻辑�
 dsh plugin --profile notes-assistant update dsh-math-memory
 ```
 
-升级后**重启 dsh**，宿主插件会把新版 preset 同步进 `.agent-presets/`（字节比对，只更新变化的部分，不碰用户自建的其它 preset）。vault 模板属于「种子」，只在 `install` 时种一次、之后归用户，升级不会覆盖你改过的模板。
+升级后**重启 dsh** 即可：preset 是 bundle 补丁里的一行声明，随包升级自动生效（离线通道则由安装器/插件引导把新版模块覆盖进 profile 目录——它们是代码不是配置，每次都覆盖）。vault 模板属于「种子」，只在 `install` 时种一次、之后归用户，升级不会覆盖你改过的模板。
 
 ## 3. 冲突解决怎么用
 
-系统在多个位置写入时，用 **owner marker（归属标记）** 判定所有权，避免两条通道（`npm` bundle 同步 vs `direct` 直写）互相覆盖。owner 取值只有两个：`npm`（bundle 在启动时同步）和 `direct`（`--direct` 或 Obsidian 内置直写）。
+系统在多个位置写入时，用 **owner marker（归属标记）** 判定所有权，避免两条通道（`npm` bundle vs `direct` 直写）互相覆盖。owner 取值只有两个：`npm`（bundle 通道）和 `direct`（`--direct` 或 Obsidian 内置直写）。标记文件位于 `~/.dsh/.agent-presets/notes-assistant/.owner.json`——注意**这个目录自 dsh 0.1.7 起不再是 preset 的查找路径**，它现在**只**承载这个归属标记（也是守卫判断两个通道谁拥有它的**唯一**锚点，所以不要手工删它）。
 
 **先诊断：**
 

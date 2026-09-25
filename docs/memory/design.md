@@ -186,7 +186,7 @@
 ## 7. 跨会话线索（dialogue index）
 
 - 扫描 `$DSH_HOME/sessions/**/*.jsonl.zstd` 最近 20 个**会话**（递归、mtime 倒序），**只保留 cwd 位于本 vault 内的会话**（其他工作区的会话不进索引）；
-  - **一个会话 = 一份日志**：dsh ≥ 0.1.5 的会话格式 V3 会为同一会话生成 `session.v3.jsonl.zstd` 并保留 V2 原件，两份都以 `.jsonl.zstd` 结尾。`findSessionLogs` 在排序后、切片前按 `sessionLogKey` 折叠（`selectAuthoritativeLogs`，**显式优先 `.v3.` 变体**，其次 mtime 新者），所以 `maxFiles` 计的是会话数而不是文件数。详见 [../dsh-0.1.5-adaptation.md](../dsh-0.1.5-adaptation.md)。
+  - **一个会话 = 一份日志**：dsh 从 0.1.5 起每次格式迁移都会为同一会话生成**新代**日志并**保留旧代原件**（V2 → `session.v3.jsonl.zstd`、V3 → `session.v4.jsonl.zstd`），它们都以 `.jsonl.zstd` 结尾。`findSessionLogs` 在排序后、切片前按 `sessionLogKey` 折叠（`selectAuthoritativeLogs`），**先比世代号 `vN`（无标记 = 0，大者权威），mtime 只作同代兜底**，所以 `maxFiles` 计的是会话数而不是文件数。详见 [../dsh-0.1.7-adaptation.md](../dsh-0.1.7-adaptation.md)（V4）与 [../dsh-0.1.5-adaptation.md](../dsh-0.1.5-adaptation.md)（V3）。
 - zstd 拼接帧手动解析（Node ≥22.5 `zlib.zstdDecompressSync`；V2/V3 帧格式相同、无字典），只取 `source.kind === "user"` 的真实用户消息；
   - V3 没有逐块流事件（`assistant/chunk` 等改为 `assistant/message.data.stream[]`），读取方依赖的 `user/message` / `assistant/message` / `session/title` 事件名与内容块结构均未变，因此蒸馏逻辑与两个版本共用。
 - 每条用户消息配该轮**最后一条** assistant 回复（下一用户消息前最后一条 assistant）组成问答对，时间正序、取最近 maxHistoryEntries 条、字符预算 maxHistoryChars；

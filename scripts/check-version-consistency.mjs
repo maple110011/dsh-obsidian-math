@@ -137,6 +137,30 @@ for (const [rel, re] of [
   }
 }
 
+// ── the DSH we declare ourselves compatible with ───────────────────────────
+// dsh 0.1.7 added a plugin/host compatibility gate, and it reads the plugin
+// manifest's `peerDependencies` for `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*`
+// (semver, prereleases included) — NOT `engines.dsh`, which is only ecosystem
+// convention (measured: `engines` is never consulted by the gate; see
+// docs/dsh-0.1.7-adaptation.md §4.4). Declaring nothing means "unchecked", which
+// is how this repo shipped three dsh generations without the gate ever running.
+//
+// The claim has to be ONE value: the version the adapters were actually verified
+// against. It lives in `dsh.engines.dsh`, and `peerDependencies` must state the
+// same range so the gate sees exactly what the docs promise.
+const pkg = readJson('package.json');
+const declaredDsh = pkg?.dsh?.engines?.dsh;
+const peerDsh = pkg?.peerDependencies?.['@deepseek-ai/dsh'];
+if (typeof declaredDsh !== 'string' || declaredDsh.trim() === '') {
+  fail('package.json: missing dsh.engines.dsh — the version this project was adapted to must be declared');
+} else if (typeof peerDsh !== 'string') {
+  fail('package.json: missing peerDependencies["@deepseek-ai/dsh"] — the dsh compatibility gate reads peerDependencies, not dsh.engines');
+} else if (peerDsh !== declaredDsh) {
+  fail(`package.json: dsh.engines.dsh is ${declaredDsh} but peerDependencies["@deepseek-ai/dsh"] is ${peerDsh} — the two must agree`);
+} else {
+  ok(`package.json: declares dsh ${declaredDsh} in both dsh.engines.dsh and peerDependencies`);
+}
+
 if (failed === 0) {
   console.log(`\nversion-consistency: all artifacts agree on ${packageVersion}${tag === '' ? '' : ` and tag ${tag}`}`);
 }

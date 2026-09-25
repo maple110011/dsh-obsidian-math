@@ -172,6 +172,12 @@ const tokenStream = (s) => stripComments(s)
 const EXPECTED_SHARED = [
   'CAPTURE_ASSISTANT_CLIP', 'CAPTURE_FILE', 'CAPTURE_MAX_SESSION_CHARS', 'CAPTURE_SCAN_LIMIT',
   'CAPTURE_SCHEMA_VERSION', 'CAPTURE_USER_CLIP', 'MEMORY_DIR', 'ZSTD_MAGIC',
+  // Added 2026-09-25 (dsh 0.1.7 / session format V4): the authority rule moved
+  // from a single `.v3.` label to a generation number, so the parser is a real
+  // shared helper. Pinned on purpose — the V3-era bug was a rule that knew only
+  // one filename, and the earlier `pathIsInside`/`pathInside` split showed that
+  // a renamed duplicate is invisible to this guard (trap 64).
+  'artifactGeneration',
   'appendEpisodeIndex', 'distillSession', 'findSessionLogs', 'isNewerArtifact', 'localDateFromMs',
   // Added 2026-09-11: both copies had this path-containment helper, but the preset
   // side was named `pathIsInside`, so the pair was INVISIBLE to this guard — a

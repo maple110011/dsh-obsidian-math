@@ -11,6 +11,15 @@
 // status plus the suite's own `__CHECKS__` count, and prints the tail of each
 // failure so one red run is enough to diagnose.
 //
+// THREE STATES, NOT TWO (2026-09-26). A gate that can only compare when the
+// machine happens to have something — an installed dsh, a deployed profile —
+// prints `__SKIP__ <reason>` and exits 0, so a fresh clone and CI stay green.
+// That is fine; counting it as PASSED is not. `test: deployed profile accepts a
+// session` reported "45/45 gates passed" while running **0 assertions**, and the
+// three activation shapes that were actually broken had no coverage at all. The
+// summary now states how many gates were skipped and names them, so "all green"
+// can be read for what it is.
+//
 // Usage:
 //   node scripts/run-gates.mjs              # everything
 //   node scripts/run-gates.mjs --only auth  # gates whose name matches a string
@@ -46,19 +55,33 @@ const countOf = (output) => {
   return m === null ? null : `${m[1]}/${m[2]} checks`;
 };
 
+/**
+ * `__SKIP__ <reason>` is a suite declaring that it could not compare anything
+ * here (`exit 0`). Distinct from a pass on purpose: see the header.
+ */
+const skipOf = (output) => {
+  const m = /__SKIP__\s*([^\n]*)/.exec(output);
+  return m === null ? null : m[1].trim();
+};
+
 const started = Date.now();
 const failures = [];
+const skips = [];
 let passed = 0;
 
 selected.forEach((gate, i) => {
   const label = `[${String(i + 1).padStart(2)}/${selected.length}]`;
   const r = runNode(gate.args, { cwd: root });
   const count = countOf(r.output);
+  const skip = skipOf(r.output);
   // A spawn that never happened is an ENVIRONMENT result. Report it distinctly
   // so nobody reads it as a code failure (see scripts/run-node.mjs).
   const spawnFailed = r.spawnError !== null && r.spawnError !== undefined;
   const ok = !spawnFailed && r.status === 0;
-  if (ok) {
+  if (ok && skip !== null) {
+    skips.push({ gate, reason: skip, count });
+    console.log(`${label} SKIP ${gate.name}${count === null ? '' : `  (${count} static)`}  — ${skip}`);
+  } else if (ok) {
     passed += 1;
     console.log(`${label} ok   ${gate.name}${count === null ? '' : `  (${count})`}`);
   } else {
@@ -73,7 +96,14 @@ selected.forEach((gate, i) => {
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
 console.log('');
 console.log('─'.repeat(72));
-console.log(`${passed}/${selected.length} gates passed in ${seconds}s`);
+console.log(`${passed}/${selected.length} gates passed${skips.length === 0 ? '' : `, ${skips.length} skipped`} in ${seconds}s`);
+if (skips.length > 0) {
+  // Named, not just counted: a SKIP is the one outcome that looks identical to a
+  // pass in the summary line, and the whole point of this change is that it must
+  // not.
+  for (const { gate, reason } of skips) console.log(`  skipped: ${gate.name} — ${reason}`);
+  console.log('  (a skipped gate compared nothing here; it is not evidence of correctness)');
+}
 
 if (failures.length > 0) {
   for (const { gate, r, why, spawnFailed } of failures) {

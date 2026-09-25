@@ -17,7 +17,7 @@
 | 你想知道 | 读 |
 |---|---|
 | 目录结构、模块职责、数据流 | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| 上手/交接：改哪里、跑什么、**91 条历史陷阱** | [`docs/handoff.md`](docs/handoff.md)（§2 入口地图、§4 陷阱、§7 未做清单）；**拖拽引用专题进展见 [`docs/drag-to-mention-progress-2026-09-25.md`](docs/drag-to-mention-progress-2026-09-25.md)** |
+| 上手/交接：改哪里、跑什么、**98 条历史陷阱** | [`docs/handoff.md`](docs/handoff.md)（§2 入口地图、§4 陷阱、§7 未做清单）；**拖拽引用专题进展见 [`docs/drag-to-mention-progress-2026-09-25.md`](docs/drag-to-mention-progress-2026-09-25.md)** |
 | **给 agent 的仓库维护方法（通用）** | [`docs/agent-repo-maintenance.md`](docs/agent-repo-maintenance.md)（**§0.5 = 八荣八耻、§0.6 = 业务项目测试纪律六条，动手前先读**） |
 | 可维护性审查与整改台账 | [`docs/maintainability-review-2026-09-11.md`](docs/maintainability-review-2026-09-11.md)（审计，只读）、[`docs/maintainability-fixes-2026-09-11.md`](docs/maintainability-fixes-2026-09-11.md)（状态 + 证据） |
 | 记忆系统的当前实现规格 | [`docs/memory/design.md`](docs/memory/design.md) |
@@ -40,20 +40,23 @@
 | Obsidian 界面、设置页、引导、代理 | `obsidian/main.template.js` | 重建 `main.js` |
 | 安装进 vault 的模板 | `dsh/templates/*.md` **+** `dsh/templates-manifest.json` | 跑 build（有完整性门禁） |
 | 安装器（三条安装路径 / 卸载 / 归属标记） | `dsh/install.mjs` | `node scripts/test-installer.mjs` |
-| dsh 预设与 profile 装配 | `dsh/profile/`、`dsh/preset/*.yml` | `node scripts/test-preset-sync.mjs` |
+| **preset 体文件清单**（哪几个文件、铺到哪里） | `dsh/preset/preset-deploy.mjs` 的 `PRESET_BODY_FILES` —— **唯一**的权威 | `node scripts/check-preset-body-lists.mjs`（含"清单 == preset 入口的相对 import 闭包"） |
+| preset **声明**（两个通道的 name 形态不同） | **生成物**：`node scripts/build-preset-declaration.mjs` 从 `dsh/preset/agent.cordis.yml` + `preset.yml` 生成进 `dsh/cordis.patch.yml`（包内 specifier）与 `dsh/profile/notes-assistant.patch.yml`（`./`） | 同一提交里跑 `--check` + `check-preset-body-lists.mjs`；**不要手改生成块** |
+| 记忆面板的**客户端半个**（安装时生成的包） | `dsh/client-panel/install-into-profile.mjs`（复制**相对 import 闭包**，别改成手写清单） | `node scripts/check-client-package-layout.mjs`（真的 `import()` 一次产物，两个宿主半分支各一次） |
 
 ## 3. 改代码的五条铁律
 
 1. **不要手改 `main.js`。** 它是生成物（内嵌 `dsh/**` 与全部模板）。改任何 `dsh/**`、`obsidian/main.template.js` 或 `dsh/templates/*.md` 之后，跑 `node scripts/build-obsidian.mjs` 并**把 `main.js` 一起提交**。CI 用 `git diff --exit-code main.js` 做字节级重建门禁（仅 Linux 跑）。
 2. **新增或改名模板必须同步 `dsh/templates-manifest.json`**（`source → vault 目标路径`）。build 有完整性门禁：`dsh/templates/` 里有 `.md` 不在清单中就抛错。安装器与插件引导都**按清单**遍历，所以只需改清单、不要另加硬编码列表。
-3. **存在两份实现，改一处必须改另一处。** `dsh/preset/math-memory.mjs` 与 `dsh/host/memory-admin.mjs` 有 22 个同名顶层符号（捕获、蒸馏、zstd 会话日志、索引解析等）。安装器把 `memory-admin.mjs` 同时装进 profile，面板与插件都消费它。**守卫：`node scripts/check-engine-sync.mjs`**——钉住共享清单、按词法流比对，现为 16 个同步 + 6 条有记录的偏离；只看注释里的 "keep the two in sync" 是不够的。
+3. **存在两份实现，改一处必须改另一处。** `dsh/preset/math-memory.mjs` 与 `dsh/host/memory-admin.mjs` 有 23 个同名顶层符号（捕获、蒸馏、zstd 会话日志、索引解析等）。安装器把 `memory-admin.mjs` 同时装进 profile，面板与插件都消费它。**守卫：`node scripts/check-engine-sync.mjs`**——钉住共享清单、按词法流比对，现为 17 个同步 + 6 条有记录的偏离；只看注释里的 "keep the two in sync" 是不够的。
    - **按名字配对，所以改了名的重复实现是盲区**：`pathIsInside`（preset）/ `pathInside`（host）曾是同一个函数却因名字不同而不被守卫看见，2026-09-11 已统一改名（坑 64）。**新增共享助手时用同一个名字**，否则守卫帮不了你。
+   - **已经知道的逃逸对**（2026-09-26 用同一套 span 抽取器 + token bigram 全量比对找出，都**不在**共享清单里）：`contentText` / `captureContentText`、`setTopFieldText` / `setTopField`、`decodeZstdSessionLog` / `decodeSessionLog`；另有一处**结构性**逃逸——host 真正的 112 行捕获循环 `scanSessionCapture` 从未与 preset 的循环体比对过，因为清单里登记的是那个 10 行的包装 `runSessionCapture`（被记为"已知偏离"）。改这两处时手动对照，别指望守卫。
 4. **版本号五处必须一致**：`package.json`、`package-lock.json`、`manifest.json`、`versions.json`、`CHANGELOG.md`（外加 git tag）。改完跑 `node scripts/check-version-consistency.mjs`。未发布的行为改到 `CHANGELOG.md` 的 `[Unreleased]`，**不要**擅自改版本号——发版是用户的决定。
 5. **提交前看 `git status`**，只应有你有意的改动。不要提交 `literature/.raw/**`、本地部署产物、真实 vault 数据或任何密钥。
 
 ## 4. 验证：什么才算"通过"
 
-**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 **43** 条门禁；**这个数字由 `scripts/lib/gates.mjs` 派生、由 `check-doc-counts.mjs` 守住**——它曾手写成「34/34」而在门禁增长到 41 条后仍在原地）。⚠️ 但"绿"只等于**退出码 0**：门禁可以因环境不允许而**自行 SKIP** 后 exit 0，而汇总只按退出码统计、不区分 SKIP（坑 69：本机曾有一条"全绿"其实什么都没比，CI 才报出来）。见到 `SKIP`/环境字样就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
+**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 **48** 条门禁；**这个数字由 `scripts/lib/gates.mjs` 派生、由 `check-doc-counts.mjs` 守住**——它曾手写成「34/34」而在门禁增长到 41 条后仍在原地）。⚠️ 但"绿"要读三态：`ok` / `SKIP` / `FAIL`。**SKIP 只表示那条门禁在本机没比任何东西**（缺 dsh、缺已部署的 profile、沙箱不允许子进程写自身状态），汇总会**单独列出被跳过的门禁名与原因**；它**不是**通过。历史上 `test: deployed profile accepts a session` 曾长期 `0/0 断言 + exit 0`，而"45/45 全绿"把这件事盖住了（坑 69 的同族，2026-09-26 已改为三态汇总，详见坑 98）。见到 `SKIP` 就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
 
 ```bash
 node scripts/run-gates.mjs               # 全部门禁（= npm test）
@@ -97,7 +100,7 @@ node scripts/run-gates.mjs --only panel  # 只跑名字含 panel 的
 - **加守卫必须做变异验证**：故意制造它要抓的缺陷 → 确认它报错 → 恢复 → 确认 `git diff` 为空。验收标准是"**它在该报错时确实报错**"，不是"跑了没报错"。
 - **解析 frontmatter 不要自己写正则**：`/^---\r?\n([\s\S]*?)\r?\n---/` 曾被复制 15 次，是坑 21/22/43 三次数据损坏的共同根因。用 `dsh/preset/hook-frontmatter.mjs` 的 `frontmatterSpan`/`readFrontmatter`/`replaceFrontmatter`，守卫 `check-frontmatter-source.mjs` 会拒绝新的拷贝（坑 65）。
 - **只有一个自动发现的指令文件**：仓库根 `AGENTS.md`（就是本文件）。任何其它 `AGENTS.md` / `CLAUDE.md` / `.cursorrules` / `.github/copilot-instructions.md` 都会被 harness 当成"**本仓库**的指令"注入给 agent——不管它本来写给谁。本仓库已经中过两次（坑 60：`dsh/templates/AGENTS.md` 是给用户 vault 的协议；`scripts/qa/benchmark-vault/AGENTS.md` 是合成基准 vault 的协议，一动那个目录就被注入全文）。**守卫：`node scripts/check-agent-instructions.mjs`**——除根 `AGENTS.md` 外一律拒绝，"一个都没找到"也算失败。修法是**改源文件名**（安装名由清单映射），不是删文件，也不能只是"记得别打开它"。
-- 完整清单见 `docs/handoff.md` §4（**91 条**，数字由 `docs/handoff.md` §4 顶部的标记行 + `node scripts/check-doc-counts.mjs` 守卫保证不腐烂）——改动前扫一遍与你要动的东西相关的条目。
+- 完整清单见 `docs/handoff.md` §4（**98 条**，数字由 `docs/handoff.md` §4 顶部的标记行 + `node scripts/check-doc-counts.mjs` 守卫保证不腐烂）——改动前扫一遍与你要动的东西相关的条目。
 
 ## 7. 提交信息与工作方式
 

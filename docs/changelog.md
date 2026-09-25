@@ -3,6 +3,157 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · 0.1.7 适配收口：三条激活形态全坏，而"全绿"里含一条 0/0 断言的门禁
+
+**状态**：已实施，三个新门禁 + 两个重写门禁，全部做过变异验证。
+**背景**：09-25 那一轮把 preset 迁成"声明 + 把体文件铺进 profile 目录"（见下一节）。本轮做的是
+**真机复验**——而它发现：**仓库全绿、发布面却是坏的，而且坏的不止一处**。
+
+**① 三条激活形态，只有一条是好的（实测）。**
+
+| 形态 | 结果 | 根因 |
+|---|---|---|
+| Obsidian 引导（profile 名 = `notes-assistant`） | ✅ 好的（唯一） | 硬编码的 profile 名恰好等于它自己创建的那个 |
+| `dsh plugin --profile web add dsh-math-memory`（`docs/installation.md` 推荐的那条） | ❌ `agent-preset/invalid` | 宿主把体文件铺进 `profiles/notes-assistant/`（常量），声明却活在 `profiles/web/` |
+| 任意 profile 的**冷启动第一次** | ❌ 同上；**第二次就好** | registry 在**宿主行还在 import 自己**时就挂载了 preset 的 `plugins` 行 |
+| `dsh-math-memory install --direct` | ❌ 同上 | 体文件清单四份，这一份**缺两个文件** |
+| npm `latest`（0.7.8，发布件） | ❌ `agent-preset/not-found` | 适配只在工作区，没发版 |
+
+四种失败的**症状完全一样**（`session/create` → `agent-preset/invalid` 或 `not-found`，**启动日志零输出**），
+所以只能靠差分实验区分。关键测量：把体文件手工补进 profile 目录 → 立刻 `ok:true`（确立 `--direct` 的因果）；
+把 preset 入口行从 `./math-memory.mjs` 改成包内 specifier → **冷启动一次就通**（确立冷启动那条的因果）。
+
+**② 为什么"45/45 全绿"没拦住。** 09-25 的 `$DSH_HOME` 事故把现场清掉之后，
+`test: deployed profile accepts a session` 的前置条件永久不成立 ⇒ 打印 SKIP 并 `exit 0`、**0/0 断言**；
+而 `run-gates.mjs` 只按退出码统计，把它算成通过。同时 `test-installer.mjs` 断言的是**已退役**的
+`.agent-presets/notes-assistant/*` 布局 ⇒ **它守着一个已经没人读的目录**，并给坏的 `--direct` 通道盖章。
+"清单与声明对得上"那条断言只比对两个字符串，看不见 `install.mjs` 那份缺项。
+
+**③ 修法：一个组合、两种 name 形态，各配一条通道。**
+- **bundle 通道改用包内 specifier**（`dsh-math-memory/dsh/preset/math-memory.mjs`）。包本来就是
+  `dsh plugin add` 装进 `profile/node_modules` 的，**不需要任何东西先存在** ⇒ 冷启动无竞态；
+  同时它对 profile 名**完全免疫**（那条硬编码路径随之删掉，宿主插件不再铺体文件）。
+- **离线通道保留 `./name`**（Obsidian 引导、`install --direct`）：这两条**在 dsh 启动前**就把体文件写进
+  profile 目录，相对形态反而更直接。
+- 两种形态由**同一次生成**产出（`build-preset-declaration.mjs` 的 `localPrefix` 参数），
+  由 `check: preset body lists agree` 分别钉住；**手改生成块会红**。
+
+**④ 体文件清单收敛到一处 + 客户端包的传递闭包。**
+- 权威清单 = `preset-deploy.mjs` 的 `PRESET_BODY_FILES`，而判定它是否**完备**的判据是
+  `dsh/preset/math-memory.mjs` 的**相对 import 闭包**；`install.mjs` 与 `main.template.js` 的清单
+  由同一条门禁比对（这次漂移就发生在这两份里）。
+- 记忆面板客户端半个的包，原来把宿主入口拷到包根 + 手挑四个兄弟文件；`host/index.mjs` 在 0.1.7 多了
+  一个 `../preset/preset-deploy.mjs` 之后，**包根本 import 不起来**（`ERR_MODULE_NOT_FOUND`），
+  而安装器打印的是"包已就位"。现在按 `collectDshImportClosure()` 复制整条闭包、入口落在 `host/index.mjs`，
+  门禁**真的 `import()` 一次产物**（两个宿主半分支各一次）。
+- 顺带修掉 `presetBodyDeployed()` 里未 import 的 `existsSync`（零调用方 ⇒ 没有任何门禁执行过它，见坑 95）。
+
+**⑤ 门禁自证：三态汇总 + 自带前置条件。**
+`run-gates.mjs` 现在区分 `ok` / `SKIP` / `FAIL`，并**列出被跳过的门禁名与原因**（`__SKIP__` 是套件声明的
+唯一标记）。`test: deployed profile accepts a session` 被换成
+`test: self-provisioned profile accepts a session`：它**离线**装一份 bundle 形态的 profile
+（`node_modules` 也是拷的，不用 pnpm、不联网），profile 名**故意不叫** `notes-assistant`，
+冷启动一次再建会话 —— 上面三条坏形态一网打尽。变异验证：把 bundle 声明改回相对形态 → 该门禁 8/10 红、
+`session/create` 报 `agent-preset/invalid`；把 `install.mjs` 清单去掉体文件 → `check-preset-body-lists` 红；
+把闭包截断成只剩入口 → `check-client-package-layout` 红。三条都恢复后全绿。
+
+> **与 09-25 那一节的关系**：那一节的"模块铺进 profile 目录（npm 宿主插件与 Obsidian 引导共用）"
+> 只对离线通道继续成立；bundle 通道改成 specifier，理由就是本节的冷启动测量。历史记录不改写。
+
+**⑥ 记录纪律的欠账也还了。**
+[`dsh-0.1.7-adaptation.md`](dsh-0.1.7-adaptation.md) 的 A1b 验收③（让 `check-patch-yaml` 断言 patch 行 id
+在当前 schema 里存在）**从未实施**，仍列为未做；`build-preset-declaration.mjs` 与
+`lib/preset-declaration.mjs` 的注释引用了一个**不存在**的 `check-preset-declaration.mjs`——现在真正的守卫是
+生成器自己的 `--check`，并已注册为门禁。
+
+## 2026-09-25 · dsh 0.1.7 适配（P0 preset 断代 + V4 日志选择 + 悬空镜像）
+
+**状态**：P0 与两条 P1 已实施并有回归。完整评估、逐条证据与剩余项见
+[`dsh-0.1.7-adaptation.md`](dsh-0.1.7-adaptation.md)。本轮口径：`@deepseek-ai/dsh`
+`0.1.5-rc.3` → **`0.1.7-rc.2`**（本机实装），`@linxin666/dsh-web-all` `0.3.20` → **`0.4.2`**。
+
+**为什么这次不能"只补几个字段"**：上游在 0.1.7 把两件**结构性**的东西换掉了 ——
+agent preset 的载体，与会话日志的世代命名。前者让侧栏**完全起不来**（不是降级，是新建会话必失败），
+后者是**静默**的（读旧日志 ⇒ 新轮次永不落盘，界面一切正常）。
+
+**① P0：preset 从"目录"改成"声明"，而解析锚点不是直觉里的那个位置。**
+0.1.7 起 `.agent-presets/` 不再被读（`.agent-presets` / `preset.yml` / `includeUserRoot`
+三个字符串在全库 0 命中），preset 变成一条普通 Cordis 行
+`name: '@deepseek-ai/dsh-agent-preset'`、`config.plugins` 放组合。落地形状：
+
+- **声明是生成的**：`scripts/build-preset-declaration.mjs` 从 `dsh/preset/agent.cordis.yml`
+  + `preset.yml` 生成带标记的 `- insert:` 块，写进**两个通道**的 patch
+  （`dsh/cordis.patch.yml` = npm bundle；`dsh/profile/notes-assistant.patch.yml` = Obsidian `--patch`）。
+  生成而不是手抄，是因为这等于把组合复制一份；`test: agent preset mounts` 里有一条
+  **逐字对比**的漂移断言，手改任一侧就会红。
+- **模块铺进 profile 目录**：`dsh/preset/preset-deploy.mjs`（npm 宿主插件与 Obsidian 引导共用）。
+  **这是本轮最容易搞错的一点**：相对 `name:` 的锚点是 **profile 目录**，不是声明它的 patch 文件所在目录
+  —— 见 handoff §4 陷阱 92（含差分实验与代码依据：registry 的 `register()` 捕获的是服务自己的 ctx）。
+- **默认预设行也修了**：`dsh/profile/cordis.patch.yml` 里那条 `- id: agent-presets` 在 0.1.7 上
+  **匹配不到任何行**（发行 id 已改为 `agent-preset-registry`，`includeUserRoot` 也随之消失）。
+  patch 匹配不到只 warn 并跳过，所以它不仅没配成默认预设，连"这条 patch 存在"都是假象。
+  实测判据：`dsh --profile notes-assistant --dump-config` 现在**不再打印**
+  `patch: entry "agent-presets" not found`，且 registry 行 `default: notes-assistant` 生效。
+- **证**：门禁 `test: agent preset mounts (real dsh)` 由
+  `agent-preset/not-found`（`available=["standard","ptc","minimal","cordis"]`）变为
+  **`{"ok":true,"value":{"sessionId":"session-probe-…","agentPreset":"notes-assistant"}}`**（16/17 → 17/17；
+  剩下那条是"用户真实 home 的工作区表没有临时登记"，属历史残留，见下）。
+
+> **诊断陷阱（已记 handoff 陷阱 93）**：模块解析失败时**看不到** `ERR_MODULE_NOT_FOUND` ——
+> loader 的 `_init()` 把 import 异常记进 logger 后直接 return（fiber 不创建），preset 审计只有
+> `math-memory (./math-memory.mjs): never started`。所以门禁**不能**锚错误文本，要锚
+> `agentPresets/list` 无 `broken` + `session/create` 是否 `ok:true`。
+
+**② P1：V4 日志的权威版本判据（静默数据陈旧）。** 会话格式升到 V4，新文件名
+`session.v4.jsonl.zstd`，且迁移**保留旧代**。旧判据是
+`/\.v3\./.test(path)` 二选一 ⇒ `isNewerArtifact(v4, v3)` 返回 `false` ⇒ **选旧 V3**。
+后果两条：对话索引落后；自动捕获的 `fingerprint`/`lastSeq` 锚在不再写入的 V3 上 ⇒ 新轮次永不落盘。
+本机实测当时 **2 个会话目录 v3+v4 并存且 V4 更新**。修法：`artifactGeneration(path)` 取世代号
+（无标记 = 0，`.vN.` = N），**先比世代号、mtime 只作同代兜底**；两份实现同步，
+并把新符号**钉进** `check-engine-sync.mjs` 的共享清单（23 个符号：17 同步 + 6 有记录的偏离）——
+这是照着坑 64（改名即逃出守卫）刻意做的。
+
+> **测试纪律**：新断言**先在旧代码上跑红**（386/391，5 条红），再修，再绿（391/391）。
+> 夹具的 mtime 是**故意交叉**的（V4 更新但文件更旧），这样"按世代号"与"按 mtime"不会互相冒充。
+
+**③ P1：`dsh-web-all` 0.4.x 之后的悬空镜像。** 0.4.0 把 `dsh-perf` / `dsh-doctor` / `dsh-skins`
+/ `dsh-web-ui-all` 等并入聚合包。而 `syncGlobalPackageLinks` 的镜像循环只遍历 **web 侧现存**的包
+⇒ 被删掉的包**永远不会被回头处理**，链接一直指着不存在的目标；`existsSync` 会跟随 junction，
+把断链也报成"不存在"，所以这个缺陷长期不可见。本机实测 **9 条**悬空链接。
+修法：多一趟**反向**遍历（只删 junction，真实目录与文件一律不碰），新增门禁
+`check: mirror cleanup (dangling @linxin666 junctions)`（7 项，**做过变异验证**：去掉第二趟 ⇒ 5/7 红）。
+
+**顺带（非上游变更）**：清掉了本机工作区表里 10 条 2026-09-24 的探针残留
+（`scripts/qa/clean-probe-workspaces.mjs --apply`，先写 `.bak`），`test: agent preset mounts`
+由 16/17 回到 17/17。**这条断言锚在用户环境数据上**，见到它红先跑一次 dry-run 确认是不是旧垃圾，
+**不要**改断言（已补进 handoff 陷阱 91 的补充条）。
+
+**④ 阶段 3 真机验收抓到一个仓库门禁看不见的缺口（已是 handoff 陷阱 94）。** 上面三条做完、
+`npm test` 全绿之后，**从现场**（真实 `$DSH_HOME/profiles/notes-assistant`）再验一次仍然
+`agent-preset/not-found`：声明在 `cordis.patch.yml` 里，**却不在真正作为 `--patch` 传入的
+`notes-assistant.patch.yml` 里**。仓库侧门禁是"自己铺自己验"，证明的是**仓库**对；真机上那份是
+安装/引导写出来的，两者可以不一致而不被任何仓库门禁发现。修完把它固化成新门禁
+`test: deployed profile accepts a session (real dsh)`（8 项）——从**已部署**的 profile 起隔离副本、
+只回填引导会写的东西，再真建一个会话；与 `test: agent preset mounts`（仓库侧）分工互补，两条都绿
+才算两条路都对。**教训**：交付"配置类"改动时，必须从现场再验一次，不能只信"从仓库重建"的夹具。
+
+**⑤ B1：补上 dsh 兼容性声明。** 0.1.7 的插件兼容性门禁读 **`peerDependencies`**（不是
+`engines.dsh`——这是本轮探针纠正的误解之一），而本仓此前什么都没声明 ⇒ 等于跳过检查。
+现在 `peerDependencies["@deepseek-ai/dsh"]` 与 `dsh.engines.dsh` 同时声明 `>=0.1.7-rc.2`
+（实际验证过的版本），并在 `check-version-consistency.mjs` 里加了"两者必须一致"的断言
+（**变异验证**：把 peerDeps 改成别的范围 ⇒ 该门禁报错）。
+
+**结论**：`node scripts/run-gates.mjs` **45/45**（门禁总数由 43 → 44 → 45）。
+本轮**未做**：把 Obsidian 侧插件开关搬到 dsh 插件 `Config`（0.1.7 的 `meta.volatile` 免重载能力）；
+客户端包的 `locale/<lang>.json` 多语言标题与 `package.json.icon`；
+`decodeZstdSessionLog` / `decodeSessionLog` 的名字统一（双份守卫的盲区）。三项都在
+`dsh-0.1.7-adaptation.md` §5/§9 挂着，都不影响可用性。
+
+> ⚠️ **工具纪律（本轮真踩到）**：更新文档计数时我用 PowerShell `Get-Content -Raw` +
+> `[IO.File]::WriteAllText` 往返，把 `AGENTS.md` 与 `handoff.md` 的中文整篇变成 mojibake
+> ——文件仍是合法 UTF-8，所以**没有任何门禁发现**，是 `git diff` 里满屏 `鈥?` 才暴露的。
+> ⇒ **改仓库文本一律用 read/edit/write 工具**；`git diff` 里中文的显示也不可信（控制台编码）。
+
 ## 2026-09-25 · 落笔路径自述诊断 + 探针改动了用户持久状态（拖拽仍未完成）
 
 **状态**：拖拽「从文件树拖进输入框」**仍未完成**。本条只记两件当天真正落地的事，接续入口是

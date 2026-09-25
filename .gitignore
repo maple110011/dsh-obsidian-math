@@ -23,3 +23,7 @@ scripts/qa/benchmark-vault/.deepseek/cache/
 推文-*.md
 commit-msg.txt
 commit-*.txt
+
+# working notes from the dsh 0.1.7 adaptation rounds (deliberately not versioned —
+# the two raw inventories are named as such in docs/dsh-0.1.7-adaptation.md §11)
+.scratch-*.md

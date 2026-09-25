@@ -7,19 +7,33 @@
  *   install [--direct] [--vault <dir>] [--dsh-home <dir>] [--profile <name>] [--force] [--quiet] [--dry-run]
  *     native (default): writes the profile scaffold (in-box bundles dsh-base +
  *                       dsh-web-app) then `dsh plugin add dsh-math-memory`
- *                       (the bundle syncs the preset at dsh boot), then writes
- *                       the profile posture + owner markers + vault templates.
+ *                       (the bundle deploys the preset body at dsh boot), then
+ *                       writes the profile posture + owner markers + vault
+ *                       templates.
  *     --direct:         legacy flat copy of the preset/profile/host files
  *                       (offline / no pnpm / no registry), plus the same markers.
  *   status [--dsh-home <dir>] [--profile <name>]
  *   uninstall [--vault <dir>] [--purge] [--purge-data --confirm <phrase>] [--yes] [--dsh-home <dir>] [--profile <name>]
  *
+ * WHERE THE PRESET LIVES (dsh >= 0.1.7). The preset is a DECLARED row (see
+ * dsh/cordis.patch.yml), and the modules its relative row names point at must sit
+ * in the PROFILE DIRECTORY. This installer therefore deploys the body through
+ * `dsh/preset/preset-deploy.mjs` — the same call and the same file list the npm
+ * host plugin uses — instead of keeping a third copy of that list. Missing those
+ * files is silent: dsh prints nothing at boot and `session/create` answers
+ * `agent-preset/invalid` ("math-memory (./math-memory.mjs): never started").
+ *
  * Owner markers make install/uninstall symmetric and conflict-safe:
- *   <home>/.agent-presets/notes-assistant/.owner.json   (preset ownership)
- *   <home>/profiles/<name>/.install-manifest.json        (posture ownership)
- * A native (bundle) install owns the preset as "npm" (written by the bundle's
- * preset-sync at dsh boot); a --direct install owns it as "direct". Install
- * refuses to overwrite a preset owned by the other channel unless --force.
+ *   <home>/.agent-presets/notes-assistant/.owner.json   (CHANNEL ownership; the
+ *                                                        directory itself is no
+ *                                                        longer a preset lookup
+ *                                                        path on 0.1.7+, and this
+ *                                                        marker is the only
+ *                                                        npm-vs-direct guard)
+ *   <home>/profiles/<name>/.install-manifest.json        (posture + body files)
+ * A native (bundle) install owns the preset as "npm" (written by the bundle at
+ * dsh boot); a --direct install owns it as "direct". Install refuses to
+ * overwrite a preset owned by the other channel unless --force.
  */
 
 import {
@@ -35,6 +49,11 @@ import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import {
+  PRESET_BODY_FILES,
+  deployPresetBody,
+  presetReaderFromDir
+} from "./preset/preset-deploy.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PRESET_DIR = join(PACKAGE_ROOT, "dsh", "preset");
@@ -55,7 +74,7 @@ const PURGE_DATA_CONFIRM = "DELETE MY MATH MEMORY";
 const NATIVE_BUNDLES = ["dsh-math-memory"];
 // Files the --direct (legacy flat) install writes into the profile dir; the
 // install manifest records them so uninstall can remove them symmetrically.
-const DIRECT_PROFILE_FILES = [
+const DIRECT_PROFILE_BASE = [
   "package.json",
   "cordis.yml",
   "cordis.patch.yml",
@@ -66,6 +85,17 @@ const DIRECT_PROFILE_FILES = [
   "math-memory-panel.mjs",
   "hook-frontmatter.mjs"
 ];
+// dsh >= 0.1.7: the agent preset's own modules must live IN THE PROFILE
+// DIRECTORY (the registry resolves a relative row `name:` against it). They come
+// from preset-deploy.mjs's ONE list rather than a fourth hand-written copy —
+// this list used to be missing them, which is why `install --direct` produced a
+// profile where every session failed with `agent-preset/invalid`.
+const DIRECT_PROFILE_FILES = [
+  ...DIRECT_PROFILE_BASE,
+  ...PRESET_BODY_FILES.filter((name) => !DIRECT_PROFILE_BASE.includes(name))
+];
+/** Exported for `scripts/check-preset-body-lists.mjs` (import the real array). */
+export { DIRECT_PROFILE_FILES };
 
 function parseArgs(argv) {
   const options = {
@@ -191,6 +221,17 @@ function readMarker(path) {
 }
 
 /**
+ * `[present]` when every preset body file sits in the profile directory, else a
+ * `[missing n/N: …]` line naming which ones. `status` must ask THIS, not the
+ * retired `.agent-presets/` directory (see the module docblock).
+ */
+function describePresetBody(profileRoot) {
+  const missing = PRESET_BODY_FILES.filter((name) => !existsSync(join(profileRoot, name)));
+  if (missing.length === 0) return "[present]";
+  return `[missing ${missing.length}/${PRESET_BODY_FILES.length}: ${missing.join(", ")}]`;
+}
+
+/**
  * Assert (or with --force, take over) ownership of a marker-governed target.
  * Returns null when writing may proceed; a non-empty conflict string otherwise.
  */
@@ -292,6 +333,21 @@ async function directInstallProfile(options, dshHome) {
   copyFile(options, join(HOST_DIR, "memory-admin.mjs"), join(profileRoot, "memory-admin.mjs"), true);
   copyFile(options, join(HOST_DIR, "math-memory-panel.mjs"), join(profileRoot, "math-memory-panel.mjs"), true);
   copyFile(options, join(PRESET_DIR, "hook-frontmatter.mjs"), join(profileRoot, "hook-frontmatter.mjs"), true);
+  // The agent preset's OWN modules, through the one list in preset-deploy.mjs.
+  // Without this the profile declares `name: ./math-memory.mjs` and has no such
+  // file: dsh prints nothing at boot, and `session/create` answers
+  // `agent-preset/invalid` (measured 2026-09-26).
+  const body = deployPresetBody({
+    home: dshHome,
+    read: presetReaderFromDir(PRESET_DIR),
+    profile: options.profile,
+    dryRun: options.dryRun
+  });
+  for (const name of body.planned) {
+    log(options, options.dryRun
+      ? `[dry-run] would write ${join(body.root, name)}`
+      : `[write] ${join(body.root, name)}`);
+  }
   // 客户端半个（记忆面板的 Settings 面板 + **拖拽引用**）。以前只有 `web` profile 装它，于是
   // Obsidian 侧栏（notes-assistant）里"从文件树拖一篇笔记进输入框"根本不加载 —— 代码对、也测过，
   // 但没被装上（2026-09-21 发现）。这一步让安装路径自己负责，而不是靠手工跑另一个脚本。
@@ -389,11 +445,15 @@ function commandStatus(options) {
   console.log(`DSH_HOME: ${dshHome}`);
   console.log(`profile:  ${options.profile}`);
 
-  const presetRoot = join(dshHome, ".agent-presets", PRESET_ID);
-  const presetMarker = readMarker(join(presetRoot, OWNER_MARKER));
-  console.log(`preset:   ${existsSync(join(presetRoot, "agent.cordis.yml")) ? "[present]" : "[missing]"} ${presetMarker ? `(owner=${presetMarker.owner} v${presetMarker.version})` : "(no owner marker)"}`);
-
   const profileRoot = join(dshHome, "profiles", options.profile);
+  // dsh >= 0.1.7: the preset is a DECLARED row and its modules live in the
+  // profile directory; `.agent-presets/` only carries the channel marker. Asking
+  // the old directory (`agent.cordis.yml` there) reported "[missing]" for every
+  // healthy install, because preset-deploy.mjs never writes that file.
+  const markerRoot = join(dshHome, ".agent-presets", PRESET_ID);
+  const presetMarker = readMarker(join(markerRoot, OWNER_MARKER));
+  console.log(`preset:   ${describePresetBody(profileRoot)} ${presetMarker ? `(owner=${presetMarker.owner} v${presetMarker.version})` : "(no owner marker)"}`);
+
   let bundles = [];
   try {
     bundles = JSON.parse(readFileSync(join(profileRoot, "package.json"), "utf8")).dsh?.profile?.bundles ?? [];
@@ -452,7 +512,10 @@ function commandUninstall(options) {
     }
   }
 
-  // 2. preset directory — only when we own it (or --force).
+  // 2. preset directory — only when we own it (or --force). This is the CHANNEL
+  //    marker (the npm-vs-direct guard), not the preset lookup path any more; the
+  //    deployed body files under profiles/<name>/ are listed in the posture
+  //    manifest and are removed by step 3 below.
   if (presetMarker === null) {
     log(options, `[keep] preset ${presetRoot} has no owner marker — leaving it.`);
   } else if (presetMarker.owner === "npm" || presetMarker.owner === "direct" || options.force) {
@@ -547,4 +610,8 @@ async function main() {
   process.exit(code);
 }
 
-main();
+// Only run as a CLI. `scripts/check-preset-body-lists.mjs` imports this module
+// for DIRECT_PROFILE_FILES, and running main() there would parse the guard's own
+// argv and exit.
+const invokedDirectly = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) await main();
