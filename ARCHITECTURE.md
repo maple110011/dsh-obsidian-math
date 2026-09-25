@@ -34,6 +34,7 @@
 | 路径 | 职责 |
 |---|---|
 | `manifest.json` / `main.js` / `styles.css` | Obsidian 社区插件发布物（`main.js` 由构建生成，勿手改） |
+| `locale/` + `icon.svg` | **dsh 插件管理页的卡片素材**（0.1.7 能力）：`dsh-app-boot` 的 `readPluginMeta` 读 `package.json.icon`（相对路径、≤256 KiB、包内真实文件）与 `<pkg>/locale/<lang>.json` 的 `meta.title`/`meta.description`（`en.json` 为基准）。三样都**静默降级**（缺失/不合格就回退到包名与默认图），所以由**真读取器**守卫：`scripts/check-plugin-manifest-meta.mjs`。`package.json` 的 `files` 必须带上这两项（发布集由 `check-release-paths.mjs` 钉住） |
 | `obsidian/main.template.js` | 插件源码：服务管理、LinkServer（/open + /feedback）、主进程反代（`DshWebProxy`：cookie 兑换 + 侧栏性能注入）、记忆面板、预览编辑、全局皮肤 patch 兜底（junction 镜像/降级）、设置页（含捕获策略下拉框与侧栏性能模式）、bootstrap |
 | `dsh/preset/` | **agent preset `notes-assistant`**：`preset.yml`（元信息）、`agent.cordis.yml`（装配：最小工具 + 记忆插件配置）、`math-memory.mjs`（记忆注入引擎 + 体检 + 对话索引 + 记号/捕获策略注入）、`note-tools.mjs`（笔记工具：note_recall（统一检索 + tag-only 枚举）/note_strategy/note_create/note_links + BM25 检索引擎） |
 | `dsh/profile/` | **profile `notes-assistant`**：`package.json`（bundles: dsh-base + dsh-web-app）、`cordis.patch.yml`（fail-closed 沙箱/审批/权限表/默认 preset；**不挂载任何 `@linxin666` UI 插件**，保持独立）、`notes-assistant.patch.yml`（`--direct`/Obsidian 直写通道的 `--patch` overlay；native 模式由 bundle 提供，不用它）、`math-memory-workspace.mjs` |
@@ -54,6 +55,7 @@
 | `scripts/test-installer.mjs` | 安装器 e2e + 漂移检测（含"`--direct` 真的把 preset 体文件铺进 profile 目录"与"卸载把它们删掉"） |
 | `scripts/check-preset-body-lists.mjs` | **preset 体文件清单的守卫**：清单必须等于 preset 入口的相对 import 闭包；`install.mjs` / `main.template.js` / 两个 patch 的其它几份必须覆盖它；两个通道各自的 name 形态（包内 specifier vs `./`）必须正确。它**真的调用** `deployPresetBody`/`presetBodyDeployedIn`，所以"零调用方的坏导出"也会被它抓到 |
 | `scripts/check-client-package-layout.mjs` | **客户端半个那个安装时生成的包必须可加载**：按 `collectDshImportClosure()` 复制整条闭包后，真的 `import()` 一次产物（两个宿主半分支各一次），并核对 `main`/`exports` 形状与 `dsh.client.inject` 引用的包确实存在 |
+| `scripts/check-plugin-manifest-meta.mjs` | **插件管理页的卡片素材**：跑 dsh 的**真读取器**（`dsh-app-boot` 的 `readPluginMeta`）断言中英标题不同、描述齐全、icon 被转成 data URL；静态部分另查 icon 路径形态/大小与 `locale/*.json` 的命名与字段。缺 dsh 时声明 SKIP |
 | `scripts/build-preset-declaration.mjs` | preset 声明的**生成器**（`--check` 已注册为门禁）：从 `agent.cordis.yml` + `preset.yml` 生成两个通道的声明块，`localPrefix` 决定是包内 specifier 还是 `./` |
 | `scripts/check-doc-consistency.mjs` | 文档一致性守卫：断言数等易漂移数字与代码实测值一致（进 `npm test`） |
 | `scripts/lib/gates.mjs` | **门禁清单的唯一来源**：`run-gates.mjs` 执行它，`check-doc-counts.mjs` import 它数条数。抽成模块是为了让"有多少条门禁"可判定——`AGENTS.md` 曾手写「本机当前 34/34」而清单已长到 41 条，且手写数字落在 agent 的首读路径上 |

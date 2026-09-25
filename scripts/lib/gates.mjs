@@ -34,6 +34,12 @@ export const GATES = [
   // dsh-web-all 0.3.20 → 0.4.2 之后）本机 notes-assistant profile 有 9 条这样的链接。
   { name: 'check: mirror cleanup (dangling @linxin666 junctions)', args: ['scripts/check-mirror-cleanup.mjs'] },
   { name: 'check: plugin id', args: ['scripts/check-plugin-id.mjs'] },
+  // 0.1.7 的插件管理页用三样东西画一张卡片：`package.json.icon` 与
+  // `<pkg>/locale/<lang>.json` 的 `meta.title`/`meta.description`。本插件此前**一样都没声明**，
+  // 卡片只能显示包名、没有图标——而这三种错法都会**静默降级**（locale 缺失 → 回退英文；
+  // 图标不合格 → 保留默认图），"文件在不在"式的检查一个都抓不到。这条门禁跑**真的读取器**
+  // （dsh-app-boot 的 `readPluginMeta`），并断言中英标题不同（证明 zh.json 真的被读了）。
+  { name: 'check: plugin manifest meta (icon/locale)', args: ['scripts/check-plugin-manifest-meta.mjs'] },
   { name: 'check: version consistency', args: ['scripts/check-version-consistency.mjs'] },
   { name: 'check: doc consistency', args: ['scripts/check-doc-consistency.mjs'] },
   // 双语文档配对：README.md ↔ README.zh.md 的结构、切换行、链接集合与一致性记录。

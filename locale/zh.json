@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "数学笔记助手",
+    "description": "面向数学类笔记的 DeepSeek Harness 助手：分层长期记忆、统一检索（note_recall）、关键想法备忘与记忆面板。同时作为 dsh 插件与 Obsidian 插件发布。"
+  }
+}

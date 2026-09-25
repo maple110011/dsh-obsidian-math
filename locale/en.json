@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DSH Math Notes Assistant",
+    "description": "Math-focused note assistant for DeepSeek Harness: layered long-term memory, unified note recall, idea memos, and a memory panel. Ships as a dsh plugin and an Obsidian plugin."
+  }
+}

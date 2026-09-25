@@ -38,7 +38,13 @@ const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 // `dsh/` is the npm artifact; the three root files are the documented READMEs
 // and the license. The Obsidian artifact (main.js / manifest.json / styles.css)
 // is attached to the GitHub release instead, and is scanned below.
-const EXPECTED_FILES = ["dsh/", "README.md", "README.zh.md", "LICENSE"];
+//
+// `locale/` + `icon.svg` were added 2026-09-26 for the dsh plugin-management
+// card: `dsh-app-boot` reads `package.json.icon` (relative, ≤256 KiB, a real
+// file inside the manifest directory) and `<pkg>/locale/<lang>.json` with
+// non-empty `meta.title` / `meta.description`. Both are plain text, no
+// machine-specific content — but they are still walked by the scan below.
+const EXPECTED_FILES = ["dsh/", "locale/", "icon.svg", "README.md", "README.zh.md", "LICENSE"];
 const files = pkg.files ?? [];
 const setMatches = files.length === EXPECTED_FILES.length
   && EXPECTED_FILES.every((f) => files.includes(f));

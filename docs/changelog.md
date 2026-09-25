@@ -66,6 +66,25 @@
 `lib/preset-declaration.mjs` 的注释引用了一个**不存在**的 `check-preset-declaration.mjs`——现在真正的守卫是
 生成器自己的 `--check`，并已注册为门禁。
 
+**⑦ 插件管理页的卡片素材（icon / locale）。**
+0.1.7 的插件管理页用三样东西画一张卡片：`package.json.icon` 与 `<pkg>/locale/<lang>.json` 的
+`meta.title`/`meta.description`。本插件此前**一样都没声明** ⇒ 卡片只有包名、没有图标。
+三种错法全是**静默降级**（locale 缺失 → 回退英文；字段类型不对 → 一条 `metadataError`；
+图标不合格 → 保留默认图），"文件在不在"式的检查一个都抓不到。落地：`locale/en.json` +
+`locale/zh.json` + `icon.svg`，并把它们加进 `package.json` 的 `files`
+（发布集由 `check-release-paths.mjs` 钉住，所以那条守卫的 `EXPECTED_FILES` 同批改并写了理由）。
+新增门禁 `check: plugin manifest meta (icon/locale)`：跑 **dsh 自己的读取器**
+（`dsh-app-boot` 的 `readPluginMeta`）并断言**中英标题不同**（证明 `zh.json` 真的被读了，而不是
+回退成英文也算过）。变异验证：移走 `locale/zh.json` → 两条本地化断言红；`icon` 改成绝对路径 →
+4 条红，含 dsh 原文 `icon must be a relative file path`。
+
+> **一处刻意不改**：`dsh.engines.dsh` 留着。0.1.7 的兼容门禁只读 `peerDependencies`，
+> 所以它确实是**惯例元数据**；但生态里的插件（`@linxin666/*`、`@deepseek-ai/dsh-web-app`）
+> 都同时声明两者，而本仓的 `check-version-consistency.mjs` **刻意断言两者都存在且相等**。
+> 为了"纯"而删掉一个全生态都在写的字段，换不来任何可判定性的提升，反而会让那条一致性守卫
+> 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
+> `peerDependencies`）。
+
 ## 2026-09-25 · dsh 0.1.7 适配（P0 preset 断代 + V4 日志选择 + 悬空镜像）
 
 **状态**：P0 与两条 P1 已实施并有回归。完整评估、逐条证据与剩余项见
