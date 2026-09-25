@@ -30,39 +30,40 @@ export function seedIsolatedHome(home, realHome, opts = {}) {
   mkdirSync(profileRoot, { recursive: true });
 
   // 顶层文件（cordis.yml / *.patch.yml / *.mjs / package.json / pnpm-workspace.yaml …）。
-  // 用 cpSync 逐项复制而不是 copy 整个目录：真实 profile 下可能有体积很大的 node_modules。
+  // 逐项复制而不是整个目录：真实 profile 下可能有体积很大的 node_modules。
   let entries = [];
   try { entries = readdirSync(realProfile); } catch { entries = []; }
-  const TRACE = process.env.SEED_TRACE === '1';
-  if (TRACE) console.log(`  [seed] 真实 profile 顶层 ${entries.length} 项: ${entries.join(', ')}`);
+  let copied = 0;
   for (const name of entries) {
     if (name === 'node_modules') continue;
     const from = join(realProfile, name);
     try {
-      const st = lstatSync(from);
-      if (!st.isFile()) { if (TRACE) console.log(`  [seed] 跳过 ${name}（非普通文件: ${st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'dir' : 'other'}）`); continue; }
-      if (TRACE) console.log(`  [seed] 复制 ${name} (${st.size}B)`);
+      // 只复制普通文件：目录（含 junction）一律跳过，避免跟着链接递归。
+      if (!lstatSync(from).isFile()) continue;
       cpSync(from, join(profileRoot, name));
-    } catch (error) { if (TRACE) console.log(`  [seed] ${name} 失败: ${String(error?.message ?? error)}`); }
+      copied += 1;
+    } catch (error) {
+      console.warn(`isolated-dsh-home: 复制 ${name} 失败：${String(error?.message ?? error)}`);
+    }
   }
 
   // node_modules：**符号链接**而不是复制。启动 profile 需要从 `node_modules` 解析
   // `@dsh-math-memory/*` 与 `@linxin666/*`（皮肤），复制一份代价太大；链接读的还是用户那份，
   // 但 dsh 往里写的东西（storage/session）落在临时 home 里 —— 这正是我们要的边界。
   const realModules = join(realProfile, 'node_modules');
-  if (TRACE) console.log(`  [seed] node_modules: 真实存在=${existsSync(realModules)} 目标已存在=${existsSync(join(profileRoot, 'node_modules'))}`);
+  let linked = false;
   if (existsSync(realModules) && !existsSync(join(profileRoot, 'node_modules'))) {
     try {
-      mkdirSync(join(home, 'profiles', profile), { recursive: true });
       symlinkSync(realModules, join(profileRoot, 'node_modules'), 'junction');
-      if (TRACE) console.log('  [seed] node_modules junction 建好');
-    } catch (error) { if (TRACE) console.log(`  [seed] junction 失败: ${String(error?.message ?? error)}`); }
+      linked = true;
+    } catch (error) {
+      console.warn(`isolated-dsh-home: node_modules junction 建不起来：${String(error?.message ?? error)}`);
+    }
   }
 
   const patch = join(profileRoot, `${profile}.patch.yml`);
   let presetRoot = null;
   if (opts.withPreset === true) {
-    if (TRACE) console.log('  [seed] 开始种 preset');
     presetRoot = join(home, '.agent-presets', profile);
     const realPreset = join(realHome, '.agent-presets', profile);
     if (existsSync(realPreset)) {
@@ -75,14 +76,16 @@ export function seedIsolatedHome(home, realHome, opts = {}) {
       for (const name of presetEntries) {
         const from = join(realPreset, name);
         try {
-          const st = lstatSync(from);
-          if (!st.isFile()) { if (TRACE) console.log(`  [seed] preset 跳过 ${name}（${st.isSymbolicLink() ? 'symlink' : 'dir'}）`); continue; }
+          if (!lstatSync(from).isFile()) continue;
           cpSync(from, join(presetRoot, name));
-        } catch (error) { if (TRACE) console.log(`  [seed] preset ${name} 失败: ${String(error?.message ?? error)}`); }
+        } catch (error) {
+          console.warn(`isolated-dsh-home: 复制 preset/${name} 失败：${String(error?.message ?? error)}`);
+        }
       }
-      if (TRACE) console.log(`  [seed] preset 种好: ${existsSync(join(presetRoot, 'agent.cordis.yml'))}`);
-    } else if (TRACE) console.log('  [seed] 真实 preset 目录不存在');
+    }
   }
+  // 种子的结果直接说出来：探针起不来时，第一件要判断的事就是"副本到底种全了吗"。
+  console.log(`  [seed] ${profileRoot}：${copied} 个文件${linked ? ' + node_modules 链接' : ''}${presetRoot === null ? '' : `，preset=${existsSync(join(presetRoot, 'agent.cordis.yml'))}`}`);
 
   const storages = join(home, 'storages');
   if (!existsSync(storages)) { try { mkdirSync(storages, { recursive: true }); } catch { /* ignore */ } }

@@ -156,11 +156,7 @@ try {
     // `accept-encoding` 转发 ⇒ 上游返回 gzip ⇒ 我们解压后用纯文本改写正文，却仍带着
     // `content-encoding: gzip` 发出去 ⇒ 浏览器 gunzip 纯文本失败，页面**永远停在 loading**。
     // 用 curl/node 自测时不会带这个头，所以这个坑只有真浏览器才会暴露。
-    delete headers['accept-encoding'];
-    if (process.env.PIPE_PROBE_VERBOSE === '1') console.log(`  [proxy] >> ${req.method} ${req.url}`);
-    const upstreamReq = httpRequest({ host: '127.0.0.1', port: DSH_PORT, path: req.url, method: req.method, headers }, (up) => {
-      if (process.env.PIPE_PROBE_VERBOSE === '1') console.log(`  [proxy] << ${req.method} ${req.url} -> ${up.statusCode} ${up.headers['content-type'] ?? ''}`);
-      const isHtml = String(up.headers['content-type'] ?? '').includes('text/html');
+    delete headers['accept-encoding'];    const upstreamReq = httpRequest({ host: '127.0.0.1', port: DSH_PORT, path: req.url, method: req.method, headers }, (up) => {      const isHtml = String(up.headers['content-type'] ?? '').includes('text/html');
       if (!isHtml) { res.writeHead(up.statusCode, up.headers); up.pipe(res); return; }
       const chunks = [];
       up.on('data', (c) => chunks.push(c));
@@ -186,9 +182,7 @@ try {
     socket.on('error', () => { /* ignore */ });
     // 浏览器的 Origin 是代理端口，而上游只认它自己的端口 —— 照抄 DshWebProxy 的做法改写来源。
     const headers = { ...req.headers, host: `127.0.0.1:${DSH_PORT}`, origin: `http://127.0.0.1:${DSH_PORT}` };
-    if (cookie !== '') headers.cookie = cookie;
-    if (process.env.PIPE_PROBE_VERBOSE === '1') console.log(`  [proxy] ws ${req.url}`);
-    const up = httpRequest({ host: '127.0.0.1', port: DSH_PORT, path: req.url, method: req.method, headers });
+    if (cookie !== '') headers.cookie = cookie;    const up = httpRequest({ host: '127.0.0.1', port: DSH_PORT, path: req.url, method: req.method, headers });
     up.on('error', () => { try { socket.destroy(); } catch { /* ignore */ } });
     up.on('upgrade', (upRes, upSocket, upHead) => {
       const lines = [`HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage}`];
