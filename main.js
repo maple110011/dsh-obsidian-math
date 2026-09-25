@@ -3284,6 +3284,27 @@ class DshObsidianMathPlugin extends Plugin {
 
   onunload() {
     this.linkServer?.stop();
+    // Release the proxy socket UNCONDITIONALLY.
+    //
+    // This used to be `if (this.service?.child !== null && !keepAlive) this.service.stop()`,
+    // and the child field is set to `null` the moment it exits (see the spawn
+    // error/exit handlers in start()). So any unload after a child that failed to
+    // start OR was killed externally skipped the whole stop path — leaving
+    // `DshWebProxy` bound to `settings.port` INSIDE this Obsidian process, where it
+    // outlives the plugin instance. The next enable could then never bind that port:
+    // EADDRINUSE retried for ~20 s, "dsh 服务未能在端口 N 上启动", and a fresh dsh
+    // child spawned on every retry. Reported from a real session 2026-09-26 (the
+    // user had to quit Obsidian to free the socket). `check-plugin-unload.mjs`
+    // guards this.
+    const service = this.service;
+    if (service !== null && service !== undefined) {
+      if (this.settings.keepAliveOnUnload) {
+        // Honor "keep the dsh child alive", but never this renderer's socket.
+        void service.proxy?.close?.();
+      } else {
+        void service.stop?.();
+      }
+    }
     // Queued debug lines are written before the plugin goes away (the timer
     // would never fire again otherwise).
     flushDebugLog();
@@ -3293,9 +3314,6 @@ class DshObsidianMathPlugin extends Plugin {
     // plugin may have patched setMessage after us).
     if (this.noticeWrapper !== null && typeof Notice !== 'undefined' && Notice.prototype?.setMessage === this.noticeWrapper) {
       Notice.prototype.setMessage = this.originalNoticeSetMessage;
-    }
-    if (this.service?.child !== null && !this.settings.keepAliveOnUnload) {
-      this.service?.stop();
     }
   }
 }

@@ -33,6 +33,11 @@ export const GATES = [
   // `dsh/templates/config.md` 写的是 `true` ⇒ 同一个 vault 的 `autoArchive` 默认值取决于你先点了哪个 UI
   // （handoff §7）。这条门禁把回退字面量钉在模板上（键、顺序、值），并断言运行期仍优先读真模板。
   { name: 'check: config scaffold parity', args: ['scripts/check-config-scaffold.mjs'] },
+  // `onunload()` 必须无条件释放它开过的 socket：代理绑的是 `settings.port`，**在 Obsidian 进程里**，
+  // 泄漏之后下一次启用永远绑不上（EADDRINUSE 重试 ~20 s → "dsh 服务未能在端口 N 上启动"，且每次重试
+  // 都再拉一个 dsh 子进程）。实机 2026-09-26 踩到：清理被挂在 `service.child !== null` 上，而 child 退出
+  // 时就被置空，于是失败/被杀之后卸载完全不清理。
+  { name: 'check: plugin unload cleanup', args: ['scripts/check-plugin-unload.mjs'] },
   // 原先这里还有一条 `check: mirror cleanup (dangling @linxin666 junctions)`：它守的是
   // "镜像循环只走 web 侧、被删掉的包永远不被回访，于是留下悬空 junction"（2026-09-25 实测 9 条）。
   // **2026-09-26 镜像本身退役了**（skin-center 0.4.x 已不再往全局 patch 写皮肤行，"镜像"失去了

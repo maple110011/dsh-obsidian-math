@@ -85,6 +85,40 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 实机测试抓到的第二个缺陷：卸载插件时漏掉代理监听
+
+**症状**（用户机器上）：重载插件后侧栏报 `dsh 服务未能在端口 3180 上启动`，而日志同时显示 dsh 子进程
+其实起来了（`dsh web: http://127.0.0.1:62796/?token=…`）；插件 debug.log 里每秒一条
+`[auth] 代理无法监听 3180：Error: listen EADDRINUSE`，重试约 20 次后放弃，并且**每次重试又拉一个 dsh
+子进程**（本机当场累积到 2 个）。`netstat` 显示 3180 的持有者是 **Obsidian 进程自己**。
+
+**根因**：`onunload()` 的清理被挂在 `this.service?.child !== null` 上，而子进程**一退出**
+`start()` 的 exit/error 处理器就把 `this.child` 置空（`this.child = null`）。于是"子进程曾经失败过、
+或被人为结束过"之后，插件卸载时**整段 `stop()` 都被跳过**——而 `DshWebProxy` 的监听 socket 是**在
+Obsidian 进程里**的，它不会随插件实例一起消失。下一次启用时新实例 `listen(3180)` 永远 EADDRINUSE。
+
+这条路径平时不容易撞上，是"**旧模块仍在内存里 + 我把它的两个子进程杀了**"两件事叠出来的：
+子进程被杀 → `child` 置空 → 卸载不清理 → socket 泄漏。也就是说，**"重载插件"这个动作对旧版本而言
+是危险操作**，而当时的建议正是它。
+
+**修法**：`onunload()` **无条件**释放：不再看 child 状态；`keepAliveOnUnload` 为真时只关渲染进程这一侧
+的 proxy（保留子进程），否则整条 `service.stop()`（它内部会 `await this.proxy.close()`）。用户设置的
+`keepAliveOnUnload=false`，所以走后者。
+
+**守卫**：新增第 **50** 条门禁 `check: plugin unload cleanup`，断言 `onunload()` 直接关代理**或**调用
+`service.stop()`、不再以 `service.child` 为条件、且仍停 LinkServer。模板只能在 Obsidian 里运行，
+所以这是源码形态断言（与皮肤那两条同一风格）。写它时踩了两次自己的坑，都记在门禁的注释里：
+① 断言匹配到了**自己写的说明注释**（注释里引用了旧代码原文）⇒ 改为按行丢弃注释行；
+② 第一版"去注释"用贪婪的 `/*…*/` 正则**把中间代码整段吃掉**，于是正确代码也报"没有清理" ⇒ 改成按行过滤。
+变异验证：**M17** 旧 child 守卫放回 ⇒ 精确报 child 那条；**M18** 两处释放删掉 ⇒ 精确报 neither 那条；
+**M19** 不停 LinkServer ⇒ 精确报 linkServer 那条。
+
+**同时确认的一件好事**：门禁 `test: agent preset mounts` 里有一条会读**真实部署**的 overlay 并断言
+preset 声明在场——旧模块每起一次服务就重写 overlay（把声明擦掉），这条就会红。它是对的，不是误报；
+本轮它也真的抓到了（`15/16`，红的那条写着"侧栏会报 agent-preset/not-found"）。
+
+**验证**：`node scripts/run-gates.mjs` = **50/50 passed, 0 skipped**；`main.js` 已重建（728,214 字节）。
+
 ## 2026-09-26 · 实机测试抓到的第一个缺陷：皮肤中心行会被插两遍
 
 **怎么发现的**：本机 `$DSH_HOME` 里**没有 `notes-assistant` profile**（2026-09-25 那次全损删掉了，
