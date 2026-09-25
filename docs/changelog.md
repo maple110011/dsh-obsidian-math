@@ -85,6 +85,36 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 第二对重复实现合并，且扫描覆盖共享模块（P2-B 第三步）
+
+**合并 `setTopFieldText`（preset）/ `setTopField`（host）。** 与上一对不同，这一对**不是同义代码**：
+host 经 `joinFrontmatterLines` 会**剥掉开头的空行**，preset 内联 join 不会 ⇒ 空 frontmatter 体
+（`---\n\n---`）下前者产出 `key: value`、后者产出 `\nkey: value`。我原先在守卫表里写的理由是错的
+（"差别在调用方传的是原值还是转义值"），**读代码才发现的**。合并取 **host 那一侧**：它是被修过的一侧
+（多出来的空行只是噪声），而且已经有一条既有断言钉着（`check-embedded-writers` 的
+"keeps an EMPTY frontmatter block well-formed"）。
+
+**行为变更的交代**：preset 侧写出来的卡片在"frontmatter 体以空行开头"时少一个空行。preset 只有三处调用
+（`rewriteHookStats` 的 uses/last_used、`duplicate_of`、`status`），都是改写已有卡片，正常路径完全一致；
+新增 7 条断言把它钉住（`scripts/test-memory.mjs`，含空体、缩进字段不动、CRLF 保持、缺字段追加）。
+
+**合并后出现的新盲区，一并补上**：共享助手被**拷回某一个引擎**时，两两引擎扫描**看不见**它（那一侧已经
+不再声明同名符号，另一个引擎也没有对应物）⇒ 扫描改为**三集合**：`engine-shared.mjs` ×（preset ∪ host），
+任意名字、超阈值即失败，**且这里没有豁免表**——命中就意味着"这个助手现在有两份"。
+变异验证 **M14**：把 `contentText` 拷贝回 host 并改名 ⇒ 红（0.804），恢复后绿。
+
+**顺带**：`scripts/test-memory.mjs` 的断言数 391 → 398，`check-doc-counts` 立刻抓出 5 处文档计数
+（`ARCHITECTURE.md` ×2、`docs/memory/README.md`、`docs/handoff.md` ×2、中英 README 各 1）——
+这正是那条门禁存在的理由，逐处按"实际 398"更新，README 对已重新记录。
+
+**验证**：三个布局仍然实测——离线扁平（真 dsh 自举 profile 门禁 10/10 绿）、package（`import()` 成功且
+`setTopField('', 'k', 'v') === 'k: v'`）、内嵌求值（捕获扫描 29 ms；空 frontmatter 体断言绿）；
+`node scripts/check-engine-sync.mjs` = 绿（23 共享符号，2/2 改名重复已承认）；`node scripts/run-gates.mjs`
+= **47/49 passed, 2 skipped, 0 failed**。
+
+**还剩 1 对**：`decodeZstdSessionLog`/`decodeSessionLog`——合并要把**解压器参数化**（host 用的是嵌入加载器
+注入的 `zstdDecompressSync`，见 `KNOWN_DIVERGENT` 为 `readSessionHeader` 记下的同一偏离）。
+
 ## 2026-09-26 · 第一对重复实现真的合并了（P2-B 第二步）
 
 **做了什么**：把 `contentText`（preset）/ `captureContentText`（host）——**逐字同义、只差引号风格**——合并成

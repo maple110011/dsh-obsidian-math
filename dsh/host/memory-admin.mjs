@@ -14,7 +14,7 @@ import { zstdDecompressSync } from "node:zlib";
 // sibling here: the canonical `dsh/preset/engine-shared.mjs` in the offline
 // profile layout, and its re-export shim `dsh/host/engine-shared.mjs` inside the
 // package — see either file's header.
-import { contentText } from "./engine-shared.mjs";
+import { contentText, joinFrontmatterLines, setTopField } from "./engine-shared.mjs";
 
 // Receipts shown AFTER a feedback action. They state the object ("this card")
 // and the consequence, in the user's language — the old strings said
@@ -52,11 +52,14 @@ export function pathInside(root, child) {
   return c === r || c.startsWith(r + "/");
 }
 
-/** Join frontmatter lines, dropping the blank line an EMPTY body would leave. */
-function joinFrontmatterLines(lines, useCrlf) {
-  while (lines.length > 0 && lines[0] === '') lines.shift();
-  return lines.join(useCrlf ? '\r\n' : '\n');
-}
+/**
+ * Set a top-level (non-indented) frontmatter field, appending when absent.
+ *
+ * Kept exported because the embedded loader's allowlist hands it to the template;
+ * the implementation itself moved to `./engine-shared.mjs` on 2026-09-26 (see the
+ * merge note there) so both engines run ONE copy.
+ */
+export { setTopField };
 
 /**
  * The `not_applicable_when` boundary phrases a rejected query justifies appending.
@@ -129,19 +132,6 @@ export function setHookField(frontmatterText, field, value) {  const lines = fro
     [...lines.slice(0, hookIdx + 1), ...updated, ...lines.slice(endIdx)],
     frontmatterText.includes('\r\n')
   );
-}
-
-/** Set a top-level (non-indented) frontmatter field, appending when absent. */
-export function setTopField(frontmatterText, field, value) {
-  const lines = frontmatterText.split(/\r?\n/);
-  let seen = false;
-  const pattern = new RegExp('^' + field + ':');
-  const updated = lines.map((line) => {
-    if (!/^\s/.test(line) && pattern.test(line)) { seen = true; return field + ': ' + value; }
-    return line;
-  });
-  if (!seen) updated.push(field + ': ' + value);
-  return joinFrontmatterLines(updated, frontmatterText.includes('\r\n'));
 }
 
 /**

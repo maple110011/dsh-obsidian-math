@@ -39,7 +39,7 @@
 | **`docs/drag-to-mention-progress-2026-09-25.md`** | **拖拽引用的接续入口（未完成）**：已修好并实测证实的缺陷（客户端半个从未被加载）、**已复现但尚未判定**的那一环（页面收到了投递、草稿却为空）、四个分层探针各自的量法与最近结果、自述诊断的日志格式、夹具坑、以及"探针会改用户持久状态"的教训。**接手拖拽这件事先读它。** |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
-| `scripts/test-memory.mjs` | 零 token 记忆回归（391 项断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 记忆回归（398 项断言，进 `npm test`） |
 | `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（47 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、四条写入型端点；进 `npm test`） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 项：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写回归） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 项，对真实 dsh；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
@@ -355,7 +355,7 @@
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 391 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
+npm test                        # 398 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile
@@ -430,7 +430,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | ✅ **`autoArchive` 的兜底值与模板相反（已修，2026-09-26）** | 面板的兜底字面量曾是 `autoArchive: false`（且缺 `captureSubagents`），而权威模板 `dsh/templates/config.md` 写的是 `true` ⇒ 同一个 vault 的默认值取决于你先点了哪个 UI 创建 `config.md`；`autoArchive` 正是"体检自动归档低效用卡"的开关，因此这是行为差异。修法：`configScaffold()` **优先读真模板**、读不到才退回已按模板校正的字面量，并新增门禁 `check: config scaffold parity`（第 49 条，直接 import 面板模块取真实常量比对模板；变异 M9/M10 均按预期红）。 | 完成 |
 | ✅ **设置搬进 dsh `Config`（原 P2-A）：勘察后判定在主通道不成立** | dsh 0.1.7 自带 `dsh-config-editor`（配置经 profile patch 持久化 + Loader reconcile）与 Settings→Plugins 表单，收益是真的；但声明 `Config` 要静态 `import "@deepseek-ai/schemastery"`，而 preset 体文件住在 profile 目录里：用 Node 真实解析器在**离线** profile 下得到 `MODULE_NOT_FOUND`（`$DSH_HOME/profiles/node_modules` 在离线装机上不存在——只有 pnpm 装机才会 heal 它），在 web profile 下可解析。静态裸 import 会让离线通道的 preset 挂不上 = **每次新建会话失败**（陷阱 70 形态）。**结论**：不改配置架构；"两个 UI 写同一份设置"本身早已是单一实现（都调 `memory-admin.setSessionCapture/setMemoryBudget`），真正的漂移只有脚手架口径，已按 A3 修掉（见上一行）。若将来只支持 npm 装法，可用"可选动态 import"让该表单只在 npm 通道出现。 | 已勘察/收口 |
 | **`math-memory.mjs` 的 `session.messages` 分支是死代码** | 上游 `Session` **没有 `messages` 成员**（只有 `deriveMessages()` 与 `surface.messages`），所以 `Array.isArray(session.messages)` 那一支永不命中；同一行对 `session.log`（TS `private`、运行时存在）的直读仍是绕过公开 API 的私有读（上游已弃用 `snapshotEvents`/`eventAt`/`ownEvents`，但三者仍在）。修法：删死支 + 评估改用公开读取面。 | 低 |
-| **记忆引擎的"改名逃逸"重复实现** | `check-engine-sync.mjs` 原按**符号名**配对，2026-09-26 已补上名字无关的 token-shape 扫描（`KNOWN_ESCAPES` + `--sweep`，变异 M11/M13 双向验证），所以漂移会被抓住。**去重进度**：`contentText`/`captureContentText` **已合并**（`dsh/preset/engine-shared.mjs` 规范实现 + `dsh/host/engine-shared.mjs` shim；`PRESET_BODY_FILES` 与 `EMBEDDED_SOURCES` 各加一项，内嵌加载器把规范源码拼进求值体）；**剩下 2 对**：`decodeZstdSessionLog`/`decodeSessionLog`（要**参数化解压器**）与 `setTopFieldText`/`setTopField`（**读代码发现并非同义**：host 的 `joinFrontmatterLines` 会剥掉开头空行，合并 = 行为变更，需单独提交加测试）。清单见 `AGENTS.md` §3.3。 | 中（1/3 已合并） |
+| **记忆引擎的"改名逃逸"重复实现** | `check-engine-sync.mjs` 原按**符号名**配对，2026-09-26 已补上名字无关的 token-shape 扫描（引擎间 `KNOWN_ESCAPES` + **共享模块 × 引擎**，`--sweep` 可重定标，变异 M11/M13/M14 验证），所以漂移会被抓住。**去重进度 2/3**：`contentText`/`captureContentText`、`setTopField`/`setTopFieldText` **已合并**到 `dsh/preset/engine-shared.mjs`（后者是**行为变更**：统一到 host 剥空行的版本，`test-memory.mjs` 补了 7 条断言）；**还剩 1 对**：`decodeZstdSessionLog`/`decodeSessionLog`，合并要把**解压器参数化**（host 用嵌入加载器注入的 `zstdDecompressSync`）。清单见 `AGENTS.md` §3.3。 | 中（2/3 已合并） |
 | **`math-memory-workspace.mjs` 的登记副作用** | 它把 `DSH_WORKSPACE_ROOT` **登记**进 `$DSH_HOME/storages/workspace.json`（持久）。所有 QA 探针都用临时 vault 起 dsh ⇒ 每跑一次就在用户侧栏多一条垃圾工作区（2026-09-25 累计 38 条，已用 `scripts/qa/clean-probe-workspaces.mjs` 摘除）。**探针侧规矩**已写进陷阱 91；可选的产品侧改进：给登记加"探针/临时目录不登记"的开关，或让探针用独立 `DSH_HOME` | 中 |
 | **`working.md` 的 500 字符上限** | 它是注入里唯一的「工作上下文」，但模板五字段（当前问题/子目标/已证·已失败/已检索·已排除/下一步）光标签就约 120 字符，500 装不下真正的进度 ⇒ 实际能承载的只有一两行。提到 800–1000 或精简模板，二选一；**要与注入体积一起量**再定。⚠️ 原文引用的行号（`math-memory.mjs:3797`）与「`clip()` 对它是头截断」已在 2026-09-21 变更——`clip` 现为**头尾都保**，行号以当时代码为准 | 低（需先量） |
 | **拖拽：文件夹与编辑器选中文字的载荷未实测** | `scripts/qa/drag-payload-probe.mjs` 只测出了**文件树里拖一篇笔记**的载荷（`obsidian://open?vault=…&file=…`）。**文件夹**（要先把文件夹展开 + 真实鼠标动作）与**编辑器里选中文字**两种没测出来；实现按"解不出 `file=` 就忽略"处理，**不猜**。要支持它们，先补探针再改解析器 | 中 |

@@ -78,10 +78,38 @@ import {
 // scripts/check-frontmatter-source.mjs.
 import { frontmatterBlock, replaceFrontmatterBlock, stripFrontmatter, readFrontmatter } from '../dsh/preset/hook-frontmatter.mjs';
 import { applyFeedback, setSessionCapture, readSessionCaptureEnabled, countUncapturedSessions, archiveMemoryFile, setCapturePolicyMode, setMemoryBudget, frontmatterSpan, replaceFrontmatter, collectMemoryState, parseEpisodeIndex, readAuditReport, auditSchemaVersionOf, AUDIT_SCHEMA_VERSION_MIN, AUDIT_SCHEMA_VERSION_MAX, summaryOf } from '../dsh/host/memory-admin.mjs';
+// The ONE implementation of the helpers both engines share (2026-09-26 merge). It
+// used to exist twice with a silent behavioural difference, and the empty-body case
+// below is exactly what differed — so it is pinned here, once.
+import { setTopField, joinFrontmatterLines, contentText } from '../dsh/preset/engine-shared.mjs';
 const results = [];
 function check(name, condition, detail = '') {
   results.push({ name, ok: Boolean(condition), detail });
   console.log((condition ? '[ok]' : '[FAIL]'), name, detail);
+}
+
+// ── shared engine helpers (dsh/preset/engine-shared.mjs) ────────────────────
+//
+// One implementation, imported by both engines through the flat-sibling/shim pair.
+// The EMPTY-body case is the reason these are tested at all: the preset's old copy
+// joined inline while the host's stripped the leading blank line, so the same card
+// came out with or without a spare blank line depending on which side wrote it.
+{
+  check('shared setTopField: replaces a top-level field in place',
+    setTopField('title: a\nstatus: draft', 'status', 'active') === 'title: a\nstatus: active');
+  check('shared setTopField: leaves an INDENTED field alone and appends a top-level one',
+    setTopField('hook:\n  status: x', 'status', 'y') === 'hook:\n  status: x\nstatus: y');
+  check('shared setTopField: an EMPTY body appends without a leading blank line',
+    setTopField('', 'sessionCapture', 'true') === 'sessionCapture: true',
+    JSON.stringify(setTopField('', 'sessionCapture', 'true')));
+  check('shared setTopField: keeps CRLF',
+    setTopField('a: 1\r\nb: 2', 'a', '9') === 'a: 9\r\nb: 2');
+  check('shared joinFrontmatterLines: drops only LEADING blank lines',
+    joinFrontmatterLines(['', 'a: 1', '', 'b: 2'], false) === 'a: 1\n\nb: 2');
+  check('shared contentText: joins text blocks and ignores reasoning blocks',
+    contentText([{ type: 'reasoning', text: 'x' }, { type: 'text', text: ' a ' }, { type: 'text', text: 'b' }]) === 'a \nb');
+  check('shared contentText: a non-array is empty text',
+    contentText(null) === '' && contentText('nope') === '');
 }
 
 // ── fixture vault ───────────────────────────────────────────────────────────

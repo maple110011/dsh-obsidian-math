@@ -26,3 +26,37 @@ export function contentText(content) {
     .join("\n")
     .trim();
 }
+
+/** Join frontmatter lines, dropping the blank line an EMPTY body would leave. */
+export function joinFrontmatterLines(lines, useCrlf) {
+  while (lines.length > 0 && lines[0] === "") lines.shift();
+  return lines.join(useCrlf ? "\r\n" : "\n");
+}
+
+/**
+ * Set a top-level (non-indented) frontmatter field, appending when absent.
+ *
+ * MERGED 2026-09-26 from `setTopField` (host) and `setTopFieldText` (preset) — byte
+ * identical logic except that the host joined through `joinFrontmatterLines` and the
+ * preset joined inline, so for an EMPTY frontmatter body (`---\n\n---`) the host
+ * produced `key: value` while the preset produced `\nkey: value`. The host's is the
+ * side that had been FIXED (a spare leading blank line is noise at best), so it is
+ * the behaviour both engines get now. Pinned by a test in scripts/test-memory.mjs.
+ *
+ * Note the deliberate limit: an INDENTED `field:` (i.e. inside `hook:`) is not
+ * touched — that is `setHookField`'s job.
+ */
+export function setTopField(frontmatterText, field, value) {
+  const lines = frontmatterText.split(/\r?\n/);
+  let seen = false;
+  const pattern = new RegExp("^" + field + ":");
+  const updated = lines.map((line) => {
+    if (!/^\s/.test(line) && pattern.test(line)) {
+      seen = true;
+      return field + ": " + value;
+    }
+    return line;
+  });
+  if (!seen) updated.push(field + ": " + value);
+  return joinFrontmatterLines(updated, frontmatterText.includes("\r\n"));
+}

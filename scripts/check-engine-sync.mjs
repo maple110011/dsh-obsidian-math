@@ -43,6 +43,8 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PRESET = 'dsh/preset/math-memory.mjs';
 const HOST = 'dsh/host/memory-admin.mjs';
+/** Helpers merged into ONE implementation, imported by both engines (see its header). */
+const SHARED_MODULE = 'dsh/preset/engine-shared.mjs';
 
 const results = [];
 function check(name, condition, detail = '') {
@@ -364,12 +366,6 @@ const KNOWN_ESCAPES = [
     reason: 'the same zstd-frame decoder over the loader-injected decompressor (the same divergence KNOWN_DIVERGENT records for readSessionHeader) — merging it means PARAMETERIZING the decompressor, not copying one side'
   },
   {
-    preset: 'setTopFieldText',
-    host: 'setTopField',
-    action: 'divergent',
-    reason: 'NOT actually the same code, despite the score: the host joins through joinFrontmatterLines, which STRIPS leading blank lines, while the preset joins inline. For an empty frontmatter body the host yields `key: value` and the preset yields `\\nkey: value`. Merging means adopting the host behaviour (the one that was fixed) in the preset — a behaviour change for the preset path, so it needs its own commit and test'
-  },
-  {
     preset: 'runSessionCapture',
     host: 'scanSessionCapture',
     action: 'structural',
@@ -401,14 +397,51 @@ for (const [presetName, presetDecl] of preset) {
 }
 crossNamePairs.sort((x, y) => y.score - x.score);
 
+// ── a shared helper must not be re-declared inside either engine ─────────────
+//
+// Since 2026-09-26 some duplicate helpers were MERGED into
+// `dsh/preset/engine-shared.mjs` (one implementation, imported by both engines
+// through the flat-sibling/shim pair). That closes one hole and opens another:
+// copying such a helper back into ONE engine re-creates the duplicate WITHOUT
+// producing an engine-to-engine pair, so the sweep above would not see it. Compare
+// the shared module against both engines, any name, and fail on any hit — there is
+// no exemption table here on purpose: a hit means "this helper now exists twice".
+const sharedDecls = declarations(SHARED_MODULE);
+const reappeared = [];
+for (const [sharedName, sharedDecl] of sharedDecls) {
+  const a = shapeOf(SHARED_MODULE, sharedName, sharedDecl);
+  if (a.tokens.length < MIN_ESCAPE_TOKENS) continue;
+  for (const [engineLabel, engine] of [['preset', preset], ['host', host]]) {
+    for (const [engineName, engineDecl] of engine) {
+      const b = shapeOf(engineLabel, engineName, engineDecl);
+      if (b.tokens.length < MIN_ESCAPE_TOKENS) continue;
+      const score = dice(a.grams, b.grams);
+      if (score >= ESCAPE_THRESHOLD) {
+        reappeared.push({ sharedName, engineName, engineLabel, score, sharedLine: sharedDecl.line, engineLine: engineDecl.line });
+      }
+    }
+  }
+}
+reappeared.sort((x, y) => y.score - x.score);
+
 if (process.argv.includes('--sweep')) {
   // A debugging affordance, like `run-gates --list`: show what the sweep sees and
   // where the threshold sits, without failing on it.
-  console.log(`sweep: threshold ${ESCAPE_THRESHOLD}, min tokens ${MIN_ESCAPE_TOKENS}, ${crossNamePairs.length} cross-name pairs`);
+  console.log(`sweep: threshold ${ESCAPE_THRESHOLD}, min tokens ${MIN_ESCAPE_TOKENS}, ${crossNamePairs.length} cross-name engine pairs, ${sharedDecls.size} shared-module declarations`);
   for (const row of crossNamePairs.slice(0, 20)) {
     console.log(`  ${row.score.toFixed(3)}  ${row.presetName} (preset:${row.presetLine}) ↔ ${row.hostName} (host:${row.hostLine})`);
   }
+  for (const row of reappeared) {
+    console.log(`  ${row.score.toFixed(3)}  ${row.sharedName} (${SHARED_MODULE}:${row.sharedLine}) ↔ ${row.engineName} (${row.engineLabel}:${row.engineLine})   [re-declared shared helper]`);
+  }
   process.exit(0);
+}
+
+for (const row of reappeared) {
+  check(`shared helper re-declared: ${row.sharedName} (${SHARED_MODULE}) ↔ ${row.engineName} (${row.engineLabel})`, false,
+    `score ${row.score.toFixed(3)}`);
+  console.log(`     ${SHARED_MODULE}:${row.sharedLine} vs ${row.engineLabel === 'preset' ? PRESET : HOST}:${row.engineLine}`);
+  console.log('     Import it from ./engine-shared.mjs instead of copying it back — the copy is invisible to the engine-to-engine sweep.');
 }
 
 const escapeTable = new Map(KNOWN_ESCAPES.map((e) => [`${e.preset}\u0000${e.host}`, e]));

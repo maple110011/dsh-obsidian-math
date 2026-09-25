@@ -8,4 +8,4 @@
 // deliberately NOT embedded (see NOT_EMBEDDED in scripts/build-obsidian.mjs),
 // because embedding it too would collide with the canonical file on the same
 // materialized basename.
-export { contentText } from "../preset/engine-shared.mjs";
+export { contentText, joinFrontmatterLines, setTopField } from "../preset/engine-shared.mjs";

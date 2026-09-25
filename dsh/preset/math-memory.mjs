@@ -62,7 +62,7 @@ import {
 // this one for the offline channel and re-exported by `dsh/host/engine-shared.mjs`
 // inside the package — see that file's header, and scripts/check-engine-sync.mjs for
 // what may and may not move here.
-import { contentText } from "./engine-shared.mjs";
+import { contentText, setTopField } from "./engine-shared.mjs";
 
 export const name = "math-memory";
 export const inject = ["tools", "fs", "systemPrompt", "loader"];
@@ -1330,22 +1330,6 @@ function verifyUsesWritten(text, expected, anyIndent) {
 }
 
 /**
- * Set a top-level (non-indented) frontmatter field, appending when absent.
- * Mirrors memory-admin.mjs setTopField so the preset stays dependency-free.
- */
-function setTopFieldText(frontmatterText, field, value) {
-  const lines = frontmatterText.split(/\r?\n/);
-  let seen = false;
-  const pattern = new RegExp("^" + field + ":");
-  const updated = lines.map((line) => {
-    if (!/^\s/.test(line) && pattern.test(line)) { seen = true; return field + ": " + value; }
-    return line;
-  });
-  if (!seen) updated.push(field + ": " + value);
-  return updated.join(frontmatterText.includes("\r\n") ? "\r\n" : "\n");
-}
-
-/**
  * Splice a rewritten frontmatter block back into a file BY OFFSET.
  *
  * The obvious `text.replace(block, rewritten)` is wrong here in two ways, both
@@ -1388,8 +1372,8 @@ function syncTopLevelStatsToCard(filePath, effectiveUses, lastUsed) {
   // that and splice it back by offset.
   const crlf = span.block.includes("\r\n");
   const sep = crlf ? "\r\n" : "\n";
-  let body = setTopFieldText(span.text, "uses", String(effectiveUses));
-  if (lastUsed !== "") body = setTopFieldText(body, "last_used", lastUsed);
+  let body = setTopField(span.text, "uses", String(effectiveUses));
+  if (lastUsed !== "") body = setTopField(body, "last_used", lastUsed);
   const fm = `---${sep}${body}${sep}---`;
   if (fm === span.block) return verifyUsesWritten(text, effectiveUses, false);
   try {
@@ -2728,7 +2712,7 @@ export function buildAuditReport(root, helpers) {
       const block = frontmatterBlock(text);
       if (block === null) continue;
       const keptStem = kept.rel.split("/").at(-1).replace(/\.md$/, "");
-      const rewritten = setTopFieldText(block, "duplicate_of", `[[${keptStem}]]`);
+      const rewritten = setTopField(block, "duplicate_of", `[[${keptStem}]]`);
       if (rewritten !== block) writeFileSync(redundant.filePath, replaceFrontmatterBlock(text, rewritten), "utf8");
     } catch {
       // best-effort; never break the audit
@@ -2872,7 +2856,7 @@ export function buildAuditReport(root, helpers) {
       const text = readFileSync(card.filePath, "utf8");
       const block = frontmatterBlock(text);
       if (block === null) continue;
-      const rewritten = setTopFieldText(block, "status", "active");
+      const rewritten = setTopField(block, "status", "active");
       if (rewritten !== block) writeFileSync(card.filePath, replaceFrontmatterBlock(text, rewritten), "utf8");
     } catch {
       // best-effort
