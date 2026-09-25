@@ -73,8 +73,8 @@ export const GATES = [
   // 该行被注释掉 ⇒ 顶层序列从未开始 ⇒ 后面那个裸 `- id:` 是 YAML 语法错误，**真 dsh 直接
   // 拒绝启动整个 notes-assistant profile**。当时**没有任何门禁发现**：preset 门禁是因为它
   // 真的启动 dsh 才撞上的（而那条门禁在沙箱里会因别的原因失败，于是这个 YAML 错误在受限
-  // 环境里根本不可见），其余门禁都把这些文件当**文本**读（preset-sync 逐字节比对，而被改坏
-  // 的行仍然是合法文本）。这条门禁只做别的门禁都没做的那件事：**解析它**。
+  // 环境里根本不可见），其余门禁都把这些文件当**文本**读（`test-installer.mjs` 的漂移比对
+  // 逐字节比较已装文件，而被改坏的行仍然是合法文本）。这条门禁只做别的门禁都没做的那件事：**解析它**。
   { name: 'check: shipped yaml parses', args: ['scripts/check-patch-yaml.mjs'] },
   { name: 'check: release artifact paths', args: ['scripts/check-release-paths.mjs'] },
   { name: 'check: client bundle freshness', args: ['scripts/check-client-bundle.mjs'] },
@@ -89,9 +89,13 @@ export const GATES = [
   { name: 'syntax: dsh/host/memory-admin.mjs', args: ['--check', 'dsh/host/memory-admin.mjs'] },
   { name: 'syntax: dsh/host/math-memory-panel.mjs', args: ['--check', 'dsh/host/math-memory-panel.mjs'] },
   { name: 'syntax: dsh/host/index.mjs', args: ['--check', 'dsh/host/index.mjs'] },
-  { name: 'syntax: dsh/host/preset-sync.mjs', args: ['--check', 'dsh/host/preset-sync.mjs'] },
+  { name: 'syntax: dsh/host/channel-owner.mjs', args: ['--check', 'dsh/host/channel-owner.mjs'] },
   { name: 'syntax: dsh/host/hook-frontmatter.mjs', args: ['--check', 'dsh/host/hook-frontmatter.mjs'] },
-  { name: 'test: preset sync', args: ['scripts/test-preset-sync.mjs'] },
+  // 通道归属：锚点是 profile 的 `.install-manifest.json`，退役的 `.agent-presets/<id>/.owner.json`
+  // 只作回退。这个优先级是重点——守卫原先只认那个没人读的目录，于是"清理死目录"会**静默废掉**它。
+  // 最后一段用带 cache-busting 的 in-process `import()` 直接调**真的** `dsh/host/index.mjs`
+  // （`apply` 有模块级 `mounted` 旗标，同进程一份实例只能跑一个场景），无需启动 dsh。
+  { name: 'test: channel ownership anchor', args: ['scripts/test-channel-owner.mjs'] },
   // 「从 Obsidian 文件树拖一篇笔记进输入框」：载荷解析（每条拒绝条件都对应一个 if）+
   // DOM 接线（该不该 preventDefault、什么时候放行、落点、提示自愈、幂等与清理）。
   // **它跑的是 dsh/client-panel/lib/client.js 这个真产物**（用宿主的 ModuleLoader 协议求值），

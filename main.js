@@ -1761,7 +1761,7 @@ function bootstrapDshConfig(plugin, force = false) {
 
   // Record ownership so the npm bundle / CLI installer can detect this direct
   // install and skip (or be skipped by) it instead of silently clobbering. This
-  // manifest is THE anchor (`dsh/host/preset-sync.mjs` → readChannelOwner); the
+  // manifest is THE anchor (`dsh/host/channel-owner.mjs` → readChannelOwner); the
   // retired `.agent-presets` marker is no longer written here.
   writeFileSync(join(profileRoot, INSTALL_MANIFEST), JSON.stringify({
     owner: OWNER_CHANNEL,

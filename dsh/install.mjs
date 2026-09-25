@@ -69,7 +69,7 @@ import {
   LEGACY_PRESET_DIR,
   OWNER_MARKER,
   readChannelOwner
-} from "./host/preset-sync.mjs";
+} from "./host/channel-owner.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PRESET_DIR = join(PACKAGE_ROOT, "dsh", "preset");
@@ -248,7 +248,7 @@ function describePresetBody(profileRoot) {
 /**
  * Conflict string when the OTHER channel owns this profile, else null. The anchor
  * is the profile's `CHANNEL_MANIFEST` with the legacy `.agent-presets` marker as
- * a fallback — see `readChannelOwner` in ./host/preset-sync.mjs for why that
+ * a fallback — see `readChannelOwner` in ./host/channel-owner.mjs for why that
  * order is load-bearing (a `--direct` install made before 2026-09-26 has only
  * the legacy marker, and treating it as unowned lets the other channel take over
  * silently).

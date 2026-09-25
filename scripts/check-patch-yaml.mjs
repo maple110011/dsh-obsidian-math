@@ -15,8 +15,8 @@
 // **Nothing in the suite caught it.** The preset gate caught it only because it boots a
 // real dsh — and that gate is the one that needs a writable `$DSH_HOME`, so in a confined
 // environment it fails for an unrelated reason and the YAML error stays invisible. Every
-// other check reads these files as TEXT (that is how `test-preset-sync.mjs` compares
-// copies byte-wise), and a mangled line is still perfectly good text.
+// other check reads these files as TEXT (that is how `test-installer.mjs` compares
+// installed copies byte-wise), and a mangled line is still perfectly good text.
 //
 // So this check does the one thing none of them did: **parse the file**. It runs without a
 // dsh, without a subprocess, and without any writable state — i.e. it stays honest in the

@@ -41,7 +41,7 @@
 | `dsh/templates/` | **vault 模板**：`AGENTS.md`（工作协议，自动加载）、`profile.md`、`notation.md`（记号体系）、`topics-index.md`、`records-{readme,index}.md`、`theorems-*.md`、`templates-*.md`、`episodes-*.md`、`inbox-*.md`、`capture-policy.md` |
 | `dsh/install.mjs` | npm CLI **编排器**：`install`（原生 `dsh plugin add`）/ `install --direct`（离线扁平拷贝）/ `status` / `uninstall`（分级删除），写 owner marker（仓库里那个**退役目录** `~/.dsh/.agent-presets/<id>/` 自 2026-09-26 起**不再被写入**，只在缺失时作为兼容回退被读；权威锚点是 profile 的 `.install-manifest.json`）。`--direct` 会**把 preset 体文件铺进 profile 目录**（经 `preset-deploy.mjs`，dry-run 也走同一条路径）；`status` 的 preset 判据同样是 **profile 目录** |
 | `dsh/cordis.patch.yml` | **bundle 补丁**（`dsh.bundle.patch` 指向）：往 profile roster `insert` 宿主插件 `dsh-math-memory`，并带**生成的 preset 声明**。声明里的 preset 入口写成**包内路径**（`dsh-math-memory/dsh/preset/math-memory.mjs`）而不是 profile 目录里的相对文件——bundle 行无法在冷启动第一次之前把文件铺好，而包本身一定已在 `node_modules` 里（见 `dsh/preset/preset-deploy.mjs` 与 `scripts/lib/preset-declaration.mjs` 的实测说明） |
-| `dsh/host/` | **bundle 宿主插件 + 记忆管理核心**：`index.mjs`（`/memory-panel` 路由 + workspace 自动注册 + **通道归属守卫**；**不铺 preset 体文件**——bundle 通道的 preset 用包内路径，见 `dsh/cordis.patch.yml`）、`preset-sync.mjs`（**通道归属锚点的家**：`profileDirFromCtx` + `readChannelOwner`，profile 目录的 `.install-manifest.json` 优先、退役的 `.agent-presets/<id>/.owner.json` 仅作回退——删除死目录曾会静默废掉守卫；它的 `syncPresetTree` 已无生产调用方，仅测试在跑）、`hook-frontmatter.mjs`（`dsh/preset/hook-frontmatter.mjs` 的 re-export）、`memory-admin.mjs`（确定性操作 + 面板数据层）、`math-memory-panel.mjs`（`/memory-panel/*` 路由） |
+| `dsh/host/` | **bundle 宿主插件 + 记忆管理核心**：`index.mjs`（`/memory-panel` 路由 + workspace 自动注册 + **通道归属守卫**；**不铺 preset 体文件**——bundle 通道的 preset 用包内路径，见 `dsh/cordis.patch.yml`）、`channel-owner.mjs`（**通道归属锚点的家**：`profileDirFromCtx` + `readChannelOwner`，profile 目录的 `.install-manifest.json` 优先、退役的 `.agent-presets/<id>/.owner.json` 仅作回退——删除死目录曾会静默废掉守卫。它原名 `preset-sync.mjs`，那份"目录式 preset 同步"在 0.1.7 之后已无调用方，2026-09-26 连它那两条门禁一起删除）、`hook-frontmatter.mjs`（`dsh/preset/hook-frontmatter.mjs` 的 re-export）、`memory-admin.mjs`（确定性操作 + 面板数据层）、`math-memory-panel.mjs`（`/memory-panel/*` 路由） |
 | `dsh/preset/preset-deploy.mjs` | **preset 体文件的唯一权威清单**（`PRESET_BODY_FILES`）+ 给离线通道用的落盘函数。完备性判据 = `dsh/preset/math-memory.mjs` 的相对 import 闭包；`scripts/check-preset-body-lists.mjs` 会把三份清单与两个通道的 name 形态一起钉住 |
 | `dsh/client-panel/` | dsh web 记忆面板：`src/index.jsx` + `build-client.mjs`（esbuild） + `install-into-profile.mjs`；**另含拖拽引用**：`src/drop-mention/`（`parse.drop.mjs` 纯解析 + `composer-drop.mjs` DOM 接线），把文件树拖来的笔记变成草稿里的 `@库内路径`（规格见 `docs/drag-drop-design-2026-09-21.md`） |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh/ 共享文件嵌入 `main.js`（CRLF 归一化，CI 重建一致性门禁） |
@@ -93,7 +93,7 @@
 ## 4. 常用命令
 
 ```bash
-npm test                        # 语法 + 391 项回归 + 47 项路由回归 + 8 项认证 + 32 项反代回归 + 安装器 e2e（含漂移检测）+ preset-sync 回归 + preset 体文件清单/声明/客户端包布局。汇总为三态（ok / SKIP / FAIL）并列出被跳过的门禁——SKIP 不等于通过
+npm test                        # 语法 + 391 项回归 + 47 项路由回归 + 8 项认证 + 32 项反代回归 + 安装器 e2e（含漂移检测）+ 通道归属锚点回归 + preset 体文件清单/声明/客户端包布局/插件卡片素材。汇总为三态（ok / SKIP / FAIL）并列出被跳过的门禁——SKIP 不等于通过
 npm run qa                      # 引擎探针（零 token，12 组召回断言 + 可达性分层/池化 A/B）
 npm run qa:e2e                  # 引擎探针 + 真实会话端到端（烧真实 tokens，含 API 级计量）
 node scripts/build-obsidian.mjs # 重建 main.js（改 dsh/ 或模板后必跑）

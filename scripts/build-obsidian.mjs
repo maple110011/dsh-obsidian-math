@@ -52,7 +52,7 @@ const EMBEDDED_SOURCES = {
  */
 const NOT_EMBEDDED = {
   "dsh/host/index.mjs": "npm package entry (`main`); loads the host plugin from the installed package layout, never inside the Obsidian bundle",
-  "dsh/host/preset-sync.mjs": "syncs the preset into ~/.dsh/.agent-presets; runs from the installer/package, not from the plugin",
+  "dsh/host/channel-owner.mjs": "channel-ownership anchor (profile manifest + legacy fallback); runs from the installer/host package, not from the plugin — the Obsidian bootstrap has its own inline copy of the same precedence",
   "dsh/host/hook-frontmatter.mjs": "re-export shim for the node_modules layout; the bundle already embeds the canonical parser (dsh/preset/hook-frontmatter.mjs) under the same key, so embedding this too would collide on materialization"
 };
 

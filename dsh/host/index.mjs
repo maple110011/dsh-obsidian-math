@@ -17,14 +17,14 @@
  * (dsh/cordis.patch.yml) with no dsh source changes.
  *
  * `$DSH_HOME/.agent-presets/<id>/` is not a deploy target any more (dsh reads
- * nothing there). It survives only as the LEGACY channel-ownership marker; the
- * anchor is now the profile's own `.install-manifest.json` (see
- * `./preset-sync.mjs` → `readChannelOwner`, and docs/handoff.md §7).
+ * nothing there). It is the RETIRED channel-ownership marker; the anchor is the
+ * profile's own `.install-manifest.json` (see `./channel-owner.mjs` →
+ * `readChannelOwner`, and docs/handoff.md §7).
  */
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { profileDirFromCtx, readChannelOwner } from "./preset-sync.mjs";
+import { profileDirFromCtx, readChannelOwner } from "./channel-owner.mjs";
 import { apply as applyPanel } from "./math-memory-panel.mjs";
 import { apply as applyWorkspace } from "../profile/math-memory-workspace.mjs";
 

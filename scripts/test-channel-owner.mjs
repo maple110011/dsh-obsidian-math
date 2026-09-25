@@ -1,87 +1,39 @@
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+/**
+ * test-channel-owner — who owns a profile, and does the runtime guard act on it?
+ *
+ * The anchor is the profile's `.install-manifest.json`, with the retired
+ * `.agent-presets/<id>/.owner.json` as a fallback. That precedence is the whole
+ * point: when the guard anchored on the retired directory only, deleting a
+ * directory "nothing reads" silently disabled it (see dsh/host/channel-owner.mjs).
+ *
+ * The last section calls the REAL `dsh/host/index.mjs` in-process with a fake
+ * ctx — no dsh boot — using cache-busting query specifiers, because `apply` sets a
+ * module-level `mounted` flag on its first call and one process can therefore only
+ * exercise one scenario per module instance.
+ *
+ * (The tree-sync this suite was written for was deleted on 2026-09-26: dsh 0.1.7
+ * declares presets in the bundle patch, so `syncPresetTree` had no caller left.)
+ */
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import {
-  syncPresetTree,
   OWNER_MARKER,
   CHANNEL_MANIFEST,
   LEGACY_PRESET_DIR,
   readChannelOwner,
   profileDirFromCtx
-} from '../dsh/host/preset-sync.mjs';
+} from '../dsh/host/channel-owner.mjs';
 
 let passed = 0;
 let failed = 0;
-function check(label, cond) {
+function check(label, cond, detail = '') {
   if (cond) { passed += 1; console.log('  ok  ' + label); }
-  else { failed += 1; console.log('  FAIL ' + label); }
+  else { failed += 1; console.log('  FAIL ' + label + (detail === '' ? '' : ' | ' + detail)); }
 }
 
-const root = mkdtempSync(join(tmpdir(), 'preset-sync-test-'));
-const src = join(root, 'src');
-const dst = join(root, 'dst');
-
-const files = {
-  'agent.cordis.yml': '# agent composition\n- id: persona\n',
-  'preset.yml': 'name: test\n',
-  'math-memory.mjs': 'export const name = "math-memory";\n',
-  'note-tools.mjs': 'export const name = "note-tools";\n',
-  'hook-frontmatter.mjs': 'export const parseHookFrontmatter = () => null;\n'
-};
-mkdirSync(src, { recursive: true });
-for (const [rel, content] of Object.entries(files)) writeFileSync(join(src, rel), content, 'utf8');
-
-const meta = { owner: 'npm', version: '0.8.0' };
-
-// 1. fresh sync
-let r = syncPresetTree(src, dst, meta);
-check('fresh sync: changed', r.changed === true);
-check('fresh sync: no failure', r.failed === null);
-check('fresh sync: 5 files', r.files === 5);
-check('fresh sync: owner marker written', existsSync(join(dst, OWNER_MARKER)));
-const marker = JSON.parse(readFileSync(join(dst, OWNER_MARKER), 'utf8'));
-check('marker owner=npm', marker.owner === 'npm');
-check('marker version=0.8.0', marker.version === '0.8.0');
-check('marker has installedAt', typeof marker.installedAt === 'string');
-check('agent.cordis.yml copied', readFileSync(join(dst, 'agent.cordis.yml'), 'utf8') === files['agent.cordis.yml']);
-
-// 2. idempotent re-sync (byte-identical)
-r = syncPresetTree(src, dst, meta);
-check('re-sync: unchanged', r.changed === false);
-check('re-sync: no failure', r.failed === null);
-const marker2 = JSON.parse(readFileSync(join(dst, OWNER_MARKER), 'utf8'));
-check('re-sync: installedAt preserved', marker2.installedAt === marker.installedAt);
-
-// 3. prune stray file, preserve marker
-writeFileSync(join(dst, 'STRAY.txt'), 'stray\n', 'utf8');
-r = syncPresetTree(src, dst, meta);
-check('prune: changed', r.changed === true);
-check('prune: 1 pruned', r.pruned === 1);
-check('prune: stray removed', !existsSync(join(dst, 'STRAY.txt')));
-check('prune: marker preserved', existsSync(join(dst, OWNER_MARKER)));
-
-// 4. source change propagates
-writeFileSync(join(src, 'note-tools.mjs'), 'export const name = "note-tools-v2";\n', 'utf8');
-r = syncPresetTree(src, dst, meta);
-check('update: changed', r.changed === true);
-check('update: content propagated', readFileSync(join(dst, 'note-tools.mjs'), 'utf8') === 'export const name = "note-tools-v2";\n');
-
-// 5. version bump rewrites marker + resets installedAt
-const firstInstalled = JSON.parse(readFileSync(join(dst, OWNER_MARKER), 'utf8')).installedAt;
-syncPresetTree(src, dst, { owner: 'npm', version: '0.9.0' });
-const marker3 = JSON.parse(readFileSync(join(dst, OWNER_MARKER), 'utf8'));
-check('version bump: version=0.9.0', marker3.version === '0.9.0');
-check('version bump: installedAt reset', marker3.installedAt !== firstInstalled);
-
-// 6. missing agent.cordis.yml → reported failed
-rmSync(join(src, 'agent.cordis.yml'), { force: true });
-r = syncPresetTree(src, dst, meta);
-check('validation: failed set', typeof r.failed === 'string');
-
-// 7. the CHANNEL ANCHOR: profile manifest first, legacy `.agent-presets` marker as
-//    a fallback. This is the guard that must not die when the retired directory is
-//    removed — hence a test that removes it.
+const root = mkdtempSync(join(tmpdir(), 'channel-owner-test-'));
 const home = join(root, 'home');
 const profileDir = join(home, 'profiles', 'probe-profile');
 const legacyDir = join(home, LEGACY_PRESET_DIR, 'notes-assistant');
@@ -91,6 +43,7 @@ const manifestPath = join(profileDir, CHANNEL_MANIFEST);
 const legacyMarkerPath = join(legacyDir, OWNER_MARKER);
 const owner = () => readChannelOwner({ profileDir, home, presetId: 'notes-assistant' });
 
+// ── 1. the anchor and its precedence ────────────────────────────────────────
 check('owner: nothing anywhere reads as unowned', owner() === null);
 writeFileSync(legacyMarkerPath, JSON.stringify({ owner: 'direct', version: '0.7.0' }), 'utf8');
 check('owner: a legacy-only install is still recognised (the fallback is load-bearing)',
@@ -110,7 +63,7 @@ check('owner: no anchors passed at all ⇒ unowned, not a guess',
 check('owner: an owner-less manifest with no legacy fallback ⇒ unowned',
   readChannelOwner({ profileDir, presetId: 'notes-assistant' }) === null);
 
-// 8. profileDirFromCtx — the measured anchor for "which profile is booting".
+// ── 2. profileDirFromCtx — the measured anchor for "which profile is booting" ─
 const fromCtx = profileDirFromCtx({ baseUrl: 'file:///C:/x/profiles/p/' });
 check('profileDirFromCtx: yields a directory usable with join (no trailing separator)',
   typeof fromCtx === 'string' && !/[\\/]$/.test(fromCtx)
@@ -120,12 +73,10 @@ check('profileDirFromCtx: null when the anchor is missing or not a URL',
   profileDirFromCtx(null) === null && profileDirFromCtx({}) === null
   && profileDirFromCtx({ baseUrl: '' }) === null && profileDirFromCtx({ baseUrl: 'profiles/p' }) === null);
 
-// 9. the RUNTIME half: `dsh/host/index.mjs` must consult the SAME anchor.
-//    Called in-process with a fake ctx — `apply` needs only `baseUrl` + `logger`,
-//    and its two sub-calls fail harmlessly on a fake ctx (both are wrapped in
-//    try/catch), which is how we observe whether they were attempted at all.
-//    Each case imports a FRESH module instance (cache-busting query) because
-//    `apply` sets a module-level `mounted` flag on its first call.
+// ── 3. the RUNTIME half: `dsh/host/index.mjs` must consult the same anchor ───
+// `apply` needs only `baseUrl` + `logger`; its two sub-calls fail harmlessly on a
+// fake ctx (both are wrapped in try/catch), which is how we observe whether they
+// were attempted at all.
 const previousHome = process.env.DSH_HOME;
 process.env.DSH_HOME = home;
 try {
@@ -163,5 +114,5 @@ try {
 }
 
 rmSync(root, { recursive: true, force: true });
-console.log(`preset-sync: ${passed} passed, ${failed} failed`);
+console.log(`channel-owner: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -85,6 +85,36 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 退役 `.agent-presets/`（步骤 B2：删掉死代码并改名）
+
+**状态**：已实施。这一步**不改变任何行为**，只把 B1 之后确定无人调用/无人读的东西清掉。
+
+**删了什么，凭什么说它无人调用**：
+- `syncPresetTree`（及其 `filesUnder` / `sameFile` / `pruneExtras`）：生产代码零调用——
+  `grep syncPresetTree` 只剩它与测试自己。它做的"目录式 preset 同步"在 0.1.7 被
+  bundle 里的**声明**取代了（模块按包内路径或 profile 目录里的 `./name` 解析）。
+  它此前还被 `gates.mjs` 的 `syntax` 与 `test: preset sync` 两条门禁"养着"——
+  **门禁在保护一个已退役的机制**，这正是本轮要拆掉的东西。
+- 连带删掉当轮新增门禁里那句"它已无生产调用方，仅测试在跑"的注释所指的状态。
+
+**改名**：`dsh/host/preset-sync.mjs` → `dsh/host/channel-owner.mjs`
+（它现在只回答"这个 profile 归哪条通道"，`preset-sync` 已经是它的历史）;
+配套 `scripts/test-preset-sync.mjs` → `scripts/test-channel-owner.mjs`（同理由），
+门禁名 `test: preset sync` → `test: channel ownership anchor`。
+用 `git mv` 保留历史；`scripts/build-obsidian.mjs` 的 `NOT_EMBEDDED` 条目、
+`gates.mjs` 的 syntax 条目、`dsh/host/index.mjs` 与 `dsh/install.mjs` 的 import 同步更新。
+
+**联动更新**（都是"引用了刚被删掉的东西"的地方）：`check-patch-yaml.mjs` 与
+`gates.mjs` 里"别的门禁把这些文件当文本读"的举例（原先举 `test-preset-sync.mjs` 的
+逐字节比对，现改举 `test-installer.mjs` 的漂移比对）、`test-installer.mjs` 的注释指向、
+`main.template.js` 的注释指向（⇒ 重建 `main.js`）、`ARCHITECTURE.md` 的入口地图与
+`npm test` 行。
+
+**验证**：`node scripts/test-channel-owner.mjs` = **15 passed, 0 failed**（锚点优先级 8 +
+`profileDirFromCtx` 3 + 运行时守卫对照 4——最后一段用 cache-busting 的 in-process `import()`
+直接调**真的** `dsh/host/index.mjs`，因此这几条断言不是"复制一份逻辑来测"）；
+`node scripts/run-gates.mjs` = **47/49 passed, 2 skipped, 0 failed**。
+
 ## 2026-09-26 · 退役 `.agent-presets/`（步骤 B1：停止写入）
 
 **状态**：已实施。步骤 A（锚点迁移 + 回退读取）见下一节；**B2（删掉 `syncPresetTree` 与它那两条门禁）待做**。

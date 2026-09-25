@@ -125,7 +125,7 @@ check('idempotent second run exit 0', r.status === 0);
 //    retired `.agent-presets` marker is only a fallback, kept so an install made
 //    before 2026-09-26 is recognised instead of silently taken over. Both are
 //    exercised, because "which one wins" is exactly what silently broke when the
-//    anchor was the retired directory (see dsh/host/preset-sync.mjs).
+//    anchor was the retired directory (see dsh/host/channel-owner.mjs).
 const manifestPath = join(profileRoot, '.install-manifest.json');
 const legacyDir = join(home, '.agent-presets', 'notes-assistant');
 const legacyMarkerPath = join(legacyDir, '.owner.json');
