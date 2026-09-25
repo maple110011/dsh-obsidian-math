@@ -104,11 +104,12 @@ if (!existsSync(binJs) || !existsSync(realPatch)) {
 // 这样 `session/create` 登记工作区时写的是副本，用户侧栏不会被探针塞垃圾 —— 而"用完摘掉登记"
 // 那条清理仍然保留（双保险）。
 //
-// ⚠️ **不要**把 preset 目录整个 `cpSync(recursive)` 进来：`.agent-presets/<profile>/` 里可能含
-// `node_modules` 的 **junction**，而 cpSync 会**跟着链接递归**，实测直接把进程打成
-// `exit=-1073740791`（栈溢出）。只种"启动要点"：目录本身 + 一层文件。
+// ⚠️ `seedIsolatedHome` 只种"启动要点"（profile 目录 + 一层文件 + node_modules 链接），
+// **不**递归复制任何可能含 junction 的目录：`cpSync(recursive)` 会**跟着链接递归**，
+// 实测直接把进程打成 `exit=-1073740791`（栈溢出）。它也不再种退役的 `.agent-presets/<profile>/`
+// （那个目录 2026-09-26 起不再被写入，探针也不需要）。
 const dshHome = mkdtempSync(join(tmpdir(), 'dsh-preset-home-'));
-seedIsolatedHome(dshHome, realDshHome, { withPreset: true });
+seedIsolatedHome(dshHome, realDshHome, {});
 const patch = join(dshHome, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
 
 // Stage what dsh 0.1.7 actually needs, into the PROFILE directory: the preset

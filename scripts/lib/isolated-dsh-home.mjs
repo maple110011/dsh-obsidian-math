@@ -20,8 +20,7 @@ import { join } from 'node:path';
  * @param home - 临时 `$DSH_HOME`（必须已存在）。
  * @param realHome - 真实的 `$DSH_HOME`。
  * @param opts.profile - profile 名（默认 `notes-assistant`）。
- * @param opts.withPreset - 是否连 `.agent-presets/<profile>/` 一起种（只有需要 agent preset 的探针要）。
- * @returns {{ profileRoot: string, patch: string|null, presetRoot: string|null }}
+ * @returns {{ profileRoot: string, patch: string|null }}
  */
 export function seedIsolatedHome(home, realHome, opts = {}) {
   const profile = opts.profile ?? 'notes-assistant';
@@ -62,35 +61,13 @@ export function seedIsolatedHome(home, realHome, opts = {}) {
   }
 
   const patch = join(profileRoot, `${profile}.patch.yml`);
-  let presetRoot = null;
-  if (opts.withPreset === true) {
-    presetRoot = join(home, '.agent-presets', profile);
-    const realPreset = join(realHome, '.agent-presets', profile);
-    if (existsSync(realPreset)) {
-      mkdirSync(join(home, '.agent-presets'), { recursive: true });
-      // ⚠️ **逐文件**复制，绝不 `cpSync(recursive)`：真实 preset 目录里可能有指向
-      // `node_modules` 的 junction，递归复制会跟着链接走出去（实测把进程打成栈溢出）。
-      let presetEntries = [];
-      try { presetEntries = readdirSync(realPreset); } catch { presetEntries = []; }
-      mkdirSync(presetRoot, { recursive: true });
-      for (const name of presetEntries) {
-        const from = join(realPreset, name);
-        try {
-          if (!lstatSync(from).isFile()) continue;
-          cpSync(from, join(presetRoot, name));
-        } catch (error) {
-          console.warn(`isolated-dsh-home: 复制 preset/${name} 失败：${String(error?.message ?? error)}`);
-        }
-      }
-    }
-  }
   // 种子的结果直接说出来：探针起不来时，第一件要判断的事就是"副本到底种全了吗"。
-  console.log(`  [seed] ${profileRoot}：${copied} 个文件${linked ? ' + node_modules 链接' : ''}${presetRoot === null ? '' : `，preset=${existsSync(join(presetRoot, 'agent.cordis.yml'))}`}`);
+  console.log(`  [seed] ${profileRoot}：${copied} 个文件${linked ? ' + node_modules 链接' : ''}`);
 
   const storages = join(home, 'storages');
   if (!existsSync(storages)) { try { mkdirSync(storages, { recursive: true }); } catch { /* ignore */ } }
 
-  return { profileRoot, patch: existsSync(patch) ? patch : null, presetRoot };
+  return { profileRoot, patch: existsSync(patch) ? patch : null };
 }
 
 /**

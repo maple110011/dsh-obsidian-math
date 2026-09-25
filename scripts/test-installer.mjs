@@ -25,14 +25,12 @@ check('direct install exit 0', r.status === 0 && !r.error);
 
 const presetRoot = join(home, '.agent-presets', 'notes-assistant');
 const profileRoot = join(home, 'profiles', 'notes-assistant');
+// ⚠️ RETIRED 2026-09-26: `.agent-presets/<id>/` is no longer WRITTEN by any
+// channel (dsh >= 0.1.7 reads nothing there; the preset is declared in the
+// overlay and its modules live in the profile directory). `uninstall` still
+// CLEANS UP a directory a pre-2026-09-26 install left behind — asserted in step 6.
+check('the retired .agent-presets directory is NOT created by --direct', !existsSync(presetRoot));
 const files = [
-  // The channel marker + the retired directory's contents (still written by
-  // `--direct`; the marker is the npm-vs-direct guard's only anchor).
-  join(presetRoot, 'preset.yml'),
-  join(presetRoot, 'agent.cordis.yml'),
-  join(presetRoot, 'math-memory.mjs'),
-  join(presetRoot, 'note-tools.mjs'),
-  join(presetRoot, 'hook-frontmatter.mjs'),
   join(profileRoot, 'package.json'),
   join(profileRoot, 'cordis.yml'),
   join(profileRoot, 'cordis.patch.yml'),
@@ -55,11 +53,10 @@ const files = [
 ];
 for (const path of files) check('exists ' + path, existsSync(path));
 
-// owner markers
-const presetMarker = JSON.parse(readFileSync(join(presetRoot, '.owner.json'), 'utf8'));
-check('preset owner=direct', presetMarker.owner === 'direct');
+// ownership: the PROFILE manifest is the anchor (`readChannelOwner` reads it first)
 const manifest = JSON.parse(readFileSync(join(profileRoot, '.install-manifest.json'), 'utf8'));
 check('manifest owner=direct', manifest.owner === 'direct');
+check('no legacy .owner.json is written any more', !existsSync(join(presetRoot, '.owner.json')));
 check('manifest posture=11 files', Array.isArray(manifest.posture) && manifest.posture.length === 11,
   Array.isArray(manifest.posture) ? String(manifest.posture.length) : 'not an array');
 check('manifest posture covers the preset body (so uninstall removes it)',
@@ -73,12 +70,10 @@ check('manifest posture covers the preset body (so uninstall removes it)',
 // file, so every shipped profile file must install byte-identically. The exception this comment
 // used to document ("repo content is a prefix") is exactly what hid the 2026-09-21 failure.
 const driftPairs = [
-  [join(presetRoot, 'math-memory.mjs'), join(repo, 'dsh', 'preset', 'math-memory.mjs')],
-  [join(presetRoot, 'note-tools.mjs'), join(repo, 'dsh', 'preset', 'note-tools.mjs')],
-  [join(presetRoot, 'hook-frontmatter.mjs'), join(repo, 'dsh', 'preset', 'hook-frontmatter.mjs')],
   // The deployed body is what dsh actually imports for this channel.
   [join(profileRoot, 'math-memory.mjs'), join(repo, 'dsh', 'preset', 'math-memory.mjs')],
   [join(profileRoot, 'note-tools.mjs'), join(repo, 'dsh', 'preset', 'note-tools.mjs')],
+  [join(profileRoot, 'hook-frontmatter.mjs'), join(repo, 'dsh', 'preset', 'hook-frontmatter.mjs')],
   [join(profileRoot, 'notes-assistant.patch.yml'), join(repo, 'dsh', 'profile', 'notes-assistant.patch.yml')],
   [join(profileRoot, 'memory-admin.mjs'), join(repo, 'dsh', 'host', 'memory-admin.mjs')],
   [join(profileRoot, 'cordis.patch.yml'), join(repo, 'dsh', 'profile', 'cordis.patch.yml')],
@@ -126,37 +121,45 @@ for (const [installed, source] of driftPairs) {
 r = run(installArgs);
 check('idempotent second run exit 0', r.status === 0);
 
-// 3. cross-channel conflict. The AUTHORITATIVE anchor is the PROFILE manifest;
-//    the legacy `.agent-presets` marker is only a fallback. Both are exercised,
-//    because "which one wins" is exactly what silently broke when the anchor was
-//    the retired directory (see dsh/host/preset-sync.mjs).
+// 3. cross-channel conflict. The AUTHORITATIVE anchor is the PROFILE manifest; the
+//    retired `.agent-presets` marker is only a fallback, kept so an install made
+//    before 2026-09-26 is recognised instead of silently taken over. Both are
+//    exercised, because "which one wins" is exactly what silently broke when the
+//    anchor was the retired directory (see dsh/host/preset-sync.mjs).
 const manifestPath = join(profileRoot, '.install-manifest.json');
-const markerPath = join(presetRoot, '.owner.json');
+const legacyDir = join(home, '.agent-presets', 'notes-assistant');
+const legacyMarkerPath = join(legacyDir, '.owner.json');
+const writeManifest = (owner) => writeFileSync(manifestPath, JSON.stringify(
+  { owner, version: '9.9.9', installedAt: new Date().toISOString() }, null, 2) + '\n', 'utf8');
+const writeLegacy = (owner) => {
+  mkdirSync(legacyDir, { recursive: true });
+  writeFileSync(legacyMarkerPath, JSON.stringify(
+    { owner, version: '0.7.0', installedAt: new Date().toISOString() }), 'utf8');
+};
 
-// 3a. legacy-only install (no profile manifest): must still refuse.
+// 3a. legacy-only install (no profile manifest): the migration path must still refuse.
 rmSync(manifestPath, { force: true });
-writeFileSync(markerPath, JSON.stringify({ owner: 'npm', version: '9.9.9', installedAt: new Date().toISOString() }), 'utf8');
+writeLegacy('npm');
 r = run(installArgs);
 check('conflict (legacy anchor only): direct install refuses an npm-owned profile (exit 1)', r.status === 1);
 
 // 3b. both anchors present and DISAGREEING: the profile manifest wins.
-writeFileSync(manifestPath, JSON.stringify({ owner: 'npm', version: '9.9.9', installedAt: new Date().toISOString() }, null, 2) + '\n', 'utf8');
-writeFileSync(markerPath, JSON.stringify({ owner: 'direct', version: '0.7.8', installedAt: new Date().toISOString() }), 'utf8');
+writeManifest('npm');
+writeLegacy('direct');
 r = run(installArgs);
 check('conflict (manifest is authoritative): direct install still refuses (exit 1)', r.status === 1);
 
-// 4. --force takes over: BOTH anchors must end up saying direct.
+// 4. --force takes over: the manifest becomes the authoritative "direct".
 r = run([...installArgs, '--force']);
 check('--force takeover exit 0', r.status === 0);
 check('--force rewrites the profile manifest to owner=direct',
   JSON.parse(readFileSync(manifestPath, 'utf8')).owner === 'direct');
-check('--force rewrites the legacy marker to owner=direct',
-  JSON.parse(readFileSync(markerPath, 'utf8')).owner === 'direct');
 
 // 5. uninstall dry-run (no --yes) leaves files in place
 r = run(['uninstall', '--dsh-home', home, '--vault', vault]);
 check('uninstall dry-run exit 0', r.status === 0);
-check('dry-run keeps preset', existsSync(join(presetRoot, 'agent.cordis.yml')));
+check('dry-run keeps the deployed preset body', existsSync(join(profileRoot, 'math-memory.mjs')));
+check('dry-run keeps the retired directory it found', existsSync(legacyMarkerPath));
 
 // 6. full uninstall
 // The cache directory only exists once the plugin or the capture path has run,
@@ -168,7 +171,7 @@ writeFileSync(join(vault, '.deepseek', 'cache', 'captured-sessions.json'), '{}',
 check('fixture: the vault cache exists before uninstall', existsSync(join(vault, '.deepseek', 'cache')));
 r = run(['uninstall', '--purge', '--purge-data', '--yes', '--confirm', 'DELETE MY MATH MEMORY', '--dsh-home', home, '--vault', vault]);
 check('full uninstall exit 0', r.status === 0);
-check('preset removed', !existsSync(presetRoot));
+check('retired .agent-presets directory removed (migration cleanup)', !existsSync(legacyDir));
 check('deployed preset body removed from the profile dir', !existsSync(join(profileRoot, 'math-memory.mjs'))
   && !existsSync(join(profileRoot, 'note-tools.mjs')));
 check('posture removed', !existsSync(join(profileRoot, 'cordis.patch.yml')));

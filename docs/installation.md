@@ -60,7 +60,9 @@ dsh plugin --profile notes-assistant update dsh-math-memory
 
 ## 3. 冲突解决怎么用
 
-系统在多个位置写入时，用 **owner marker（归属标记）** 判定所有权，避免两条通道（`npm` bundle vs `direct` 直写）互相覆盖。owner 取值只有两个：`npm`（bundle 通道）和 `direct`（`--direct` 或 Obsidian 内置直写）。标记文件位于 `~/.dsh/.agent-presets/notes-assistant/.owner.json`——注意**这个目录自 dsh 0.1.7 起不再是 preset 的查找路径**，它现在**只**承载这个归属标记（也是守卫判断两个通道谁拥有它的**唯一**锚点，所以不要手工删它）。
+系统在多个位置写入时，用 **owner marker（归属标记）** 判定所有权，避免两条通道（`npm` bundle vs `direct` 直写）互相覆盖。owner 取值只有两个：`npm`（bundle 通道）和 `direct`（`--direct` 或 Obsidian 内置直写）。**标记文件是 profile 自己的 `~/.dsh/profiles/<profile>/.install-manifest.json`**（三条安装方式都写它，守卫优先读它）。
+
+旧的 `~/.dsh/.agent-presets/notes-assistant/.owner.json` 已**退役**（2026-09-26）：不再被任何通道写入，只在 profile 清单缺失时作为**兼容回退**被读取（这样 2026-09-26 之前装的那份仍会被认出来，而不是被另一条通道静默接管）；`uninstall` 会把它连同那个目录一起清掉。原本只有它一个锚点，于是"清理这个没人读的死目录"会**静默废掉**这层保护——这也是它被迁走的原因。
 
 **先诊断：**
 

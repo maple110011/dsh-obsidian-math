@@ -85,6 +85,33 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 退役 `.agent-presets/`（步骤 B1：停止写入）
+
+**状态**：已实施。步骤 A（锚点迁移 + 回退读取）见下一节；**B2（删掉 `syncPresetTree` 与它那两条门禁）待做**。
+
+**为什么现在能停写**：`.agent-presets/<id>/` 的**唯一**剩余意义是通道归属标记，而归属已经在步骤 A
+迁到 `<profile>/.install-manifest.json`（三条通道本来就都在写它）。preset 实体自 0.1.7 起由
+bundle patch 里的声明提供，模块按包内路径或（离线通道）profile 目录里的相对路径解析——那个目录
+**没有任何读者**。
+
+**做了什么**：
+- `dsh/install.mjs`：删掉 `directInstallPreset()`（它把 5 个 preset 文件 + `.owner.json` 写进旧目录）
+  ，`--direct` 只走 `directInstallProfile`；`--force` 也不再补写旧 marker（profile 清单已经写了
+  `owner=npm`，而 `readChannelOwner` 优先读它，陈旧 marker 因此无害）。
+  `uninstall` 保留**迁移清理**分支：旧目录还在就删掉，没有就什么都不做；`status` 在发现旧目录时
+  打印一行 `retired: [present] …`，让残留状态可见而不是静静躺着。
+- `obsidian/main.template.js` 的 `bootstrapDshConfig`：不再写旧目录（5 个 `ensureFile` + 一个 marker
+  写入），**冲突守卫改成先读 profile 清单、再回退旧 marker**——模板不能 import `preset-sync.mjs`
+  （那是 `NOT_EMBEDDED`），所以这里是同一套优先级的一份内联实现，与宿主那份行为一致。
+  连带的 `writeOwnerMarker` 随之删除（零调用方）。**重建了 `main.js`**。
+- `scripts/lib/isolated-dsh-home.mjs`：删掉 `withPreset` 分支（探针不再需要种那个目录）。
+- `scripts/test-installer.mjs`：断言反过来——**旧目录不得被创建**、不得写旧 marker；而卸载时
+  **测试自己造一个**（模拟 2026-09-26 之前的装机）并断言它被清掉；冲突用例保留"只有旧锚点"的
+  迁移路径。
+
+> **保留回退是有意的，不是没删干净**：把回退也删掉，2026-09-26 之前装的机器会变成"无主"，
+> 另一条通道就会静默接管——那正是这一轮要修的缺陷本身。回退的寿命至少到下一次大版本。
+
 ## 2026-09-26 · 通道归属锚点从退役目录迁到 profile 目录（步骤 A/两步）
 
 **状态**：步骤 A 已实施（新锚点 + 旧锚点回退 + 三处读写归一）；步骤 B（删旧目录的写入与

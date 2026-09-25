@@ -1716,31 +1716,26 @@ function readOwnerMarker(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
 }
 
-function writeOwnerMarker(path, channel, version) {
-  const payload = { owner: channel, version: version ?? '0.0.0', installedAt: new Date().toISOString() };
-  writeFileSync(path, JSON.stringify(payload, null, 2) + '\n', 'utf8');
-}
-
 function bootstrapDshConfig(plugin, force = false) {
   const location = plugin.service.location();
   if (location === null) throw new Error('未检测到 dsh。请先在设置中配置 dsh 安装目录。');
   const home = location.home;
-  const presetRoot = join(home, '.agent-presets', PRESET_NAME);
   const profileRoot = join(home, 'profiles', PRESET_NAME);
   const written = [];
 
-  // Conflict guard: never clobber an npm-bundle-owned preset. --force takes over.
-  const existing = readOwnerMarker(join(presetRoot, OWNER_MARKER));
+  // Conflict guard: never clobber a profile another channel owns. --force takes over.
+  //
+  // The anchor is the PROFILE's install manifest (all channels write it); the
+  // retired `.agent-presets/<id>/.owner.json` is only consulted when the manifest
+  // is absent, so a pre-2026-09-26 install is still recognised instead of being
+  // silently taken over. That directory is no longer WRITTEN by this bootstrap.
+  const existing = readOwnerMarker(join(profileRoot, INSTALL_MANIFEST))
+    ?? readOwnerMarker(join(home, '.agent-presets', PRESET_NAME, OWNER_MARKER));
   if (!force && existing !== null && existing.owner !== undefined && existing.owner !== OWNER_CHANNEL) {
-    throw new Error(`preset 由「${existing.owner}」通道安装。请先运行 dsh-math-memory uninstall 移除，或点「强制重装 dsh 配置」接管。`);
+    throw new Error(`dsh 配置由「${existing.owner}」通道安装。请先运行 dsh-math-memory uninstall 移除，或点「强制重装 dsh 配置」接管。`);
   }
 
   // Code always refreshes; user-editable files are preserved unless forced.
-  if (ensureFile(join(presetRoot, 'math-memory.mjs'), EMBEDDED_PRESET['math-memory.mjs'], true)) written.push('preset/math-memory.mjs');
-  if (ensureFile(join(presetRoot, 'note-tools.mjs'), EMBEDDED_PRESET['note-tools.mjs'], true)) written.push('preset/note-tools.mjs');
-  if (ensureFile(join(presetRoot, 'hook-frontmatter.mjs'), EMBEDDED_PRESET['hook-frontmatter.mjs'], true)) written.push('preset/hook-frontmatter.mjs');
-  if (ensureFile(join(presetRoot, 'preset.yml'), EMBEDDED_PRESET['preset.yml'], force)) written.push('preset/preset.yml');
-  if (ensureFile(join(presetRoot, 'agent.cordis.yml'), EMBEDDED_PRESET['agent.cordis.yml'], force)) written.push('preset/agent.cordis.yml');
   if (ensureFile(join(profileRoot, 'package.json'), EMBEDDED_PRESET['profile-package.json'], force)) written.push('profile/package.json');
   if (ensureFile(join(profileRoot, 'cordis.yml'), EMBEDDED_PRESET['profile-cordis.yml'], true)) written.push('profile/cordis.yml');
   if (ensureFile(join(profileRoot, 'cordis.patch.yml'), EMBEDDED_PRESET['profile-cordis.patch.yml'], force)) written.push('profile/cordis.patch.yml');
@@ -1765,8 +1760,9 @@ function bootstrapDshConfig(plugin, force = false) {
   if (ensureFile(join(profileRoot, 'note-tools.mjs'), EMBEDDED_PRESET['note-tools.mjs'], true)) written.push('profile/note-tools.mjs');
 
   // Record ownership so the npm bundle / CLI installer can detect this direct
-  // install and skip (or be skipped by) it instead of silently clobbering.
-  writeOwnerMarker(join(presetRoot, OWNER_MARKER), OWNER_CHANNEL, plugin.manifest?.version);
+  // install and skip (or be skipped by) it instead of silently clobbering. This
+  // manifest is THE anchor (`dsh/host/preset-sync.mjs` → readChannelOwner); the
+  // retired `.agent-presets` marker is no longer written here.
   writeFileSync(join(profileRoot, INSTALL_MANIFEST), JSON.stringify({
     owner: OWNER_CHANNEL,
     version: plugin.manifest?.version ?? '0.0.0',

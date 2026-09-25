@@ -28,14 +28,17 @@
  *                                                        `readChannelOwner` reads
  *                                                        this first — plus the
  *                                                        posture + body file list)
- *   <home>/.agent-presets/notes-assistant/.owner.json    (LEGACY anchor, read only
- *                                                        as a fallback; the
- *                                                        directory is not a preset
- *                                                        lookup path on 0.1.7+, and
- *                                                        relying on it alone meant
- *                                                        deleting that dead
- *                                                        directory silently disabled
- *                                                        the npm-vs-direct guard)
+ *   <home>/.agent-presets/notes-assistant/.owner.json    (RETIRED 2026-09-26: no
+ *                                                        longer written; still
+ *                                                        READ as a fallback for
+ *                                                        installs made before that,
+ *                                                        and cleaned up by
+ *                                                        `uninstall`. The directory
+ *                                                        is not a preset lookup path
+ *                                                        on 0.1.7+ — relying on it
+ *                                                        alone meant deleting that
+ *                                                        dead directory silently
+ *                                                        disabled the guard)
  * A native (bundle) install owns the profile as "npm"; a --direct install owns it
  * as "direct". Install refuses to overwrite a profile owned by the other channel
  * unless --force.
@@ -257,11 +260,6 @@ function assertChannelOwnership(options, { profileDir, home, presetId }, channel
   return `owned by "${owner.owner}" (${owner.source}, v${owner.version ?? "?"}) — pass --force to take over as "${channel}"`;
 }
 
-function writeOwnerMarker(options, markerPath, channel) {
-  const payload = { owner: channel, version: packageVersion(), installedAt: new Date().toISOString() };
-  write(options, markerPath, JSON.stringify(payload, null, 2) + "\n");
-}
-
 function writeManifest(options, profileRoot, channel, postureFiles, vaults) {
   const manifestPath = join(profileRoot, CHANNEL_MANIFEST);
   const payload = {
@@ -310,28 +308,13 @@ function nativeInstall(options, dshHome) {
   return true;
 }
 
-// ── direct (offline) install — the legacy flat copy ─────────────────────────
-
-function directInstallPreset(options, dshHome) {
-  const presetRoot = join(dshHome, LEGACY_PRESET_DIR, PRESET_ID);
-  const markerPath = join(presetRoot, OWNER_MARKER);
-  const conflict = assertChannelOwnership(options, {
-    profileDir: join(dshHome, "profiles", options.profile),
-    home: dshHome,
-    presetId: PRESET_ID
-  }, "direct");
-  if (conflict !== null) {
-    log(options, `[conflict] preset ${PRESET_ID} is ${conflict}`);
-    return false;
-  }
-  copyFile(options, join(PRESET_DIR, "math-memory.mjs"), join(presetRoot, "math-memory.mjs"), true);
-  copyFile(options, join(PRESET_DIR, "note-tools.mjs"), join(presetRoot, "note-tools.mjs"), true);
-  copyFile(options, join(PRESET_DIR, "hook-frontmatter.mjs"), join(presetRoot, "hook-frontmatter.mjs"), true);
-  copyFile(options, join(PRESET_DIR, "preset.yml"), join(presetRoot, "preset.yml"), options.force);
-  copyFile(options, join(PRESET_DIR, "agent.cordis.yml"), join(presetRoot, "agent.cordis.yml"), options.force);
-  writeOwnerMarker(options, markerPath, "direct");
-  return true;
-}
+// ── direct (offline) install — the flat copy into the PROFILE directory ─────
+//
+// The retired `$DSH_HOME/.agent-presets/<id>/` copy is NOT written any more
+// (2026-09-26): dsh >= 0.1.7 reads nothing there, and the preset is declared in
+// the `--patch` overlay instead. Ownership moved to the profile manifest, which
+// `directInstallProfile` writes. `commandUninstall` still CLEANS UP a directory a
+// pre-2026-09-26 install left behind.
 
 async function directInstallProfile(options, dshHome) {
   const profileRoot = join(dshHome, "profiles", options.profile);
@@ -416,7 +399,9 @@ async function commandInstall(options) {
   log(options, `dsh-math-memory: installing into ${dshHome} (${options.direct ? "direct" : "native"})`);
 
   if (options.direct) {
-    if (!directInstallPreset(options, dshHome)) return 1;
+    // No `directInstallPreset` step any more: the retired `.agent-presets/<id>/`
+    // copy is gone (see the section comment above). Ownership lands in the profile
+    // manifest, written by `directInstallProfile`.
     if (!(await directInstallProfile(options, dshHome))) return 1;
   } else {
     // Check ownership conflicts BEFORE mutating: `dsh plugin add` writes into
@@ -440,12 +425,10 @@ async function commandInstall(options) {
     if (!nativeInstall(options, dshHome)) return 1;
     if (!writePosture(options, dshHome)) return 1;
 
-    // Native --force claims the LEGACY marker too, so a `--direct` install from
-    // before 2026-09-26 (which only has that marker) does not make the bundle
-    // skip at the next boot.
-    if (options.force) {
-      writeOwnerMarker(options, join(dshHome, LEGACY_PRESET_DIR, PRESET_ID, OWNER_MARKER), "npm");
-    }
+    // No legacy-marker write any more (2026-09-26): the profile manifest written
+    // by `writePosture` is the anchor, and `readChannelOwner` prefers it. A stale
+    // legacy marker saying "direct" is therefore harmless — it is only consulted
+    // when the manifest is absent.
   }
   seedVaultTemplates(options);
 
@@ -475,6 +458,13 @@ function commandStatus(options) {
     ? "(no owner marker)"
     : `(owner=${owner.owner} v${owner.version ?? "?"}, via ${owner.source})`;
   console.log(`preset:   ${describePresetBody(profileRoot)} ${ownerText}`);
+  // Surface leftover state instead of letting it sit there invisibly: this
+  // directory is not read by anything any more (see the module docblock), so its
+  // only remaining meaning is "a pre-2026-09-26 install left this here".
+  const retiredDir = join(dshHome, LEGACY_PRESET_DIR, PRESET_ID);
+  if (existsSync(retiredDir)) {
+    console.log(`retired:  [present] ${retiredDir} — leftover from a pre-2026-09-26 install; nothing reads it, \`uninstall\` removes it`);
+  }
 
   let bundles = [];
   try {
@@ -537,12 +527,14 @@ function commandUninstall(options) {
     }
   }
 
-  // 2. preset directory — only when we own it (or --force). This is the CHANNEL
-  //    marker (the npm-vs-direct guard), not the preset lookup path any more; the
-  //    deployed body files under profiles/<name>/ are listed in the posture
-  //    manifest and are removed by step 3 below.
-  if (presetMarker === null) {
-    log(options, `[keep] preset ${presetRoot} has no owner marker — leaving it.`);
+  // 2. MIGRATION CLEANUP: the retired `.agent-presets/<id>/` copy. Nothing writes
+  //    it any more (2026-09-26); an install made before that has one, and this is
+  //    where it goes. Ownership is NOT decided here — that is `channelOwner`
+  //    above — so a missing marker just means "nothing we own to clean up".
+  if (!existsSync(presetRoot)) {
+    // nothing to clean up
+  } else if (presetMarker === null) {
+    log(options, `[keep] retired preset dir ${presetRoot} has no owner marker — leaving it.`);
   } else if (presetMarker.owner === "npm" || presetMarker.owner === "direct" || options.force) {
     remove(options, presetRoot, true);
   }
