@@ -1,28 +1,41 @@
 // scripts/check-engine-sync.mjs — guard the two copies of the memory engine.
 //
 // WHY. The capture/distillation engine exists twice, because the two artifacts
-// cannot share an import: `dsh/preset/math-memory.mjs` (115 top-level
-// declarations) runs as a dsh preset, and `dsh/host/memory-admin.mjs` (56) runs
+// cannot share an import: `dsh/preset/math-memory.mjs` (156 top-level
+// declarations) runs as a dsh preset, and `dsh/host/memory-admin.mjs` (62) runs
 // inside the Obsidian plugin bundle, where it receives `fs`/`zlib` through the
 // embedded loader instead of importing them (see check-embedded-loader.mjs).
-// 22 top-level symbols are declared in BOTH files. The only sync mechanism was
+// 23 top-level symbols are declared in BOTH files. The only sync mechanism was
 // a comment in one of them ("keep the two in sync"), so a fix applied to one
 // copy and forgotten in the other produced two different engines — each fully
 // tested, neither test able to notice the other had drifted.
 //
-// WHAT IT ASSERTS. That every shared symbol is either the same code, or a
-// divergence somebody wrote down on purpose:
-//   * identical / equivalent (comments, quote style, `export`, whitespace) -> ok
-//   * divergent and listed in KNOWN_DIVERGENT with a reason               -> ok, reported
-//   * divergent and NOT listed                                             -> FAIL
-//   * listed but no longer divergent                                       -> FAIL (remove it;
-//     a stale exemption list silently becomes a blanket permission to drift)
-//   * the set of shared names changed                                      -> FAIL (decide
-//     deliberately: share it, or rename it so the two are independent)
+// WHAT IT ASSERTS.
+// 1. BY NAME — every shared symbol is either the same code, or a divergence
+//    somebody wrote down on purpose:
+//      * identical / equivalent (comments, quote style, `export`, whitespace) -> ok
+//      * divergent and listed in KNOWN_DIVERGENT with a reason               -> ok, reported
+//      * divergent and NOT listed                                             -> FAIL
+//      * listed but no longer divergent                                       -> FAIL (remove it;
+//        a stale exemption list silently becomes a blanket permission to drift)
+//      * the set of shared names changed                                      -> FAIL (decide
+//        deliberately: share it, or rename it so the two are independent)
+// 2. BY SHAPE (the name-blind sweep) — two declarations under DIFFERENT names
+//    that are the same code. Name matching cannot see a renamed duplicate: the
+//    `pathIsInside`/`pathInside` pair hid a shared security-relevant helper for
+//    months (trap 64), and three more such pairs were found by hand on
+//    2026-09-26. So every preset declaration is compared against every host
+//    declaration whatever it is called, and any pair above ESCAPE_THRESHOLD must
+//    be acknowledged in KNOWN_ESCAPES — with the same stale-entry rule, so that
+//    deduping a pair forces the exemption to be removed rather than lingering.
 //
 // The comparison is a token stream, not raw bytes: quote style, comments, and
 // the `export` keyword carry no meaning, and treating them as drift made most of
 // the shared symbols look divergent when they are the same code.
+//
+// `node scripts/check-engine-sync.mjs --sweep` prints the highest-scoring
+// cross-name pairs and the threshold, without failing — that is how the
+// threshold was chosen and how to re-tune it after a refactor.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -149,6 +162,60 @@ const tokenStream = (s) => stripComments(s)
   .replace(/\s*([{}()[\],;:=+\-*/<>!&|?.])\s*/g, '$1')
   .trim();
 
+/**
+ * The same normalization as `tokenStream`, but as a token ARRAY — needed by the
+ * name-blind sweep below, which compares token n-grams rather than strings.
+ * String/template literals stay one token (their contents are part of what makes
+ * two copies "the same code"); comments are gone.
+ */
+function tokenList(span) {
+  const text = stripComments(span).replace(/^\s*export\s+/, '');
+  const out = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const j = skipString(text, i);
+      out.push(text.slice(i, j).replace(/\s+/g, ' '));
+      i = j;
+      continue;
+    }
+    if (/\s/.test(c)) { i += 1; continue; }
+    if (/[A-Za-z0-9_$]/.test(c)) {
+      let j = i;
+      while (j < text.length && /[A-Za-z0-9_$]/.test(text[j])) j += 1;
+      out.push(text.slice(i, j));
+      i = j;
+      continue;
+    }
+    // Multi-character operators would otherwise split into unrelated bigrams.
+    const three = text.slice(i, i + 3);
+    const two = text.slice(i, i + 2);
+    if (['===', '!==', '**=', '...', '>>>'].includes(three)) { out.push(three); i += 3; continue; }
+    if (['=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '+=', '-=', '*=', '/=', '%=', '++', '--', '**', '<<', '>>'].includes(two)) {
+      out.push(two); i += 2; continue;
+    }
+    out.push(c);
+    i += 1;
+  }
+  return out;
+}
+
+/** Adjacent-token pairs, as a set — the local shape of a piece of code. */
+function bigrams(tokens) {
+  const out = new Set();
+  for (let i = 0; i + 1 < tokens.length; i += 1) out.add(tokens[i] + '\u0000' + tokens[i + 1]);
+  return out;
+}
+
+/** Sørensen–Dice overlap of two token-bigram sets: 1 = same local shape. */
+function dice(a, b) {
+  if (a.size === 0 || b.size === 0) return 0;
+  let hits = 0;
+  for (const gram of a) if (b.has(gram)) hits += 1;
+  return (2 * hits) / (a.size + b.size);
+}
+
 // ── self-test: the extractor must be right, or every verdict below is noise ──
 {
   const fixture = 'function f(a, { x = 1 } = {}) {\n  return a;\n}\nconst ONE = "v";\n';
@@ -254,9 +321,133 @@ if (undocumented === 0) {
   check(`every shared symbol is in step or documented (${same} identical/equivalent, ${documented} documented divergence)`, true);
 }
 
+// ── the name-blind sweep ────────────────────────────────────────────────────
+//
+// WHY THIS EXISTS. Every verdict above pairs declarations BY NAME, so a duplicate
+// that was renamed is invisible: `pathIsInside`/`pathInside` hid a shared
+// security-relevant helper for months (trap 64). This sweep compares the local
+// token shape of EVERY preset declaration against EVERY host declaration
+// regardless of name, so "the same code under two names" shows up as a pair with
+// a high score.
+//
+// It is deliberately a SHAPE comparison, not an equality test: near-duplicates
+// that differ in a few identifiers (exactly what a rename looks like) score close
+// to 1, while unrelated functions land far lower. Each pair found above the
+// threshold must be acknowledged in KNOWN_ESCAPES with a reason — the same
+// discipline as KNOWN_DIVERGENT, so it cannot silently become a blanket
+// permission to drift, and a stale entry is itself a failure.
+
+/**
+ * Token-shape overlap at which two differently-named declarations are considered
+ * the same code. MEASURED with `--sweep` (3537 cross-name pairs): the four
+ * acknowledged pairs score 0.792–0.844, and the next candidate down is 0.662
+ * (`parseLocalDay` ↔ `daysSinceText` — two short date helpers that merely share a
+ * shape). 0.70 sits inside that gap, so the guard reports real duplicates without
+ * asking anyone to acknowledge coincidences.
+ */
+const ESCAPE_THRESHOLD = 0.7;
+
+/** Ignore short declarations: below this many tokens, everything looks like everything. */
+const MIN_ESCAPE_TOKENS = 30;
+
+/**
+ * Renamed duplicates, and what to do about each. `action` is either 'dedup' (the
+ * pair is on the P2-B list to collapse into one implementation) or 'structural'
+ * (the host copy is a split/re-shaped version, so the real bodies are compared
+ * here rather than by the name-based verdict).
+ */
+const KNOWN_ESCAPES = [
+  {
+    preset: 'contentText',
+    host: 'captureContentText',
+    action: 'dedup',
+    reason: 'the same "turn a message into the text we store" rule; the host name says WHAT it is for, the preset name says WHAT it returns'
+  },
+  {
+    preset: 'setTopFieldText',
+    host: 'setTopField',
+    action: 'dedup',
+    reason: 'the same frontmatter single-field rewriter; the copies differ in whether the caller passes the raw or the escaped value'
+  },
+  {
+    preset: 'decodeZstdSessionLog',
+    host: 'decodeSessionLog',
+    action: 'dedup',
+    reason: 'the same zstd-frame decoder over the loader-injected decompressor (the same divergence KNOWN_DIVERGENT records for readSessionHeader)'
+  },
+  {
+    preset: 'runSessionCapture',
+    host: 'scanSessionCapture',
+    action: 'structural',
+    reason: 'the host split the capture loop out of runSessionCapture (a 10-line wrapper + a 112-line loop), so the real bodies are compared HERE and not by the name-based verdict — which is exactly why that loop body could drift unnoticed'
+  }
+];
+
+const shapeCache = new Map();
+const shapeOf = (path, name, decl) => {
+  const key = `${path}\u0000${name}`;
+  if (!shapeCache.has(key)) {
+    const tokens = tokenList(decl.span);
+    shapeCache.set(key, { tokens, grams: bigrams(tokens) });
+  }
+  return shapeCache.get(key);
+};
+
+/** Every cross-name pair (`hostName !== presetName`) with a token-shape score. */
+const crossNamePairs = [];
+for (const [presetName, presetDecl] of preset) {
+  const a = shapeOf(PRESET, presetName, presetDecl);
+  if (a.tokens.length < MIN_ESCAPE_TOKENS) continue;
+  for (const [hostName, hostDecl] of host) {
+    if (hostName === presetName) continue; // owned by the name-based verdict
+    const b = shapeOf(HOST, hostName, hostDecl);
+    if (b.tokens.length < MIN_ESCAPE_TOKENS) continue;
+    crossNamePairs.push({ presetName, hostName, score: dice(a.grams, b.grams), presetLine: presetDecl.line, hostLine: hostDecl.line });
+  }
+}
+crossNamePairs.sort((x, y) => y.score - x.score);
+
+if (process.argv.includes('--sweep')) {
+  // A debugging affordance, like `run-gates --list`: show what the sweep sees and
+  // where the threshold sits, without failing on it.
+  console.log(`sweep: threshold ${ESCAPE_THRESHOLD}, min tokens ${MIN_ESCAPE_TOKENS}, ${crossNamePairs.length} cross-name pairs`);
+  for (const row of crossNamePairs.slice(0, 20)) {
+    console.log(`  ${row.score.toFixed(3)}  ${row.presetName} (preset:${row.presetLine}) ↔ ${row.hostName} (host:${row.hostLine})`);
+  }
+  process.exit(0);
+}
+
+const escapeTable = new Map(KNOWN_ESCAPES.map((e) => [`${e.preset}\u0000${e.host}`, e]));
+const matchedEscapes = new Set();
+let escapesFound = 0;
+for (const hit of crossNamePairs) {
+  if (hit.score < ESCAPE_THRESHOLD) break;
+  const key = `${hit.presetName}\u0000${hit.hostName}`;
+  matchedEscapes.add(key);
+  const where = `${PRESET}:${hit.presetLine} vs ${HOST}:${hit.hostLine}`;
+  const entry = escapeTable.get(key);
+  if (entry === undefined) {
+    check(`renamed duplicate (${hit.score.toFixed(3)}): ${hit.presetName} (preset) ↔ ${hit.hostName} (host)`, false, '');
+    console.log(`     ${where}`);
+    console.log('     Two differently-named declarations are the same code. Either share one implementation, or record the pair in KNOWN_ESCAPES with the reason it must stay separate.');
+  } else {
+    escapesFound += 1;
+    console.log(`[ok] known escape (${entry.action}, ${hit.score.toFixed(3)}) ${hit.presetName} ↔ ${hit.hostName} — ${entry.reason}`);
+    console.log(`     ${where}`);
+  }
+}
+
+let staleEscapes = 0;
+for (const entry of KNOWN_ESCAPES) {
+  if (matchedEscapes.has(`${entry.preset}\u0000${entry.host}`)) continue;
+  staleEscapes += 1;
+  check(`KNOWN_ESCAPES entry ${entry.preset} ↔ ${entry.host} no longer looks like the same code`, false,
+    `score fell below ${ESCAPE_THRESHOLD} — if it was deduped, remove the entry and say so in docs/changelog.md`);
+}
+
 const failed = results.filter((r) => !r).length;
 console.log('');
 console.log(failed === 0
-  ? `engine-sync: OK (${shared.length} shared symbols: ${same} in step, ${documented} documented divergences)`
+  ? `engine-sync: OK (${shared.length} shared symbols: ${same} in step, ${documented} documented divergences; ${escapesFound}/${KNOWN_ESCAPES.length} renamed duplicates acknowledged, ${staleEscapes} stale, none new)`
   : `engine-sync: ${failed} FAILED`);
 process.exit(failed === 0 ? 0 : 1);

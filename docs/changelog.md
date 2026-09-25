@@ -85,6 +85,61 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 引擎守卫补上"改名逃逸"检测（P2-B 第一步）
+
+**问题**：`check-engine-sync.mjs` 的每一条判据都**按符号名配对**，所以"同一份代码换了名字"是它的
+盲区。这个盲区已经吃过一次亏：`pathIsInside`（preset）/ `pathInside`（host）是同一个
+**安全相关**（vault 边界判断）的助手，却因为名字不同而长期不被守卫看见（陷阱 64，2026-09-11 才
+统一改名）。2026-09-26 用"同一套 span 抽取器 + token bigram 全量比对"手工扫出**还有 3 对**在盲区里，
+外加一处结构性逃逸。
+
+**这一步只做守卫，不动引擎**（改引擎是另一条提交、另一类风险）。新增与名字无关的
+**token-shape 扫描**：
+
+- 把 preset 的每个顶层声明与 host 的每个顶层声明两两比对（本次实测 **3537 对**），用
+  **Sørensen–Dice 的 token-bigram 重叠度**打分——近似重复（差几个标识符，正是改名的样子）接近 1，
+  无关函数远低；
+- 超过阈值就必须登记在 `KNOWN_ESCAPES` 并写明理由与处置（`dedup` / `structural`），
+  与 `KNOWN_DIVERGENT` 同一套纪律：**条目过期也是失败**（去重之后不删条目 ⇒ 红），
+  这样"豁免表"不会退化成"随便漂移的通行证"；
+- `--sweep` 打印最高分的跨名对与阈值，供重新定标（像 `run-gates --list`、`check-env-vars --list`）。
+
+**阈值是量出来的，不是拍的**：已知 4 对落在 **0.792–0.844**，第 5 名是 **0.662**
+（`parseLocalDay` ↔ `daysSinceText` —— 两个短日期助手仅仅"长得像"）。0.70 落在这道断层里，
+所以既抓得住真重复，也不必让人去承认巧合。把它定在 0.62 会多报两对假阳性，定在 0.85 会漏掉
+最低那对真重复。
+
+**当前被守住（并与 `KNOWN_DIVERGENT` 的分工写清）的 4 对**：
+
+| preset | host | 分数 | 处置 |
+|---|---|---|---|
+| `decodeZstdSessionLog` | `decodeSessionLog` | 0.844 | `dedup` |
+| `setTopFieldText` | `setTopField` | 0.836 | `dedup` |
+| `contentText` | `captureContentText` | 0.804 | `dedup` |
+| `runSessionCapture` | `scanSessionCapture` | 0.792 | `structural` |
+
+最后一对是**结构性**逃逸：host 把 112 行捕获循环从 `runSessionCapture` 里拆了出去（留下一个 10 行
+包装），而名字判据登记的正是那个包装 ⇒ 真正的循环体从未被比对。现在它由这个扫描比对，于是那段
+代码的漂移第一次有了足迹。
+
+**变异验证（两个方向都必须红）**：
+- **M11**：把 host 的 `setTopField` 改名为 `setTopFieldValue`（= 制造一个改名重复）⇒
+  新对与"条目过期"**两条同时红**；
+- **M13**：名字不变、给白名单那一对灌入约 90 个独特 token 使其相似度掉到 **0.598** ⇒
+  "条目过期"红。
+恢复后逐字节一致、exit 0。
+
+**这一步之后仍待做（P2-B 的去重本体）**：把 3 对标记 `dedup` 的重复实现合并成一份。合并的可行形态
+已在 `dsh/host/hook-frontmatter.mjs` 立过先例（规范实现 + 同相对 specifier 的 shim：package 布局解析到
+shim、离线扁平布局解析到规范文件本身，shim 记在 `NOT_EMBEDDED`）。**已探明的障碍**：
+`decodeSessionLog` 那一对不能简单合并——host 侧解压走的是**嵌入加载器注入的**
+`zstdDecompressSync`（这正是 `KNOWN_DIVERGENT` 为 `readSessionHeader` 记下的偏离），所以合并要把
+解压器**参数化**，而不是复制一份实现。
+
+**验证**：`node scripts/check-engine-sync.mjs` = 绿（23 个共享符号：17 同步 + 6 有记录偏离；
+4/4 改名重复已承认、0 过期、0 新增）；`node scripts/run-gates.mjs` = **47/49 passed, 2 skipped,
+0 failed**。
+
 ## 2026-09-26 · `.deepseek/config.md` 的创建口径统一（P2-A3）
 
 **先说我为什么没做原计划的 P2-A（把设置搬进 dsh `Config`）**：dsh 0.1.7 确实自带
