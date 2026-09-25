@@ -352,6 +352,44 @@ try {
   check('routes: /archive-episodes falls back to 90 days when maxDays is not a number',
     archEpDefault.status === 200 && archEpDefault.json?.moved === 0 && existsSync(freshEpisode),
     JSON.stringify({ moved: archEpDefault.json?.moved }));
+  // ── 5. the panel's own CLIENT half: dropdown data source + who carries the token ──
+  //
+  // 2026-09-26 real-machine failure: inside the sidebar (the proxied dsh web frontend)
+  // every /memory-panel/* call from the client half answered 403 `forbidden: bad or missing
+  // token`, because that half is a browser module and never sends the token (it cannot:
+  // the token is minted per plugin load and injected into the dsh process env). The
+  // proxy sits in the middle and holds it, so the proxy stamps `x-dsh-token`.
+  //
+  // The second, quieter consequence of the same 403 is why the "笔记 vault" field was a
+  // free-text box: /memory-panel/workspaces answered 403, so the client's workspace list
+  // stayed empty and its dropdown branch never rendered. Both are asserted here — the
+  // data source behaviourally, the proxy stamping at the artifact level (the proxy lives
+  // in the generated main.js and cannot be imported by a test).
+  setEnv('s3cret-token', vault);
+  const wsList = await call({ method: 'GET', path: '/memory-panel/workspaces', headers: { 'x-dsh-token': 's3cret-token' } });
+  check('routes: /workspaces answers the workspace list (the vault dropdown\'s data source)',
+    wsList.status === 200 && wsList.json?.ok === true && Array.isArray(wsList.json?.workspaces) && wsList.json.workspaces.length > 0,
+    JSON.stringify({ status: wsList.status, workspaces: wsList.json?.workspaces?.length }));
+  const wsListNoToken = await call({ method: 'GET', path: '/memory-panel/workspaces' });
+  check('routes: /workspaces is behind the same token wall (so the proxy stamp is what makes the dropdown work)',
+    wsListNoToken.status === 403);
+
+  // Whole-line `//` comments are dropped first: otherwise "comment out the injection"
+  // (the most likely way this regresses) would still satisfy the regexes below — the
+  // same trap `check-plugin-unload.mjs` had to fix on 2026-09-26.
+  const codeOnly = (text) => text.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
+  const built = codeOnly(readFileSync(new URL('../main.js', import.meta.url), 'utf8'));
+  const clientSource = codeOnly(readFileSync(new URL('../dsh/client-panel/src/index.jsx', import.meta.url), 'utf8'));
+  check('artifact: the memory-panel path matcher exists and covers the bare prefix',
+    /function isMemoryPanelPath\(url\)[\s\S]{0,220}path === '\/memory-panel' \|\| path\.startsWith\('\/memory-panel\/'\)/.test(built));
+  check('artifact: the path matcher ignores the query string (the token is never read from the URL)',
+    /function isMemoryPanelPath\(url\)[\s\S]{0,140}split\('\?'\)\[0\]/.test(built));
+  check('artifact: the proxy stamps x-dsh-token from the plugin\'s link-server token',
+    /headers\['x-dsh-token'\] = panelToken/.test(built)
+    && /const panelToken = this\.plugin\?\.linkServer\?\.token \?\? ''/.test(built)
+    && /isMemoryPanelPath\(req\.url\)/.test(built));
+  check('artifact: the client half ships a dropdown branch fed by /memory-panel/workspaces',
+    /workspaces\.length > 0 \?/.test(clientSource) && /"\/memory-panel\/workspaces"/.test(clientSource));
 } finally {
   if (savedEnv.token === undefined) delete process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN; else process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = savedEnv.token;
   if (savedEnv.newToken === undefined) delete process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN; else process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN = savedEnv.newToken;

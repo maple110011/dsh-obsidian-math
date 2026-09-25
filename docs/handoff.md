@@ -40,7 +40,7 @@
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
 | `scripts/test-memory.mjs` | 零 token 记忆回归（398 项断言，进 `npm test`） |
-| `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（47 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、四条写入型端点；进 `npm test`） |
+| `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（53 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、四条写入型端点；进 `npm test`） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 项：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写回归） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 项，对真实 dsh；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
 | `scripts/test-panel-present.mjs` | **呈现层**纯净决策回归（提取 `MemoryView` 的 `layerEntries`/`pendingItems`/`cardMeta`/`trendText` 四个方法并求值；测真源码，接缝挪走即报错） |
@@ -68,7 +68,7 @@
 
 **开关与共存 / 独立设置面板**：总开关 `enabled` + 粒度开关 `dialogueIndex`/`reminders`/`audit`；独立设置面板 = 工作区级 `.deepseek/config.md`（host-agnostic 配置文件）；**皮肤中心改为可选**（默认不挂载；Obsidian 设置「启用皮肤中心」开关把 `ui-skin-center` + `ui-web-ui-settings` 追加到 `notes-assistant.patch.yml`，需 web profile 镜像 `@linxin666` 包）。
 
-**QA 状态（2026-09-11 更新）**：`npm test` **28/28 门禁全绿**（记忆回归 **240/240**、路由 **47/47**、侧栏握手 8、反代 **32/32**）；合成 vault 引擎探针 12/12；**真实 vault 探针 12/12**（导航索引降权后恢复满格，未改任何 ground truth；另输出可达性分层与池化 A/B）；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。侧栏交互性能探针（`scripts/qa/sidebar-perf-probe.mjs`）按需运行，不进 CI。
+**QA 状态（2026-09-11 更新）**：`npm test` **28/28 门禁全绿**（记忆回归 **240/240**、路由 **53/53**、侧栏握手 8、反代 **32/32**）；合成 vault 引擎探针 12/12；**真实 vault 探针 12/12**（导航索引降权后恢复满格，未改任何 ground truth；另输出可达性分层与池化 A/B）；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。侧栏交互性能探针（`scripts/qa/sidebar-perf-probe.mjs`）按需运行，不进 CI。
 
 **宿主适配（2026-09-10，dsh 0.1.5-rc.1 + dsh-web-all 0.3.20）**：完整取证与清单见 [`docs/dsh-0.1.5-adaptation.md`](dsh-0.1.5-adaptation.md)。结论：解码与蒸馏路径**无需改动**（V3 仍是多帧无字典 zstd，事件名与 `source.kind==="user"` 判据不变）；profile patch / preset / `settings.section` 槽位在 0.1.5 下全部实测有效（boot 冒烟 + `/memory-panel/*` 均 200）。唯一真实缺陷是 **V3 迁移会为同一会话保留 V2 原件**，于是"一个会话两份都以 `.jsonl.zstd` 结尾的日志"成为长期状态；已按会话去重（**显式优先 `.v3.` 变体**，因为两者 mtime 可能同刻）修复，`findSessionLogs` 在切片前完成折叠，preset 与 host 两份副本同步。回归 126→138，`main.js` 已重建并已 `deploy-local` 到本机 vault / `$DSH_HOME`。
 
@@ -363,7 +363,7 @@
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 398 项零 token 回归 + 47 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
+npm test                        # 398 项零 token 回归 + 53 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile
@@ -406,6 +406,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **可维护性审查落地（docs/maintainability-review-2026-09-11.md）** | ✅ 已修（**五轮**）：① 面板未配置约束根 → 拒绝（P0-0，变异验证）；② 仓库根 `AGENTS.md` + 模板源改名 `vault-AGENTS.md` 消除自动注入（P0-1）；③ 验证链可信化——`run-node.mjs`（fd 捕获）+ `run-gates.mjs`（全跑汇总）+ doc-consistency 三态 + 计数自数（P0-2）；④ 双份实现守卫 `check-engine-sync.mjs`（**22** 个共享符号：16 同步 / 6 条有记录的偏离）（P0-3）；⑤ `client.js` 新鲜度门禁（P1-4）；⑥ 文档事实修正（capture-policy 默认关、strategy-layer 状态、版本横幅）（P1-1/P1-2）；⑦ 探针环境变量优先级与产品对齐（P1-8）；⑧ 嵌入清单完备性门禁 + `main.js` 本地新鲜度门禁（P2-10）；⑨ 面板路由补测（P2-9，44 → 现 **47** 项）；⑩ `AUDIT_SCHEMA_VERSION` 读侧真正生效（P2-5）+ 捕获路径三处静默失败改为 `warnings`（P2-7）+ 死代码删除 + `pathInside` 两引擎同名（P2-6 第一项）；⑪ frontmatter 边界规则单一化 + 行为等价门禁（P1-6）；⑫ 全仓文档漂移排查（产品名 `dsh web ui` → `dsh web`、遗留 `pathIsInside`、错误的 Phase 4 横幅、过期的适配状态）+ `check-rename.mjs` 第二条改名守卫（P2-4）；⑬ `CHANGELOG.md` 的 `[0.7.5]` 节重编（只留「修了什么/改了什么」，排查叙述移入 `docs/changelog.md`）；⑭ 环境变量单一参考 `docs/env-vars.md` + 双向守卫 `check-env-vars.mjs`（P2-8）；⑮ 发布面钉住 + 本机路径扫描 `check-release-paths.mjs`（P2-2，先证伪"值不值得修"再设防）；⑯ 反馈 token 半途改名的收尾（两侧同序 + 插件双注入 + 3 项回归）；⑰ 用户可见面的示例 vault 路径（P2-2 的第二半）、语义常量锚到代码（P2-1）、基准验收声明对齐证据（P2-11）；⑱ 呈现层首次有自动化测试（P1-3，且当场抓到 `上次 undefined`）。门禁 **33/33**。台账见 `docs/maintainability-fixes-2026-09-11.md` | 完成（余项见下） |
 | **frontmatter 六个各自为政的解析器（P1-6）** | ✅ 已修（2026-09-11）：那个划边界的正则原本复制 **15 处**（`math-memory.mjs` 12 / `memory-admin.mjs` 1 / `note-tools.mjs` 2），现全部归零，规则收进 `dsh/preset/hook-frontmatter.mjs`。宿主树**不能** import 它（插件用 `new Function` 注入绑定），故保留一份拷贝并由新门禁 `check-frontmatter-source.mjs` 做**行为等价**校验（13 fixture）；另把「hook 解析器在插件里还能用吗」补进 `check-embedded-loader.mjs`（此前零覆盖）。`npm test` **29/29** | 完成 |
 | **host 与 preset 的 `frontmatterSpan` 仍是两份** | 上一条的**有意**残留：`memory-admin.mjs` 那份因 loader 注入契约而无法删除。现在有行为等价门禁兜着，**不是**待修的缺口；若要合并成一份，得先改 `main.template.js` 的注入清单与 `check-embedded-loader.mjs`，收益（少 8 行）小于风险 | 不做（已记录） |
+| **面板 token 的"最后一公里"** | ✅ 已修（2026-09-26）：改名那轮只保证了**两侧读同一个名字**，但**客户端半个压根不发送** token——它跑在被代理的 dsh web 前端里，不可能知道每次插件加载随机生成的 `DSH_MATH_MEMORY_FEEDBACK_TOKEN` ⇒ 侧栏面板的每一次 `/memory-panel/*` 都是 403（`forbidden: bad or missing token`）。同一个 403 还让 `/memory-panel/workspaces` 恒为空，于是「笔记 vault」从**下拉静默退化**成自由文本框。修法：代理在 `upstreamOptions()` 里对 `/memory-panel/*` 盖 `x-dsh-token`（密钥不进 URL、不进页面 JS，客户端半个零改动）；路径判定抽成 `isMemoryPanelPath()`。守卫：`test-panel-routes.mjs` 47 → **53** 项（行为侧 + 产物级断言，先剥整行注释；**变异 M20**：注释掉注入 ⇒ 53→52 恰好一条红）。**仍未做**：`web` profile（3080）不自动安装客户端半个，所以主 web 里的面板仍走"设置页里配 URL"的老路 | 完成 |
 | **反馈 token 的改名** | ✅ 已完成（2026-09-11，第五轮）：原先 preset 读「新 ?? 旧」而面板**只读旧名** ⇒ 无论插件注入哪个名字，总有一侧看不见它。现在**两侧读同一对、同一顺序**，且 **Obsidian 插件同时注入两个名字**（插件与 npm 包可分别升级，只发新名会打断旧消费者）。回归新增 3 项（新名单独生效 / 只设新名时被强制 / **两个都设时新名优先**，`test-panel-routes.mjs` §4b）；**变异验证**：把面板改回只读旧名 → 2 项失败并报 `{"newName":403,"oldName":200}`（顺序被反转，正是要防的形态）。注：3 项里有 1 项（"新名单独被接受"）在旧代码下也通过，**不承重**，承重的是另外两项 | 完成 |
 | **环境变量参考（P2-8）** | ✅ 已修（2026-09-11）：新增 `docs/env-vars.md`（**11 个 `DSH_*`** + 4 个平台/开发变量的唯一参考，含三对别名的优先级、死开关、已知缺口）+ `scripts/check-env-vars.mjs`（第 **30** 个门禁，**双向**核对，含"死开关不得被读"的反向规则；三项变异验证）。清单由脚本**从代码提取**，不凭记忆 | 完成 |
 | **历史档案里的旧名与旧状态** | **刻意不追改**（改了会毁掉"当时是什么样"的证据）：已发布的 CHANGELOG 段落、`maintainability-review-*` / `project-assessment-*`（日期化审计）、已退役的 `docs/archive/REFACTOR-PLAN.md` 正文、`docs/dsh-panel-research.md` 正文（已加日期化更正块）、`docs/changelog.md` 的历史条目。`check-rename.mjs` 用「路径 + 理由」白名单豁免它们——**要改历史记录，得先写下理由** | 不做（设计如此） |

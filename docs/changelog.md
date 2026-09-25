@@ -85,6 +85,45 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 侧栏面板 403 与"vault 路径变成文本框"是同一个缺口：客户端半个不带 token
+
+**两个症状**（实机同一时刻）：
+1. 侧栏里打开记忆面板，报 `错误：forbidden: bad or missing token`；
+2. 「笔记 vault」字段是个**自由文本框**，填了路径也不生效。
+
+**一个根因**：面板的**客户端半个**（`dsh/client-panel/src/index.jsx`，跑在被代理的 dsh web 前端里）
+**从来不发送 token**——它不可能知道：token 是**每次插件加载时随机生成**的，通过
+`DSH_MATH_MEMORY_FEEDBACK_TOKEN` 注入 dsh 子进程，宿主半个（`dsh/host/math-memory-panel.mjs`）
+据此校验（未设置时放行；设置了就必须带对，见该文件的 `panelToken`/`tokenMatches`）。
+于是客户端半个的每一次 `/memory-panel/*` 都是 403 ✓。
+
+第 2 个症状是这个 403 的**隐蔽后果**：客户端半个本来就有下拉分支——
+```jsx
+const res = await fetch("/memory-panel/workspaces");
+if (json && json.ok && Array.isArray(json.workspaces)) setWorkspaces(json.workspaces);
+…
+{workspaces.length > 0 ? (<select …>) : (<input …>)}
+```
+`/memory-panel/workspaces` 被 403 掉 ⇒ `workspaces` 恒为空 ⇒ 退化成文本框。
+（宿主半个**早就有**这个路由，且按仓库规矩从 `ctx.workspaceRegistry` 取根，不用请求里的 `root` ✓。）
+
+**修法**：由**代理**替客户端半个盖章。代理（`DshWebProxy`）就在中间、构造时拿着 plugin 引用，
+`plugin.linkServer.token` 就是注入子进程的那个值 ⇒ 在 `upstreamOptions()` 里对
+`/memory-panel/*` 的请求加 `x-dsh-token`。这样密钥**不进 URL、不进页面 JS**，客户端半个一行都不用改。
+路径判定抽成 `isMemoryPanelPath(url)`（接受裸前缀与子路径、忽略 query，明确"token 不从 URL 取"）。
+
+**守卫**：`test-panel-routes.mjs` 从 47 项增到 **53** 项——行为侧断言 `/workspaces` 返回工作区列表
+（下拉的数据源）且同样在 token 墙后；产物侧断言路径判定与代理盖章存在、客户端半个确有下拉分支。
+断言先剥掉整行 `//` 注释（否则"把注入注释掉"这种最常见的退化会骗过正则——`check-plugin-unload.mjs`
+2026-09-26 刚踩过同一个坑）。**变异验证 M20**：把产物里的 `headers['x-dsh-token'] = panelToken;`
+注释掉 ⇒ 53 → 52，恰好那一条红；还原后 53/53。
+
+**顺带收获**：这几条读 `main.js` 的断言**同时也是"改了模板必须重建"的守卫**——`git checkout -- main.js`
+回到旧构建时它们立刻红（50/53）。
+
+**真机状态**：新 `main.js`（732,080 字节）已部署到 vault；重启 Obsidian 后侧栏面板应不再 403，
+且「笔记 vault」应变成**从工作区列表里选**的下拉。
+
 ## 2026-09-26 · 面板客户端包"只拷不声明"（真缺口，但**不是**下面那次故障的病因）
 
 ⚠️ **因果更正**：本节最初把"每一轮回复都失败"归因于这个缺口。**错了**——真正的原因是 profile 清单缺

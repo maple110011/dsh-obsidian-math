@@ -185,6 +185,18 @@ const DEFAULT_SETTINGS = {
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
+/**
+ * True when a proxied request targets the memory panel's own route prefix.
+ *
+ * The panel's client half calls bare absolute paths (`/memory-panel/state?…`), so the
+ * test must accept the prefix itself and anything under it, and must ignore the query
+ * string (the token is injected by the proxy, never taken from the URL).
+ */
+function isMemoryPanelPath(url) {
+  const path = String(url ?? '').split('?')[0];
+  return path === '/memory-panel' || path.startsWith('/memory-panel/');
+}
+
 function ensureFile(target, content, overwrite = false) {
   if (!overwrite && existsSync(target)) return false;
   mkdirSync(dirname(target), { recursive: true });
@@ -1117,6 +1129,15 @@ class DshWebProxy {
   upstreamOptions(req) {
     const headers = { ...req.headers, host: this.publicAuthority };
     if (this.cookie !== '') headers.cookie = this.cookie;
+    // 记忆面板的**客户端半个**跑在侧栏那个被代理的 dsh web 前端里，它并不知道面板 token
+    // （token 每次插件加载时随机生成，通过 `DSH_MATH_MEMORY_FEEDBACK_TOKEN` 注入 dsh 子进程，
+    // 宿主半个据此校验）。少了这个头，客户端半个的每一次 `/memory-panel/*` 都是 403
+    // `forbidden: bad or missing token` —— 而 `/memory-panel/workspaces` 被挡掉还有一个隐蔽后果：
+    // 「笔记 vault」字段拿不到工作区列表，于是从**下拉选择**悄悄退化成**自由文本框**
+    // （2026-09-26 实机）。代理正好在中间且手里就有 token，所以由它盖这个头，
+    // 而不是把密钥塞进 URL 或页面 JS。
+    const panelToken = this.plugin?.linkServer?.token ?? '';
+    if (panelToken !== '' && isMemoryPanelPath(req.url)) headers['x-dsh-token'] = panelToken;
     // Rewriting a body is only possible while the response is not compressed
     // (measured: dsh answers gzip whenever the client advertises it). Loopback
     // bandwidth is free; only the two rewritten responses are affected.
