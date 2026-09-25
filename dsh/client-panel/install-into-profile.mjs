@@ -25,13 +25,17 @@
 // 具体原因见 `OVERLAY_FILE` 的注释，那里也是这个功能的真实故障记录。
 //
 // 用法（CLI）：node dsh/client-panel/install-into-profile.mjs --profile-home <dir>
-import { mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const repo = resolve(root, "..", "..");
 export const CLIENT_PKG = "@dsh-math-memory/client-ui-memory-panel";
+/** Where the same tree is staged so the profile can declare a `file:` dependency on it. */
+export const STAGING_DIR = ".dsh-client-panel";
+/** The `file:` spec the profile's package.json must carry (see the declaration block below). */
+export const DEP_SPEC = "file:.dsh-client-panel";
 const PKG = CLIENT_PKG;
 
 /**
@@ -143,11 +147,31 @@ function findIdOwners(profileHome, want) {
 }
 
 /**
+ * Copy a directory tree with an explicit walk.
+ *
+ * Deliberately NOT `fs.cpSync`: on this machine it failed with
+ * `EIO, Access is denied` while creating the destination under the real
+ * `$DSH_HOME` profile (the same call succeeds in %TEMP%, so it is an
+ * environment/AV artifact rather than a permissions rule) — and the declaration
+ * this copy exists for must not depend on that. mkdir + copyFile is boring and
+ * works.
+ */
+function copyTree(from, to) {
+  mkdirSync(to, { recursive: true });
+  for (const name of readdirSync(from)) {
+    const source = join(from, name);
+    const target = join(to, name);
+    if (statSync(source).isDirectory()) copyTree(source, target);
+    else copyFileSync(source, target);
+  }
+}
+
+/**
  * 把客户端半个装进 `profileHome`（幂等）。
  *
  * @param profileHome - profile 目录（含 `cordis.patch.yml`）。
  * @param opts.quiet - true 时不打印进度（安装器里会自己记日志）。
- * @returns {{ ok: boolean, pkgDir: string, inserted: boolean, error?: string }}
+ * @returns {{ ok: boolean, pkgDir: string, inserted: boolean, declared?: boolean, error?: string }}
  */
 export function installClientIntoProfile(profileHome, opts = {}) {
   const log = opts.quiet === true ? () => {} : (m) => console.log(m);
@@ -243,6 +267,48 @@ export function installClientIntoProfile(profileHome, opts = {}) {
   };
   writeFileSync(join(pkgDir, "package.json"), JSON.stringify(pkgJson, null, 2) + "\n", "utf8");
   log("installed package into: " + pkgDir);
+
+  // ⚠️ 只把包拷进 node_modules 是不够的：**必须同时在 profile 的 package.json 里声明它**。
+  //
+  // 2026-09-26 实机故障：那个 profile 里每一轮回复都失败，报
+  //   `DeepSeek request extension preparation failed`（code REQUEST_EXTENSION）。
+  // 真凶是 dsh 默认开启的请求扩展 `@deepseek-ai/dsh-plugin-package-inventory-deepseek`
+  // （dsh-base 的 patch 里一行，无 config ⇒ 默认 enabled:true）：它的 prepare 会遍历
+  // **所有活动行**，对**裸包名**查运行时解析图，查不到就抛
+  // `cannot resolve active package "<name>"`。而 dsh 的解析图由上游
+  // `dsh-app-boot` 的 `installedProfilePackageNames()` 给出，判据是
+  //   profile 的 package.json 的 dependencies ∪ peerDependencies，**且**
+  //   该名字在 profile 的 node_modules 里真有 package.json。
+  // 我们此前只满足后者 ⇒ 面板的客户端行（`@dsh-math-memory/client-ui-memory-panel`）
+  // 是"激活的、裸包名、不在图里"⇒ 每一次请求的准备阶段都抛。
+  //
+  // 声明成 `file:` 指向 profile 内的稳定目录（而不是 node_modules 里那份自己），
+  // 是为了让 pnpm 也认这个依赖：`file:` 目标必须真实存在，所以下面把同一棵树再放一份。
+  // 两份内容一致；node_modules 那份负责"立即可加载 + 满足图的存在性判据"，
+  // `.dsh-client-panel` 那份只作为 pnpm 可解析的来源。
+  const stagingDir = join(home, STAGING_DIR);
+  try {
+    copyTree(pkgDir, stagingDir);
+  } catch (error) {
+    result.error = `无法准备依赖声明用的目录 ${stagingDir}: ${String(error)}`;
+    log(result.error);
+    return result;
+  }
+  const profilePkgPath = join(home, "package.json");
+  let profilePkg = {};
+  try {
+    profilePkg = JSON.parse(readFileSync(profilePkgPath, "utf8"));
+  } catch {
+    profilePkg = {};
+  }
+  if (profilePkg === null || typeof profilePkg !== "object") profilePkg = {};
+  const dependencies = { ...(profilePkg.dependencies ?? {}) };
+  if (dependencies[PKG] !== DEP_SPEC) {
+    dependencies[PKG] = DEP_SPEC;
+    writeFileSync(profilePkgPath, JSON.stringify({ ...profilePkg, dependencies }, null, 2) + "\n", "utf8");
+    result.declared = true;
+    log(`declared ${PKG} = "${DEP_SPEC}" in ${profilePkgPath}`);
+  }
 
   // ⚠️ 先查 id 冲突，**再**下结论。cordis 对重复 id 是硬失败（整个 profile 起不来），
   // 而"写进去之后才发现"意味着用户已经拿到一个坏 profile —— 2026-09-21 就是这样把用户的

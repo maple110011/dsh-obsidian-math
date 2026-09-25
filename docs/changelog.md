@@ -85,6 +85,52 @@
 > 失去一半断言目标。误读风险改由文档承担（`dsh-0.1.7-adaptation.md` §4.4(a) 已写明门禁读的是
 > `peerDependencies`）。
 
+## 2026-09-26 · 实机测试抓到的第三个缺陷：每一轮回复都失败（请求扩展准备）
+
+**症状**：侧栏里每一轮回复都失败，报
+`本轮运行失败 DeepSeek request extension preparation failed`。会话日志显示它在 `request/context`
+之后约 30 ms 就 `turn/end: error` ⇒ **HTTP 之前**、**没花任何 token**。
+
+**定位过程**（值得记，因为每一步都排除了一个看起来很像的嫌疑）：
+1. 上游只有一处抛这句话：`@deepseek-ai/dsh-llm-deepseek` 的 `prepareRequestExtensions`，它把真正的
+   `cause` 包在里层，UI/会话日志**只留外层**；
+2. 贡献请求字段的插件只有两个，都在 `dsh-base`：`session-log-deepseek`（opt-in，默认关）与
+   `plugin-package-inventory-deepseek`（**默认开**）；后者的 `resolve()` 是唯一会抛的地方
+   （`cannot resolve active package "<name>"`）；
+3. 第一次复现（headless profile 里插一行"存在但未声明"的裸包名）**没触发** —— 因为那一行 inject
+   `webServer`/`workspaceRegistry`，headless 里没有这些服务，于是它**从未被激活**，而该扩展只看
+   **活动行**（`fiber.state === 2`）。这条"看起来证伪"的实验其实什么都没测。
+4. 用真 profile 的插件集 + 无头 app 复现也没触发（缺 web app 的那些服务）；
+5. 最后用**二分法**在真机的 profile 层关掉那个扩展 ⇒ **回复立刻恢复正常** ⇒ 确认贡献者。
+
+**根因（读上游代码确认）**：dsh 的运行时解析图由 `dsh-app-boot` 的
+`installedProfilePackageNames()` 构建，判据是
+> profile 的 `package.json` 的 **`dependencies` ∪ `peerDependencies`**，**且**该名字在
+> profile 的 `node_modules/<name>/package.json` 真的存在。
+
+而我们的**面板客户端半个**只满足后半条：`install-into-profile.mjs` 把包**拷进** `node_modules` 却
+**从不在 profile 的 package.json 里声明它**。于是那一行是"激活的、裸包名、不在图里" ⇒ 默认开启的
+清单扩展每次准备请求时抛错 ⇒ **每一轮回复都失败**。它只在"CLI 装过客户端半个"的 profile 上复现
+（Obsidian 单独引导的 profile 里那个包不存在 ⇒ 行不是活动的 ⇒ 不会崩，只是没有面板客户端半个）。
+
+**修法**：安装器在拷贝之后**同时声明**——把同一棵树再放一份到 profile 内的稳定目录
+`.dsh-client-panel/`，并在 profile 的 `package.json` 里写
+`"@dsh-math-memory/client-ui-memory-panel": "file:.dsh-client-panel"`。
+`file:` 指向 profile 内、目标目录真实存在，所以 pnpm 也认这个依赖（用版本号会去 registry 取，用
+`node_modules` 里那份自己会成自引用）。两份内容一致：`node_modules` 那份负责"立即可加载 + 满足图的
+存在性判据"，`.dsh-client-panel` 那份只作为 pnpm 可解析的来源。
+
+**踩到的坑**：第一版用 `fs.cpSync` 拷贝，在真实 `$DSH_HOME` 下报 `EIO, Access is denied`（同一个调用在
+`%TEMP%` 下成功 ⇒ 环境/杀软产物而非权限规则）。改成显式 `readdir + mkdir + copyFile` 的朴素实现，
+并把原因写进注释。
+
+**守卫**：`check-client-package-layout.mjs` 增 4 条断言——profile **声明**了它、`file:` 目标目录真实存在、
+`node_modules` 里存在（图的存在性判据）、重复安装不会反复改写声明（幂等）。
+
+**验证**：`node scripts/run-gates.mjs` = **50/50 passed, 0 skipped**；真机二分：关掉扩展 ⇒ 回复恢复；
+随后撤掉临时禁用、应用声明修法（真 profile 的 `dependencies` 已含该 `file:` 声明、staging 目录与
+`node_modules` 均在位）。
+
 ## 2026-09-26 · 实机测试抓到的第二个缺陷：卸载插件时漏掉代理监听
 
 **症状**（用户机器上）：重载插件后侧栏报 `dsh 服务未能在端口 3180 上启动`，而日志同时显示 dsh 子进程

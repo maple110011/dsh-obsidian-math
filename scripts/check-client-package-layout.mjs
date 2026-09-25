@@ -29,6 +29,8 @@ import {
   CLIENT_PKG,
   CLIENT_ENTRY_REL,
   CLIENT_INSERT_ID,
+  DEP_SPEC,
+  STAGING_DIR,
   collectDshImportClosure,
   installClientIntoProfile
 } from '../dsh/client-panel/install-into-profile.mjs';
@@ -86,6 +88,27 @@ try {
   const loaded = await loadEntry(pkgDir);
   check('the built package IMPORTS', loaded.mod.name === 'math-memory-host', String(loaded.mod.name));
   check('the built package exposes apply()', typeof loaded.mod.apply === 'function');
+
+  // ── the DECLARATION, not just the copy (2026-09-26, real-machine failure) ──
+  //
+  // dsh's runtime resolution graph is built by `installedProfilePackageNames()`:
+  // the profile's `dependencies ∪ peerDependencies` FILTERED to names that really
+  // have `node_modules/<name>/package.json`. A package that is merely COPIED in
+  // satisfies only the second half, so the default-on request extension
+  // `@deepseek-ai/dsh-plugin-package-inventory-deepseek` throws
+  // `cannot resolve active package "<our row>"` during request preparation — and
+  // that failed EVERY reply in the notebook profile
+  // (`DeepSeek request extension preparation failed` / REQUEST_EXTENSION).
+  const declared = JSON.parse(readFileSync(join(homeA, 'package.json'), 'utf8'));
+  check('the profile DECLARES the client package (dependencies)', declared.dependencies?.[CLIENT_PKG] === DEP_SPEC,
+    JSON.stringify(declared.dependencies ?? {}));
+  check('the declared `file:` spec has a real target directory (pnpm-resolvable)',
+    existsSync(join(homeA, STAGING_DIR, 'package.json')));
+  check('the declared package is present in node_modules (the graph\'s existence filter)',
+    existsSync(join(pkgDir, 'package.json')));
+  const again = installClientIntoProfile(homeA, { quiet: true });
+  check('re-installing does not churn the declaration (idempotent)',
+    again.ok === true && again.declared !== true);
 
   // The inject names are package-name dependency edges; if the installed tree is
   // discoverable, they must actually exist there.
