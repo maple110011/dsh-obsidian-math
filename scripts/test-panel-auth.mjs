@@ -8,14 +8,19 @@
 // assets, an /api call and the websocket mux all arrive THROUGH the proxy —
 // which is exactly what the Obsidian iframe does.
 //
-// It requires the installed dsh and the notes-assistant profile; when either is
-// missing it reports SKIP and exits 0 so a fresh clone and CI stay green.
+// It requires the installed dsh. If the machine has a DEPLOYED notes-assistant profile it is tested
+// as-is (that is the real thing the user runs); otherwise the suite provisions an equivalent profile
+// offline into a throwaway `$DSH_HOME` and tests that. Either way it RUNS — see the note below.
 import { readFileSync, existsSync, openSync, closeSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { deployPresetBody, presetReaderFromDir, PRESET_ID } from '../dsh/preset/preset-deploy.mjs';
+import { PROFILE_SCAFFOLD_FILES } from '../dsh/preset/profile-contract.mjs';
+import { copyFileSync, mkdirSync } from 'node:fs';
 
 const template = readFileSync('obsidian/main.template.js', 'utf8');
 
@@ -56,12 +61,47 @@ function classSource(name) {
   throw new Error(`unbalanced braces for ${name}`);
 }
 
-const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
+const realDshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
 const installDir = join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@deepseek-ai', 'dsh');
 const binJs = join(installDir, 'lib', 'bin.js');
-const patch = join(dshHome, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
+const realPatch = join(realDshHome, 'profiles', PRESET_ID, 'notes-assistant.patch.yml');
+
+// ⚠️ THIS GATE USED TO SKIP WHENEVER THE MACHINE HAD NO DEPLOYED PROFILE, AND THAT IS EXACTLY WHEN
+// THE PROXY WAS UNCOVERED. The proxy half (`DshWebProxy`) is unique to this suite — the
+// self-provisioning sibling (`test-real-profile-accept.mjs`) proves bundle boot + handshake + roster
+// + session/create, but never exercises the reverse proxy, the 401 relay, the launch-token redemption
+// or the websocket upgrade. So on a machine whose `$DSH_HOME` had been reset (or a fresh clone, or
+// CI) eight proxy assertions silently became zero, which the repo's own rules call out: a SKIP is not
+// a pass (docs/handoff.md trap 98).
+//
+// Now the profile is a PRECONDITION WE SATISFY OURSELVES: a deployed one is used when present (that
+// is the artifact users actually run), and otherwise an equivalent one is staged offline into a
+// throwaway home. Only a missing dsh installation still skips.
+let dshHome = realDshHome;
+let patch = realPatch;
+let ownedHome = null;
+if (!existsSync(realPatch)) {
+  ownedHome = mkdtempSync(join(tmpdir(), 'dsh-auth-home-'));
+  const profileRoot = join(ownedHome, 'profiles', PRESET_ID);
+  mkdirSync(profileRoot, { recursive: true });
+  const scaffoldDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'dsh', 'profile');
+  // The scaffold is what the installer copies; take the list from the contract so this cannot drift
+  // into a fourth hand-written inventory (docs/handoff.md trap 96).
+  for (const name of PROFILE_SCAFFOLD_FILES) {
+    const from = join(scaffoldDir, name);
+    if (existsSync(from)) copyFileSync(from, join(profileRoot, name));
+  }
+  deployPresetBody({
+    home: ownedHome,
+    read: presetReaderFromDir(join(scaffoldDir, '..', 'preset')),
+    profile: PRESET_ID
+  });
+  dshHome = ownedHome;
+  patch = join(profileRoot, 'notes-assistant.patch.yml');
+  console.log(`note  no deployed profile at ${realPatch} — provisioned an offline one at ${patch}`);
+}
 if (!existsSync(binJs) || !existsSync(patch)) {
-  console.log('__SKIP__ panel-auth-e2e (needs an installed dsh + notes-assistant profile)');
+  console.log('__SKIP__ panel-auth-e2e (needs an installed dsh)');
   console.log(`  binJs: ${binJs} (${existsSync(binJs)})`);
   console.log(`  patch: ${patch} (${existsSync(patch)})`);
   process.exit(0);
@@ -176,6 +216,8 @@ try {
     await Promise.race([gone, sleep(3000)]);
   }
   if (logDir !== null) rmSync(logDir, { recursive: true, force: true });
+  // Only ever our own throwaway home; a DEPLOYED profile must survive this suite untouched.
+  if (ownedHome !== null) rmSync(ownedHome, { recursive: true, force: true });
 }
 
 if (skipReason !== null) {
