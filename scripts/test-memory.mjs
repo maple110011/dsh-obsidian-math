@@ -324,7 +324,15 @@ const navSection = buildMemorySection(
   { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
   'live-session', { sources: [], entries: [] }, undefined, '');
 check('nav: static navigation layers present',
-  navSection.includes('用户画像与稳定偏好') && navSection.includes('研究主题索引') && navSection.includes('记忆记录摘要') && navSection.includes('近期事件时间线'));
+  navSection.includes('用户画像与偏好') && navSection.includes('研究主题索引') && navSection.includes('记忆记录摘要') && navSection.includes('近期事件时间线'));
+// D3-A (2026-09-26): the whole-file layers are notes, not facts, and their own headings must say so —
+// the injected meta layer already warns "不要当作完整证据", so a heading calling them 事实 contradicts it.
+const headingOf = (prefix) => navSection.split('\n').find((line) => line.startsWith(prefix)) ?? '';
+// The POSITIVE half of D3-A (every layer heading must warn "notes, not settled facts") needs those
+// layers to EXIST — this fixture has none of them yet, so it lives in §9 below with a purpose-built
+// fixture. What is asserted here is the negative half, which holds regardless.
+check('nav: NO heading claims these are facts (the unqualified 稳定偏好 / 类型化原子事实 wording is gone)',
+  !navSection.includes('稳定偏好') && !navSection.includes('类型化原子事实'));
 check('nav: notation system injected', navSection.includes('记号体系') && navSection.includes('Wasserstein 距离'));
 check('nav: no per-request recall section', !navSection.includes('本轮记忆召回'));
 check('nav: total memory section is bounded', navSection.length <= MAX_TOTAL_MEMORY_CHARS, `len=${navSection.length}`);
@@ -3249,13 +3257,25 @@ check('archive: a real memory card is still archived',
     'live-session', { sources: [], entries: [] }, undefined, '');
   // Assert on the PROFILE'S OWN title line: the whole section also carries notes for the other
   // whole-file layers (notation/topics), so a section-wide `includes` cannot tell them apart.
-  const profileTitle = () => sectionWith().split('\n').find((line) => line.startsWith('### 用户画像与稳定偏好')) ?? '';
+  const profileTitle = () => sectionWith().split('\n').find((line) => line.startsWith('### 用户画像与偏好')) ?? '';
   writeFileSync(profilePath, '# 画像\n\n- 喜欢简洁\n', 'utf8');
   check('section note: a profile with NO user-confirmation trace is declared as AI-summarized',
     profileTitle().includes('其中含 AI 归纳'), profileTitle());
   writeFileSync(profilePath, '---\nverified_by: user\n---\n# 画像\n\n- 喜欢简洁\n', 'utf8');
   check('section note: a witnessed profile does NOT carry that note',
     !profileTitle().includes('其中含 AI 归纳'), profileTitle());
+  // D3-A positive half: with the layers actually present, EVERY layer heading that injects content must
+  // warn that it is notes rather than settled facts (two honest phrasings are accepted).
+  writeFileSync(join(root, '.deepseek', 'memory', 'notation.md'), '# 记号\n\n| $W_p$ | Wasserstein |\n', 'utf8');
+  mkdirSync(join(root, '.deepseek', 'memory', 'topics'), { recursive: true });
+  writeFileSync(join(root, '.deepseek', 'memory', 'topics', 'index.md'), '# 主题\n\n- [[convergence]]\n', 'utf8');
+  const headings = sectionWith().split('\n').filter((line) => line.startsWith('### '));
+  const honesty = ['### 用户画像与偏好', '### 记号体系', '### 研究主题索引', '### 记忆记录摘要']
+    .map((prefix) => headings.find((line) => line.startsWith(prefix)) ?? '')
+    .filter((line) => line !== '');
+  check('D3-A: every layer heading that injects content declares "notes, not settled facts"',
+    honesty.length === 4 && honesty.every((line) => /不是(外部)?事实|不得当作已核实事实/.test(line)),
+    honesty.map((line) => line.slice(0, 26)).join(' | '));
 }
 {
   // P3(a): evidence findings are listed BEFORE the improvement lists, because the checklist is

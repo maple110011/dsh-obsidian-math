@@ -3841,9 +3841,9 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   );
 
   if (profile !== "") {
-    lines.push("", `### 用户画像与稳定偏好（.deepseek/memory/profile.md${unconfirmedSectionNote(profile)}）`, "", profile);
+    lines.push("", `### 用户画像与偏好（.deepseek/memory/profile.md；**是笔记里的说法，不是事实**${unconfirmedSectionNote(profile)}）`, "", profile);
   } else {
-    lines.push("", "### 用户画像与稳定偏好", "", "（尚未建立。按 AGENTS.md 在首次对话后创建 .deepseek/memory/profile.md。）");
+    lines.push("", "### 用户画像与偏好", "", "（尚未建立。按 AGENTS.md 在首次对话后创建 .deepseek/memory/profile.md。）");
   }
 
   // Notation system: always relevant (like the profile), injected bounded.
@@ -3851,11 +3851,11 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   // are in AGENTS.md (收集→统一→维护).
   const notation = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "notation.md"), budgets.notation);
   if (notation !== "") {
-    lines.push("", `### 记号体系（.deepseek/memory/notation.md；收集→统一→维护，回复时遵循已采纳记号，发现不一致按 AGENTS.md 提议统一${unconfirmedSectionNote(notation)}）`, "", notation);
+    lines.push("", `### 记号体系（.deepseek/memory/notation.md；**是笔记里采纳的记号，不是外部事实**；收集→统一→维护，回复时遵循已采纳记号，发现不一致按 AGENTS.md 提议统一${unconfirmedSectionNote(notation)}）`, "", notation);
   }
 
   if (topics !== "") {
-    lines.push("", `### 研究主题索引（.deepseek/memory/topics/index.md${unconfirmedSectionNote(topics)}）`, "", topics);
+    lines.push("", `### 研究主题索引（.deepseek/memory/topics/index.md；**是笔记里的说法，不是事实**${unconfirmedSectionNote(topics)}）`, "", topics);
   } else {
     lines.push("", "### 研究主题索引", "", "（尚未建立。按 AGENTS.md 在 .deepseek/memory/topics/index.md 维护主题条目。）");
   }
