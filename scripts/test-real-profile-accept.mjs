@@ -39,6 +39,14 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { removeIsolatedHome } from './lib/isolated-dsh-home.mjs';
+// A′ S2 (docs/bundle-channel-plan-2026-09-26.md): the profile under test is now built by the SAME
+// module the offline channels will use, instead of `cpSync`-ing the repo's `dsh/` tree. That turns this
+// gate into the decisive check for package-ization: if a materialized bundle cannot cold-start a real
+// dsh (offline, no pnpm), the whole A′ direction is wrong and we learn it here rather than after wiring
+// two callers. It also covers trap 97's shape (the cold-start first time).
+import { materializeLocalBundle, localBundleSourceFiles, localBundleAddArgs } from '../dsh/profile/local-bundle.mjs';
+import { collectDshImportClosure } from '../dsh/client-panel/install-into-profile.mjs';
+import { PRESET_BODY_FILES } from '../dsh/preset/profile-contract.mjs';
 
 let passed = 0;
 let total = 0;
@@ -72,7 +80,7 @@ const workspace = join(tmpdir(), 'dsh-accept-workspace');
 let child = null;
 let logDir = null;
 
-/** Build the profile the way `dsh plugin add` leaves it (minus pnpm). */
+/** Build the profile the way the offline (package-ized) channel will, offline and without pnpm. */
 function provisionProfile() {
   const profileDir = join(home, 'profiles', PROFILE);
   mkdirSync(profileDir, { recursive: true });
@@ -90,11 +98,38 @@ function provisionProfile() {
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-math-memory'] } }
   }, null, 2) + '\n', 'utf8');
 
-  // The installed package, copied — `dsh plugin add` would fetch exactly this.
+  // A′: materialize the package into the profile's staging dir (exactly what the offline channel will
+  // do), then place it where `dsh plugin add` would have linked it. The staging step is kept in the
+  // path on purpose — it is the code under test, and copying the result is what pnpm's `file:` link
+  // amounts to for our purposes.
+  const rootPkg = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8'));
+  let files = localBundleSourceFiles({
+    repoRoot: repo,
+    collectClosure: collectDshImportClosure,
+    presetBodyFiles: PRESET_BODY_FILES
+  });
+  // Test seam (S2's mutation check, 2026-09-26): the plan requires proving this gate goes RED when the
+  // materialized package is missing a preset body file. Without a seam the mutation would have to be
+  // applied to the repo — which cannot be done while the suite is running it. OFF unless set.
+  const drop = process.env.DSH_TEST_DROP_BUNDLE_FILE;
+  if (typeof drop === 'string' && drop !== '') files = files.filter((rel) => rel !== drop);
+  const read = (rel) => {
+    try { return readFileSync(join(repo, ...rel.split('/'))); } catch { return null; }
+  };
+  const res = materializeLocalBundle({
+    profileDir,
+    files,
+    read,
+    meta: {
+      name: rootPkg.name,
+      version: rootPkg.version,
+      description: rootPkg.description,
+      dshEngine: rootPkg.peerDependencies?.['@deepseek-ai/dsh'] ?? rootPkg.dsh?.engines?.dsh
+    }
+  });
   const pkgDir = join(profileDir, 'node_modules', 'dsh-math-memory');
-  mkdirSync(pkgDir, { recursive: true });
-  cpSync(join(repo, 'package.json'), join(pkgDir, 'package.json'));
-  cpSync(join(repo, 'dsh'), join(pkgDir, 'dsh'), { recursive: true });
+  mkdirSync(join(profileDir, 'node_modules'), { recursive: true });
+  cpSync(res.root, pkgDir, { recursive: true });
   return profileDir;
 }
 

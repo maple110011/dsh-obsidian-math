@@ -136,15 +136,35 @@ dsh plugin --profile <id> add file:<绝对路径>/.dsh-math-memory
 
 > 仓库纪律：一次提交一件事；**加守卫必须做变异验证**（`AGENTS.md:102`，`docs/agent-repo-maintenance.md:56`）。每步的"变异验证"都要附上那句报错。
 
-### S1 · 物化模块（无调用方，纯函数）
-- **改**：新增 `dsh/profile/local-bundle.mjs`（导出 `LOCAL_BUNDLE_FILES`、`materializeLocalBundle({root, read, meta, dryRun})`、`localBundleInstalledIn(profileDir)`、`localBundleAddArgs({home, profile, dir})`）；把它加进 `scripts/build-obsidian.mjs:29-45` 的 `EMBEDDED_SOURCES`（**否则 `build-obsidian.mjs:87-100` 的完备性门禁直接抛错**，见 `AGENTS.md:100`）；`scripts/lib/gates.mjs` 加一条 `syntax: dsh/profile/local-bundle.mjs`（零调用方导出会静默腐烂，先例是陷阱 95，`docs/handoff.md:313-316`）。
-- **验收**：`node scripts/run-gates.mjs --only local-bundle` 绿；`node scripts/build-obsidian.mjs` 后 `check: main.js bundle freshness` 绿。
-- **变异验证**：从 `LOCAL_BUNDLE_FILES` 里删掉 `dsh/preset/note-tools.mjs` ⇒ 新门的"清单 == host 入口闭包 ∪ preset 体清单"必须红（判据沿用 `scripts/check-preset-body-lists.mjs:61-65` 的闭包手法：`collectDshImportClosure`，已有导出，`dsh/client-panel/install-into-profile.mjs:64-89`）。
+### S1 · 物化模块（无调用方，纯函数） ✅ **已落地 2026-09-26**
+- **实际形态与本文原稿的差异**（以代码为准）：模块是 `dsh/profile/local-bundle.mjs`，导出
+  `LOCAL_BUNDLE_DIR` / `LOCAL_BUNDLE_PKG` / `LOCAL_BUNDLE_EXTRA_FILES` / `localBundleSourceFiles` /
+  `localBundleManifest` / `materializeLocalBundle` / `localBundleInstalledIn` / `removeLocalBundle` /
+  `localBundleAddArgs` / `localBundleTreeFiles`。**原稿写的 `LOCAL_BUNDLE_FILES` 不存在**——清单是
+  `localBundleSourceFiles({repoRoot, collectClosure, presetBodyFiles})` **派生**的（宿主入口闭包 ∪
+  契约体文件 ∪ 5 个声明 extras），手写部分只剩那 5 个 extras，每条都要有真实文件（门禁钉住）。
+- 已进 `scripts/build-obsidian.mjs` 的 `EMBEDDED_SOURCES`（否则 build 抛错），`main.js` 重建；
+  `scripts/lib/gates.mjs` 加 `syntax: dsh/profile/local-bundle.mjs`（总数 **52**）。
+- **验收**：`node scripts/run-gates.mjs --only local-bundle` 绿；`check: main.js bundle freshness` 绿。
+- **变异验证**：删 `icon.svg` / 删 `dsh/cordis.patch.yml` / 把闭包文件重复列进 extras ⇒
+  `check-preset-body-lists.mjs` 的三条字段交叉断言与"无重复"断言分别报红。
+  ⚠️ 原稿写的"删掉 `note-tools.mjs` ⇒ 闭包断言必红"**在本实现下不成立**：那条断言两边同源、在构造上恒真
+  （实测删掉仍全绿）。真正能抓的是"生成的 manifest 指向的文件不在清单里"，已按此重写断言。
 
-### S2 · 物化结果必须能被真 dsh 冷启动（离线、不碰 pnpm）
-- **改**：`scripts/test-real-profile-accept.mjs:76-95` 的 `provisionProfile()` 从"`cpSync` 整个仓库 `dsh/`"改成"调用 `materializeLocalBundle`"。这一条**离线就能跑**（它自己建隔离 `$DSH_HOME`，`:70`），因此它能覆盖"物化包 + 包内 subpath 声明"的冷启动第一次 —— 正是陷阱 97 的形状。
-- **验收**：`node scripts/run-gates.mjs --only self-provisioned`，断言数不变且全绿（`__CHECKS__ n/n`）。
-- **变异验证**：让物化包漏一个 preset 体文件 ⇒ 该门必须红（`agentPresets/list` 里带 `broken`，或 `session/create` 非 `ok:true`，`:156-165`）。再让 patch 里的 preset 行退回 `./` 形态 ⇒ 该门必须红（冷启动第一次）。
+### S2 · 物化结果必须能被真 dsh 冷启动（离线、不碰 pnpm） ✅ **已落地并验证 2026-09-26**
+- **改**：`scripts/test-real-profile-accept.mjs` 的 `provisionProfile()` 从"`cpSync` 整个仓库 `dsh/`"改为
+  **调用 `materializeLocalBundle` 物化到 `<profile>/.dsh-math-memory/`，再放成 `node_modules/dsh-math-memory`**
+  （＝ `dsh plugin add` 的 `file:` 链接等价物）。物化这一跳刻意留在路径里——它就是被测代码。
+- **验收（实测）**：`node scripts/run-gates.mjs --only self-provisioned` ⇒ **`__CHECKS__ 10/10` 全绿**，
+  其中 `agentPresets/list` 列出 `notes-assistant`（名"数学笔记助手"）、**无 `broken` 行**、
+  `session/create` 返回 `ok:true`。**这就是 A′ 的生死题，答案是"能"**——物化出的包能冷启动真 dsh。
+- **变异验证（实测，用新测试缝）**：
+  ① `DSH_TEST_DROP_BUNDLE_FILE=dsh/preset/note-tools.mjs` ⇒ **8/10**，`no preset row is broken` 与
+  `session/create` 两条红；
+  ② `DSH_TEST_DROP_BUNDLE_FILE=dsh/cordis.patch.yml` ⇒ **8/10**，roster 与 `session/create` 两条红。
+  测试缝已登记 `docs/env-vars.md` §2（读了就必须登记，`check-env-vars` 当场报红确认过）。
+- **仍未做**：原稿的"让 patch 里的 preset 行退回 `./` 形态 ⇒ 该门必须红"**没做**——那条要改
+  `dsh/cordis.patch.yml` 的生成块，属 S3/S6 的范围（生成器有 `--check` 门禁挡着），留到那时一起。
 
 ### S3 · overlay 状态机 + 归属语义
 - **改**：`obsidian/main.template.js` 的 `buildNotesAssistantPatch()`（`:1822-1828`）按 `profileBundles(home).includes('dsh-math-memory')` 分支：是 → 去掉生成块与 `./math-memory-*` 两行；否 → 照旧。`dsh/install.mjs` 与 `obsidian/main.template.js` 的冲突判据改为两元组（2.5）。`dsh/host/index.mjs:60-70` 的守卫同样加"本地 bundle 也算 npm"。

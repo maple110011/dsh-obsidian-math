@@ -35,6 +35,7 @@
 | `BENCHMARK_VAULT` | QA 种子探针（`scripts/qa/seed-probe.mjs`） | 仿真 vault 路径 | `scripts/qa/benchmark-vault` |
 | `CHROME_PATH` | 侧栏性能探针 | 侧栏性能探针用的 Chromium/Edge 可执行文件 | Edge 默认安装路径 |
 | `DSH_TEST_FORCE_CLIENT_FAIL` | `dsh/client-panel/install-into-profile.mjs`（**仅测试缝**） | 设成 `1` 时让"装客户端半个"这个函数**确定性地报失败**，好让门禁断言"客户端半个没装上 ⇒ 安装必须非零退出、不许打印 Done"（M3，2026-09-26）。生产路径永不设置它 | 无（未设 = 正常安装） |
+| `DSH_TEST_DROP_BUNDLE_FILE` | `scripts/test-real-profile-accept.mjs`（**仅测试缝**） | 让物化出的 A′ 本地 bundle 包**故意少一个文件**（值为仓库相对路径，如 `dsh/preset/note-tools.mjs`）。用于 S2 的变异验证：该门禁在"少一个 preset 体文件"时**必须红**（`agentPresets/list` 里出现 `broken` 或 `session/create` 非 `ok:true`）。没有这个缝就只能去改仓库本身，而门禁正在跑它 | 无（未设 = 完整物化） |
 | `APPDATA` | Obsidian 插件 + 两个脚本 | **平台变量**：定位全局 npm 安装目录（`%APPDATA%\npm\node_modules\@deepseek-ai\dsh`） | 无（Windows 上由系统提供） |
 | `USERPROFILE` | 侧栏性能探针 | **平台变量**：推导 `DSH_HOME` 默认值 | 无（Windows 上由系统提供） |
 

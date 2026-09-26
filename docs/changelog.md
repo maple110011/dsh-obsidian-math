@@ -3,7 +3,42 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · A′ S2：**物化出的包真的能冷启动真 dsh**（离线、不碰 pnpm）—— 这是 A′ 的生死题
+
+**为什么这一步最重要**：A′ 的整个方向建立在"离线通道也能物化出一个**真包**"这个前提上。如果物化包冷启动
+不了真 dsh，那么后面接线两个调用方（S3/S4）全是白做。所以这一条**必须在接线之前**验，而且它**离线就能跑**
+（`test-real-profile-accept.mjs` 自建隔离 `$DSH_HOME`），不需要网络也不需要 pnpm。
+
+**改法**：该门禁的 `provisionProfile()` 原本是 `cpSync` 整个仓库 `dsh/` 目录（等于"假设装进去的就是整棵树"），
+现在改为**调用 `materializeLocalBundle` 物化到 `<profile>/.dsh-math-memory/`，再放成
+`node_modules/dsh-math-memory`**（＝ `dsh plugin add` 的 `file:` 链接等价物）。物化这一跳**刻意留在路径里**：
+它就是要被验的代码。
+
+**实测结果：`__CHECKS__ 10/10` 全绿**，其中
+- `agentPresets/list` 在**名为 `bundle-accept-probe` 的 profile** 上列出了 preset `notes-assistant`（显示名"数学笔记助手"）；
+- **没有任何 preset 行是 `broken`**（整条组合真的挂上了）；
+- `session/create` 返回 **`ok:true`**；
+- 启动日志里**没有** preset/patch 诊断。
+
+**变异验证（两条，都用新加的测试缝）**：
+| 变异 | 结果 |
+|---|---|
+| 物化包**少一个 preset 体文件**（`DSH_TEST_DROP_BUNDLE_FILE=dsh/preset/note-tools.mjs`） | **8/10**，`no preset row is broken` 与 `session/create` 两条红 |
+| 物化包**少了 bundle patch 本身**（`…=dsh/cordis.patch.yml`） | **8/10**，roster 与 `session/create` 两条红 |
+
+测试缝 `DSH_TEST_DROP_BUNDLE_FILE` 已登记 `docs/env-vars.md` §2 —— 加进来时 `check-env-vars` **当场报红**并
+指名"被 `test-real-profile-accept.mjs` 读取但表里没有行"，这条双向守卫按设计工作了。
+
+**顺带查到一处原稿与实现的偏差（以代码为准）**：方案原稿 S1 写的是"从 `LOCAL_BUNDLE_FILES` 里删掉
+`note-tools.mjs` ⇒ 闭包断言必红"，但按实际实现那条断言**两边同源、在构造上恒真**（实测删掉仍全绿）。
+能真正抓住的是"生成的 manifest 指向的文件不在清单里"，已按此重写断言（见上一节 S1）。原稿的这半句已就地更正。
+
+**仍未做**：原稿要求的第三条变异（让 patch 里的 preset 行退回 `./` 形态 ⇒ 冷启动必须红）**没做** ——
+那要改 `dsh/cordis.patch.yml` 的**生成块**，而生成器有 `--check` 门禁挡着，属 S3/S6 范围。
+
 ## 2026-09-26 · A′ S1：离线通道"包化"的物化模块（纯函数、暂无调用方，但已被门禁执行）
+
+
 
 **背景**：用户问"为什么插件不出现在 dsh 的插件管理页"。机制已在
 [`docs/bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md) §1 查清：那一页的候选名字是
