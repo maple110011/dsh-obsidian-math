@@ -406,6 +406,52 @@ check('uninstall dry-run exit 0', r.status === 0);
 check('dry-run keeps the deployed preset body', existsSync(join(profileRoot, 'math-memory.mjs')));
 check('dry-run keeps the retired directory it found', existsSync(legacyMarkerPath));
 
+// 5a. …and it must be a DELIBERATE no-op for EVERY action, not just the ones asserted above.
+//
+// `uninstall` defaults to dry-run, so this is the mode a user gets from a bare `uninstall` — and it was
+// audited only for "keeps the preset body". Comparing the whole tree BEFORE/AFTER is the cheap way to
+// cover the rest: `--purge --purge-data` exercises every branch (retired dir, posture, manifest, vault
+// skeletons, vault cache, memory content), and any future writer that forgets `options.dryRun` shows up
+// as a byte difference here.
+{
+  const digestTree = (dir) => {
+    const out = new Map();
+    const walk = (d) => {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else out.set(full, createHash('sha256').update(readFileSync(full)).digest('hex'));
+      }
+    };
+    walk(dir);
+    return out;
+  };
+  // Give the purge branches something to remove, so a no-op cannot pass vacuously.
+  mkdirSync(join(vault, '.deepseek', 'cache'), { recursive: true });
+  writeFileSync(join(vault, '.deepseek', 'cache', 'probe.json'), '{}', 'utf8');
+  const beforeProfile = digestTree(profileRoot);
+  const beforeVault = digestTree(vault);
+  const dryPurge = run(['uninstall', '--purge', '--purge-data', '--confirm', 'DELETE MY MATH MEMORY',
+    '--dsh-home', home, '--vault', vault]);
+  check('uninstall --purge --purge-data without --yes exits 0', dryPurge.status === 0, `status=${dryPurge.status}`);
+  const afterProfile = digestTree(profileRoot);
+  const afterVault = digestTree(vault);
+  const diff = (a, b) => {
+    const changed = [...b.keys()].filter((k) => a.has(k) && a.get(k) !== b.get(k));
+    const added = [...b.keys()].filter((k) => !a.has(k));
+    const removed = [...a.keys()].filter((k) => !b.has(k));
+    return { changed, added, removed };
+  };
+  const dP = diff(beforeProfile, afterProfile);
+  const dV = diff(beforeVault, afterVault);
+  check('dry-run uninstall does not touch the PROFILE (no change/add/remove)',
+    dP.changed.length === 0 && dP.added.length === 0 && dP.removed.length === 0,
+    `changed=${dP.changed.length} added=${dP.added.length} removed=${dP.removed.length}`);
+  check('dry-run uninstall does not touch the VAULT (no change/add/remove)',
+    dV.changed.length === 0 && dV.added.length === 0 && dV.removed.length === 0,
+    `changed=${dV.changed.length} added=${dV.added.length} removed=${dV.removed.length}`);
+}
+
 // 5b. uninstall must NOT delete a posture file the user (or dsh itself) has since edited.
 //
 // `manifest.posture` is not "ours, safe to delete": a native install records exactly

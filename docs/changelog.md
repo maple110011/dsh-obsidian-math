@@ -3,6 +3,26 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · `uninstall --dry-run` 逐条核对：确实是刻意的 no-op（并把它钉住）
+
+**背景**：`uninstall` **默认就是 dry-run**（要执行得加 `--yes`），所以这是用户敲一条裸 `uninstall` 时
+拿到的模式。此前它只被断言过一句话——"keeps the deployed preset body"——而删除动作有六类
+（退役的 `.agent-presets/`、posture、manifest、vault 骨架、vault cache、记忆内容）。**没核对的那些
+一旦漏掉 `options.dryRun`，用户就会在一个号称"只是演练"的命令里丢东西。**
+
+**先做静态排查**：`commandUninstall` 里所有删除都走 `remove(options, path, …)`（它内部检查
+`options.dryRun`），没有绕过它的裸 `rmSync`/`writeFileSync`。**再实测**：造出"有东西可删"的现场
+（含 `.deepseek/cache`，好让 `--purge*` 的每条分支都被走到），对 `profile` 与 `vault` **各做一次整棵树
+的 sha256 快照**，跑 `uninstall --purge --purge-data`（**不加 `--yes`**）→ 计划删除 **44 行**，
+而两棵树 **changed=0 / added=0 / removed=0**。随后真跑一次（加 `--yes`）profile 从 **36 → 22** 个文件，
+证明前置条件成立、断言不是空洞的（坑 68）。
+
+**守卫**（`test-installer.mjs` 新增 4 条）：把"整棵树快照 + 比对"做成常驻断言，覆盖 `--purge
+--purge-data` 的每条删除分支；将来任何忘记 `options.dryRun` 的写入者都会在这里以**字节差异**现形。
+**变异验证**：把 `remove(options, join(vault, ".deepseek", "cache"), true)` 换成裸 `rmSync(...)` ⇒
+立刻红并报 `removed=1`；恢复后 `installer: all checks passed`。
+
+
 ## 2026-09-26 · M7：id 冲突是"写完之后才拒绝" ⇒ 留下一个半改的 profile
 
 **形态**：`installClientIntoProfile` 里那条冲突检查的注释写着"**先**查 id 冲突，**再**下结论 …… 「写进去
