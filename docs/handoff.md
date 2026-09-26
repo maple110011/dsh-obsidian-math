@@ -40,7 +40,7 @@
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
 | `scripts/test-memory.mjs` | 零 token 记忆回归（426 项断言，进 `npm test`） |
-| `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（53 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、四条写入型端点；进 `npm test`） |
+| `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（59 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、写入型端点；进 `npm test`） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 项：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写回归） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 项，对真实 dsh；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
 | `scripts/test-panel-present.mjs` | **呈现层**纯净决策回归（提取 `MemoryView` 的 `layerEntries`/`pendingItems`/`cardMeta`/`trendText` 四个方法并求值；测真源码，接缝挪走即报错） |
@@ -68,7 +68,7 @@
 
 **开关与共存 / 独立设置面板**：总开关 `enabled` + 粒度开关 `dialogueIndex`/`reminders`/`audit`；独立设置面板 = 工作区级 `.deepseek/config.md`（host-agnostic 配置文件）；**皮肤中心改为可选**（默认不挂载；Obsidian 设置「启用皮肤中心」开关把 `ui-skin-center` + `ui-web-ui-settings` 追加到 `notes-assistant.patch.yml`，需 web profile 镜像 `@linxin666` 包）。
 
-**QA 状态（2026-09-11 更新）**：`npm test` **28/28 门禁全绿**（记忆回归 **240/240**、路由 **53/53**、侧栏握手 8、反代 **32/32**）；合成 vault 引擎探针 12/12；**真实 vault 探针 12/12**（导航索引降权后恢复满格，未改任何 ground truth；另输出可达性分层与池化 A/B）；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。侧栏交互性能探针（`scripts/qa/sidebar-perf-probe.mjs`）按需运行，不进 CI。
+**QA 状态（2026-09-11 更新）**：`npm test` **28/28 门禁全绿**（记忆回归 **240/240**、路由 **59/59**、侧栏握手 8、反代 **32/32**）；合成 vault 引擎探针 12/12；**真实 vault 探针 12/12**（导航索引降权后恢复满格，未改任何 ground truth；另输出可达性分层与池化 A/B）；真实 token 会话 E2E（`npm run qa:e2e`）**留待用户本机跑**（需 DSH_HOME/DSH_WORKSPACE_ROOT/DSH_BIN 真实 JS 入口 + 模型余额）。侧栏交互性能探针（`scripts/qa/sidebar-perf-probe.mjs`）按需运行，不进 CI。
 
 **宿主适配（2026-09-10，dsh 0.1.5-rc.1 + dsh-web-all 0.3.20）**：完整取证与清单见 [`docs/dsh-0.1.5-adaptation.md`](dsh-0.1.5-adaptation.md)。结论：解码与蒸馏路径**无需改动**（V3 仍是多帧无字典 zstd，事件名与 `source.kind==="user"` 判据不变）；profile patch / preset / `settings.section` 槽位在 0.1.5 下全部实测有效（boot 冒烟 + `/memory-panel/*` 均 200）。唯一真实缺陷是 **V3 迁移会为同一会话保留 V2 原件**，于是"一个会话两份都以 `.jsonl.zstd` 结尾的日志"成为长期状态；已按会话去重（**显式优先 `.v3.` 变体**，因为两者 mtime 可能同刻）修复，`findSessionLogs` 在切片前完成折叠，preset 与 host 两份副本同步。回归 126→138，`main.js` 已重建并已 `deploy-local` 到本机 vault / `$DSH_HOME`。
 
