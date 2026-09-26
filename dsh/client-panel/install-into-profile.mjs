@@ -186,8 +186,20 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     log(result.error);
     return result;
   }
-  if (!existsSync(overlayPath)) {
-    result.error = `没有 ${OVERLAY_FILE}: ${overlayPath}（它是唯一允许挂载本包 loader 行的文件）`;
+  // Which patch layer does THIS profile's boot actually read? (2026-09-26: the client half
+  // must reach BOTH sides — the Obsidian sidebar and the main `dsh web` on 3080.)
+  //   · The notes-assistant profile is booted by the plugin as
+  //     `dsh --profile notes-assistant --patch <profile>/notes-assistant.patch.yml`, and that overlay is
+  //     REWRITTEN from the plugin's embedded copy on every service start ⇒ the row must come from there
+  //     (the authoritative-source rule, unchanged: writing it here would be erased on the next start).
+  //   · Any other profile (e.g. `web`) has no such overlay: its ONLY patch layer is the profile's own
+  //     `cordis.patch.yml`, which nothing of ours rewrites ⇒ the row can be INSERTED there and stays.
+  // Before this, the installer hard-required the overlay, so the client half could never be installed
+  // anywhere except the notes-assistant profile — which is exactly why 3080 had no memory panel.
+  const usesOverlayLayer = existsSync(overlayPath);
+  const rowLayerPath = usesOverlayLayer ? overlayPath : posturePath;
+  if (!existsSync(rowLayerPath)) {
+    result.error = `没有可用 patch 层：既无 ${OVERLAY_FILE} 也无 cordis.patch.yml（${home}）`;
     log(result.error);
     return result;
   }
@@ -200,11 +212,18 @@ export function installClientIntoProfile(profileHome, opts = {}) {
   // `/memory-panel` 前缀 ⇒ dsh 硬失败：
   //   `duplicate prefix route "/memory-panel"`（连 `--patch` 那条路径一起起不来）。
   //
-  // 正确的形状：**profile 里有独立宿主半个时，本包的宿主半必须是空实现** —— 它存在的唯一
+  // 正确的形状：**profile 已经挂载了真宿主半个时，本包的宿主半必须是空实现** —— 它存在的唯一
   // 目的是让 patch 行有东西可挂，而客户端半个（`./client`）才是我们要交付的东西。
-  // 没有独立宿主半个的 profile（如 `web`）才用仓库里那份真宿主（`host/index.mjs`：
-  // 同步 preset + 挂面板路由 + 注册工作区）。
+  //
+  // 2026-09-26 补第二判据（"两侧通用"那次）：真宿主半个有两种来源 ——
+  //   · profile 里那份独立文件 `math-memory-panel.mjs`（离线/direct 形态）；
+  //   · **我们的包作为 bundle 装进了这个 profile**（native 形态：bundle 的行 `math-memory-host`
+  //     → 包根 → `dsh/host/index.mjs`，它**就是**注册路由的那个模块）。
+  // 只看第一种，会让 web profile 同时挂两个真宿主 ⇒ 重启即 `duplicate prefix route`。
+  // 所以"独立文件存在 **或** `node_modules/dsh-math-memory` 存在"都算"已有真宿主"。
   const hasStandaloneHost = existsSync(join(home, "math-memory-panel.mjs"));
+  const hasBundledHost = existsSync(join(home, "node_modules", "dsh-math-memory", "package.json"));
+  const hasMountedHost = hasStandaloneHost || hasBundledHost;
   try {
     mkdirSync(pkgDir, { recursive: true });
     // Mirror the entry's WHOLE relative-import closure under the same tree
@@ -221,17 +240,22 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     // Older installs put the entry at the package ROOT; drop that copy so
     // nothing can load it (its relative imports pointed outside the package).
     rmSync(join(pkgDir, "index.mjs"), { force: true });
-    if (hasStandaloneHost) {
-      // The profile already mounts its OWN host half (`math-memory-panel.mjs`,
-      // inserted by notes-assistant.patch.yml), so this package's host half must
-      // be EMPTY: it exists only so the patch row has something to load, while
-      // `./client` is what we ship. Two host halves would register the
+    if (hasMountedHost) {
+      // The profile already mounts a REAL host half — either its own
+      // `math-memory-panel.mjs` (the offline/direct shape) or our package installed as a
+      // bundle, whose `math-memory-host` row resolves to `dsh/host/index.mjs` and
+      // registers `/memory-panel` itself (the native shape, e.g. `web`). Either way this
+      // package's host half must be EMPTY: it exists only so the patch row has something
+      // to load, while `./client` is what we ship. Two real host halves register the
       // /memory-panel prefix twice and dsh refuses to boot the whole profile
-      // (`duplicate prefix route`) — 2026-09-21, see the file header.
+      // (`duplicate prefix route`) — 2026-09-21 standalone, 2026-09-26 bundle.
       writeFileSync(join(pkgDir, "host", "index.mjs"), [
-        "// 自动生成（dsh/client-panel/install-into-profile.mjs）——本 profile 已有独立的宿主半个",
-        "// （`math-memory-panel.mjs`，由 notes-assistant.patch.yml 挂载），本包因此只提供",
-        "// **客户端半个**（`./client`）。宿主侧留空，避免两个条目重复注册 /memory-panel 路由。",
+        "// 自动生成（dsh/client-panel/install-into-profile.mjs）——本 profile 已经挂载了真宿主半个",
+        hasStandaloneHost
+          ? "// （`math-memory-panel.mjs`，由 notes-assistant.patch.yml 挂载）"
+          : "// （我们的包以 bundle 装进本 profile：`math-memory-host` 行 → 包根 → dsh/host/index.mjs）",
+        "// 本包因此只提供 **客户端半个**（`./client`）。宿主侧留空，避免两个条目重复注册",
+        "// /memory-panel 路由（`duplicate prefix route` 会让整个 profile 起不来）。",
         "export const name = 'math-memory-client-panel';",
         "export function apply() {}",
         ""
@@ -322,17 +346,35 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     return result;
   }
 
-  // 校验那一行**确实在权威来源里**。本模块不再写它（见 OVERLAY_FILE 的注释）：那行必须来自内嵌
-  // overlay，否则下一次服务启动就会被重写掉 —— 而"包在、行不在"恰恰是拖拽静默失效的形状，
-  // 所以这里必须正面对质，而不是像旧实现那样只要文件里出现过包名字符串就算通过。
+  // 校验那一行**确实在会被读到的那一层里**。
+  // · overlay 层：本模块不写它（那份 overlay 每次起服务都会被插件从内嵌副本重写）——那行必须来自内嵌
+  //   overlay，否则下一次服务启动就会被擦掉，而"包在、行不在"恰恰是拖拽静默失效的形状，所以正面对质。
+  // · profile 自己的 cordis.patch.yml：没有任何人会重写它，所以可以安全**插入**（幂等）。
   const rowRe = new RegExp(`^\\s*-\\s*id:\\s*['"]?${INSERT_ID}['"]?\\s*$`, "m");
-  if (!rowRe.test(readFileSync(overlayPath, "utf8"))) {
-    result.error =
-      `${OVERLAY_FILE} 里没有 id "${INSERT_ID}" 的 loader 行：${overlayPath}。` +
-      `该行必须来自仓库源 dsh/profile/${OVERLAY_FILE}（由 build 内嵌进 main.js）；` +
-      `只装包不挂行 = 拖拽引用在页面里没有接收方。`;
-    log(result.error);
-    return result;
+  let insertedRow = false;
+  if (!rowRe.test(readFileSync(rowLayerPath, "utf8"))) {
+    if (usesOverlayLayer) {
+      result.error =
+        `${OVERLAY_FILE} 里没有 id "${INSERT_ID}" 的 loader 行：${overlayPath}。` +
+        `该行必须来自仓库源 dsh/profile/${OVERLAY_FILE}（由 build 内嵌进 main.js）；` +
+        `只装包不挂行 = 拖拽引用在页面里没有接收方。`;
+      log(result.error);
+      return result;
+    }
+    const current = readFileSync(rowLayerPath, "utf8");
+    const row = [
+      "",
+      `# ${PKG} —— 记忆面板的客户端半个（由安装器写入）。`,
+      "# 这一层是 profile 自己的 patch 层，没有任何人会重写它，所以这行会留住；",
+      "# 删掉本行即等于在面板里卸掉客户端半个。",
+      "- insert:",
+      `    - id: ${INSERT_ID}`,
+      `      name: '${PKG}'`,
+      ""
+    ].join("\n");
+    writeFileSync(rowLayerPath, current.replace(/\s*$/, "\n") + row, "utf8");
+    insertedRow = true;
+    log(`已在 ${rowLayerPath} 插入 ${INSERT_ID} 行`);
   }
   if (!existsSync(join(pkgDir, "client.js"))) {
     result.error = `包里没有 client.js：${join(pkgDir, "client.js")}`;
@@ -340,9 +382,10 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     return result;
   }
 
-  result.inserted = false;
+  result.inserted = insertedRow;
   result.ok = true;
-  log(`overlay 已挂载 ${INSERT_ID}（${OVERLAY_FILE}）；包已就位：${pkgDir}`);
+  result.rowLayer = rowLayerPath;
+  log(`已挂载 ${INSERT_ID}（${relative(home, rowLayerPath) || rowLayerPath}）；包已就位：${pkgDir}`);
 
   const pp = join(home, "package.json");
   const bak = pp + ".bak";

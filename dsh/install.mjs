@@ -55,6 +55,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { installClientIntoProfile } from "./client-panel/install-into-profile.mjs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -409,6 +410,19 @@ function nativeInstall(options, dshHome) {
   if (result.status !== 0) {
     log(options, `[error] dsh plugin add exited ${result.status}. Use --direct for an offline flat copy.`);
     return false;
+  }
+
+  // The bundle delivers the ENGINE + the panel's HOST routes, but the panel's CLIENT half is
+  // a separate locally staged package — and this path used to skip it entirely, which is why
+  // the main `dsh web` (3080) had no memory panel even after a native install (2026-09-26).
+  // `installClientIntoProfile` picks the patch layer the target profile's boot actually reads
+  // (the notes-assistant overlay, or the profile's own `cordis.patch.yml` for e.g. `web`).
+  try {
+    const client = installClientIntoProfile(profileRoot, { quiet: true });
+    if (!client.ok) log(options, `[client] 客户端半个安装失败：${client.error ?? "unknown"}`);
+    else log(options, `[client] 客户端半个已装（${client.inserted ? "新插入行" : "行已在"}：${client.rowLayer ?? "?"}）`);
+  } catch (error) {
+    log(options, `[client] 客户端半个安装异常：${String(error)}`);
   }
   return true;
 }

@@ -95,6 +95,44 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · "两侧通用"：让主 dsh web（3080）也有笔记助手模式与记忆面板
+
+**用户的观察**：侧栏（`notes-assistant` profile，3180）里能看到"数学笔记助手"模式和记忆面板，
+但主 dsh web（`web` profile，3080）里都没有。**这不是 bug 而是安装范围**：引擎 + preset + 面板宿主
+路由由**我们的 bundle** 提供，而客户端半个由 `installClientIntoProfile()` 单独装 —— 后者此前
+**硬要求** profile 里有 `notes-assistant.patch.yml`（那是插件用 `--patch` 传的 overlay，`web` 启动时
+根本不读它），而且 `nativeInstall()` 路径**从不调用**它。于是 3080 侧一件都没有。
+
+**修法（三处代码 + 一次实机装配）**：
+
+1. **挂行落在"该 profile 真正会被读到的层"**：有 overlay ⇒ 仍要求行来自内嵌 overlay（那份每次起服务
+   会被重写，自己写等于白写）；没有 overlay（如 `web`）⇒ **插入到 profile 自己的 `cordis.patch.yml`**
+   （没有任何人会重写它，所以行留得住），幂等。
+2. **native 路径也装客户端半个**：`nativeInstall()` 在 `dsh plugin add` 成功后调用
+   `installClientIntoProfile()`。
+3. **⚠️ 修掉一个会炸的重复注册**：`web` 装 bundle 之后，**两个**宿主半个都会注册
+   `/memory-panel/*` —— bundle 的 `math-memory-host` 行（→ 包根 → `dsh/host/index.mjs`，**它就是**
+   注册路由的那个模块）**和**客户端包里的真宿主半个 ⇒ 重启即 `duplicate prefix route`（2026-09-21
+   那次事故的同族）。判据补上第二种来源：独立文件 `math-memory-panel.mjs` **或**
+   `node_modules/dsh-math-memory` 存在，都算"已有真宿主"⇒ 客户端包的宿主半写**空实现**。
+   **这条是在让用户重启之前抓到的**：`--dump-config` 看不见路由注册，只有读懂"包根 main 就是宿主半"
+   才看得出来。
+
+**守卫**：`check-client-package-layout.mjs` 增**两条分支**——分支 3（只有 `cordis.patch.yml` 的
+web 形态：行必须被插入到该层、脚手架内容不丢、幂等、宿主半用真的）与分支 4（**bundle 在场** ⇒
+宿主半必须空）。**变异 M24**：把安装器改回旧硬编码 ⇒ 分支 3 精确报出
+`没有 notes-assistant.patch.yml… 它是唯一允许挂载本包 loader 行的文件`。
+
+**实机装配结果（`web` profile）**：组合里 `preset-notes-assistant` 1 次、`math-memory-host` 1 次、
+`math-memory-client-panel` 1 次、引擎行 1 次，`dsh-web` 原有 42 处未受影响，`--dump-config` 无报错。
+**注意**：`dsh plugin add` 会把依赖写进 `web/package.json`，本次用的是**本地目录**（`file:E:/…`）——
+因为**已发布的 0.7.8 是 0.1.7 适配之前的形态，它的 bundle 补丁里只有宿主行、没有 preset 声明**
+（实测：装它之后 `preset-notes-assistant` 在组合里 0 次）。换成下一版发布后应改用发布包。
+
+**数据天然共享**：记忆文件在 vault 的 `.deepseek/memory/**`，两个 profile 用同一个 vault 就看见同一份
+记忆；3080 侧只需在面板里把该 vault 选为工作区（下拉来自 `ctx.workspaceRegistry`，第一次用之前要先有
+一个以该 vault 为工作区的会话）。
+
 ## 2026-09-26 · B0：给"第三份"（装好后的 profile 平铺文件）装上护栏
 
 **背景**：解耦评估（`docs/decoupling-assessment-2026-09-26.md` §2.3）实测：现场 profile 的 12 项

@@ -145,6 +145,62 @@ try {
   rmSync(homeB, { recursive: true, force: true });
 }
 
+// ── branch 3: profile with NO plugin overlay (the `web` shape, 2026-09-26) ────
+//
+// "两侧通用"（Obsidian 侧栏 + 主 dsh web/3080）要求客户端半个也能装进**任何** profile。而
+// `web` 启动时不会被传 `--patch <profile>/notes-assistant.patch.yml`，那种 profile 唯一会被读到的
+// patch 层就是它自己的 `cordis.patch.yml` —— 安装器此前硬要求 overlay，于是 3080 永远没有面板。
+// 这条分支钉两件事：行必须被**插入到会被读到的那一层**，且重复安装必须幂等（不能越插越多）。
+const homeC = mkdtempSync(join(tmpdir(), 'client-pkg-c-'));
+try {
+  mkdirSync(homeC, { recursive: true });
+  writeFileSync(join(homeC, 'cordis.patch.yml'), '# web 形态：只有 profile 自己的 patch 层\n[]\n', 'utf8');
+  const res = installClientIntoProfile(homeC, { quiet: true });
+  check('installer works in a profile with NO plugin overlay (the web shape)', res.ok === true, res.error ?? '');
+  check('the row was INSERTED into the layer the boot actually reads (cordis.patch.yml)',
+    res.inserted === true && res.rowLayer === join(homeC, 'cordis.patch.yml'),
+    `${res.inserted} ${res.rowLayer ?? ''}`);
+  const layer = readFileSync(join(homeC, 'cordis.patch.yml'), 'utf8');
+  check('that layer now carries the client row', layer.includes(CLIENT_INSERT_ID) && layer.includes(CLIENT_PKG));
+  check('the scaffold content survives the insert', layer.includes('[]'));
+  const loadedClient = await loadEntry(res.pkgDir);
+  check('the web-shape package host is the REAL host half (it must register /memory-panel itself)',
+    loadedClient.mod.name === 'math-memory-host', String(loadedClient.mod.name));
+
+  const again = installClientIntoProfile(homeC, { quiet: true });
+  const occurrences = (readFileSync(join(homeC, 'cordis.patch.yml'), 'utf8').match(/id:\s*['"]?math-memory-client-panel['"]?/g) ?? []).length;
+  check('re-installing is idempotent (the row is not inserted twice)',
+    again.ok === true && again.inserted !== true && occurrences === 1, `occurrences=${occurrences}`);
+} catch (error) {
+  check('branch 3 did not throw', false, String(error?.message ?? error));
+} finally {
+  rmSync(homeC, { recursive: true, force: true });
+}
+
+// ── branch 4: OUR BUNDLE provides the host half (the web shape after a native install) ─
+//
+// 2026-09-26: making the memory panel work on BOTH sides meant installing our package as a
+// bundle into the `web` profile. That bundle's `math-memory-host` row resolves to the
+// package root → `dsh/host/index.mjs`, which registers `/memory-panel` ITSELF. So the
+// client package must ship the EMPTY host half there too — otherwise both register the
+// prefix and dsh refuses to boot the whole profile (`duplicate prefix route`).
+const homeD = mkdtempSync(join(tmpdir(), 'client-pkg-d-'));
+try {
+  mkdirSync(join(homeD, 'node_modules', 'dsh-math-memory'), { recursive: true });
+  writeFileSync(join(homeD, 'cordis.patch.yml'), '[]\n', 'utf8');
+  writeFileSync(join(homeD, 'node_modules', 'dsh-math-memory', 'package.json'),
+    JSON.stringify({ name: 'dsh-math-memory', version: '0.0.0', main: './dsh/host/index.mjs' }, null, 2), 'utf8');
+  const res = installClientIntoProfile(homeD, { quiet: true });
+  check('branch 4: installer works beside an installed bundle', res.ok === true, res.error ?? '');
+  const loadedBundled = await loadEntry(res.pkgDir);
+  check('with our BUNDLE mounted the package host is the EMPTY half (no duplicate /memory-panel prefix)',
+    loadedBundled.mod.name === 'math-memory-client-panel', String(loadedBundled.mod.name));
+} catch (error) {
+  check('branch 4 did not throw', false, String(error?.message ?? error));
+} finally {
+  rmSync(homeD, { recursive: true, force: true });
+}
+
 if (failed > 0) {
   console.log('\nThe client package is not loadable. The copy list comes from');
   console.log('collectDshImportClosure() in dsh/client-panel/install-into-profile.mjs —');

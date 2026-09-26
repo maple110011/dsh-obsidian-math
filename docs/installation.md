@@ -67,6 +67,33 @@ names = dsh.profile.bundles ∪ profile.dependencies ∪ installation.dependenci
 
 > 让离线通道也"包化"（从而既可离线又能在那一页被管理）是一份**提案**，见 [`bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md)（状态：提案，未动代码）。
 
+### 让主 dsh web（3080）也有笔记助手模式与记忆面板
+
+默认只有专用 profile（`notes-assistant`，Obsidian 侧栏用）会被插件铺好；主 `web` profile 里
+**看不到"数学笔记助手"模式、也没有记忆面板**——因为引擎/preset/面板路由来自我们的 bundle，而客户端
+半个是单独装的。想两侧通用：
+
+```bash
+# ① 引擎 + preset + 面板宿主路由（bundle 通道；装进 web 即成为该 profile 的一个 bundle）
+dsh plugin --profile web add dsh-math-memory
+
+# ② 面板的客户端半个（安装器会把 loader 行插进 web 自己的 cordis.patch.yml —— 那一层没人重写）
+dsh-math-memory install --native            # 或直接：node dsh/install.mjs install --profile web
+```
+
+三点注意：
+
+- **必须重启 3080 那个 dsh**（bundle 列表在启动时读）；重启会断开当前页面连接。
+- **已发布的 0.7.8 不要用**：它是 0.1.7 适配之前的形态，bundle 补丁里**没有 preset 声明** ⇒ 装完
+  3080 里不会出现笔记助手模式（实测）。等下一版发布，或临时用本地目录
+  `dsh plugin --profile web add file:<仓库绝对路径>`（会在该 profile 的 `package.json` 留下
+  `file:` 依赖，仓库挪位置后要重装）。
+- **客户端半个只能装一份真宿主**：`web` 装了 bundle 之后，bundle 的行**已经**注册
+  `/memory-panel/*`，所以客户端包里必须是**空宿主半**（安装器现在会自动这样判；两份真宿主会让整个
+  profile 以 `duplicate prefix route` 起不来）。
+- **数据是共享的**：记忆在 vault 的 `.deepseek/memory/**`，两侧用同一个 vault 就是同一份记忆；
+  3080 侧第一次用面板前，先让它有一个以该 vault 为工作区的会话，下拉里才会出现它。
+
 ### 装进已有 `web` profile？
 
 可以，但会**失去 fail-closed 沙箱**（沿用 `web` profile 自己的沙箱策略）。安装程序检测到非专用 profile 时会打印醒目警告。想保证安全边界，请用专用的 `notes-assistant` profile。
