@@ -301,8 +301,8 @@ node scripts/run-gates.mjs --list  →  50 条
 
 它有四种已实测的形态：坑 94（声明在 `cordis.patch.yml` 却不在真启动的 `--patch` 里）、坑 89（loader 行写进一份被每次重写覆盖的文件）、坑 70（preset 字段 schema 变了没人跟）、坑 100（profile 清单缺 `version`，报 `DeepSeek request extension preparation failed` 且 cause 被包住）。**它们共同的可怕之处是"失败没有指向根因的报错"**：用户看到的是"新建会话没反应"或"每一轮回复都失败"，而日志里没有线索（坑 93 甚至只有一句 `never started`）。修法：把声明生成进 profile 自己的 `cordis.patch.yml`（脚手架文件，插件只在缺失时写、此后不动），让声明与插件版本解耦。
 
-**第 2 步：方案 A（契约化）。**
-理由：它是第 3 步的前置，也是 C2 类（占历史事故 10/46）的公共上游。成本可控（约 60 行改写 + 1 条新门禁），收益是**把四条互相盯着的清单收敛成一条**。
+**第 2 步：方案 A（契约化）。** ✅ **已落地（2026-09-26）**：`dsh/preset/profile-contract.mjs` 成为"往 profile 里放什么"的**唯一陈述**（body 文件 / scaffold 文件 / 三层的行 id / 面板路由），门禁 `check: profile contract is the single source`（`scripts/check-profile-contract.mjs`，已注册进 `scripts/lib/gates.mjs` 且为绿）逐条标明哪些是**读契约**、哪些只是**钉住手写清单**。这一步的评估文字（"约 60 行改写 + 1 条新门禁"）曾是**准确的估计**，实现规模也在这个量级。
+理由：它是第 3 步的前置，也是 C2 类（占历史事故 10/46）的公共上游。收益已经兑现：**四条互相盯着的清单收敛成一条**（这个收敛直接消掉了 2026-09-26 `install --direct` 少铺两个体文件那类漂移的土壤）。
 
 **第 3 步：方案 B（所有权转移），与 [`docs/bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md) 的 A′ 合流。** ✅ **第一刀已落地（2026-09-26）**：**插件侧不再手写 staging 清单**——它改为构建期注入契约（`__PROFILE_CONTRACT_JSON__`），门禁由 PINNED-5 升级为 READ-2 + READ-2b（后者连"改了契约没重建"一起抓）。**剩余**：契约加 `env` 字段；**面板路由表化在当前布局下做不到**（面板内嵌并平铺，契约在 `dsh/preset/` 下 ⇒ 平铺要 `./profile-contract.mjs`、包内要 `../preset/…`，两种布局 import 名冲突）⇒ 它要等"三份来源的布局"统一（方案 D），所以 `PANEL_ROUTES` **如实留在 PINNED**。**已补**：`PINNED-6`（契约里每个文件在两个写入方都有写入路径）+ 两个写入方的运行时后置条件（2026-09-26 实测"列了不写"会让 manifest 说谎）。**
 理由：它砍掉的是**根**（"两个人都在写同一份文件"），但需要 A 的契约当输入、需要第 1 步先稳定启动路径。**A′ 已经写出了包内文件清单与 staging 路径**，所以这一步的增量只剩"插件侧删掉字面量"。
