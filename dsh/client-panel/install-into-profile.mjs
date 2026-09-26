@@ -215,6 +215,44 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     return result;
   }
 
+  // ⚠️ ID CONFLICTS ARE DECIDED **BEFORE ANY WRITE** (M7, 2026-09-26).
+  //
+  // cordis treats a duplicate loader id as a hard failure (the whole profile refuses to boot), and the
+  // comment further down has always said "先查 id 冲突，再下结论". It was not true: the check sat AFTER the
+  // package copy, the `.dsh-client-panel/` staging and the profile `package.json` mutation — so on a
+  // conflict the function bailed out leaving the profile half-modified (package in `node_modules/`, a
+  // `file:` dependency declared, staging dir written) with no row to justify any of it. That is the same
+  // "already-mutated then refuse" shape this file warns about elsewhere.
+  //
+  // `findIdOwners` reads only the profile's `*.yml`, so it needs nothing the writes below would produce —
+  // the decision can be made up front. The two branches keep their distinct rules:
+  //   · overlay layer: this module does NOT write it, so a missing row is an error (the authoritative
+  //     overlay is regenerated from the plugin's embedded copy, and "package present, row absent" is the
+  //     silent-failure shape that killed drag-to-mention);
+  //   · the profile's own layer: insert, but only when no OTHER package already claims the id.
+  const earlyRowRe = new RegExp(`^\\s*-\\s*id:\\s*['"]?${INSERT_ID}['"]?\\s*$`, "m");
+  const earlyHasRow = earlyRowRe.test(readFileSync(rowLayerPath, "utf8"));
+  if (usesOverlayLayer) {
+    if (!earlyHasRow) {
+      result.error =
+        `${OVERLAY_FILE} 里没有 id "${INSERT_ID}" 的 loader 行：${overlayPath}。` +
+        `该行必须来自仓库源 dsh/profile/${OVERLAY_FILE}（由 build 内嵌进 main.js）；` +
+        `只装包不挂行 = 拖拽引用在页面里没有接收方。`;
+      log(result.error);
+      return result;
+    }
+  } else {
+    const conflictOwners = findIdOwners(home, INSERT_ID).filter((o) => !o.owner.includes(PKG));
+    if (conflictOwners.length > 0) {
+      result.error =
+        `patch 里已存在 id "${INSERT_ID}"（${conflictOwners.map((o) => `${o.file}:${o.line} → ${o.owner || "(无 name)"}`).join("；")}）。` +
+        `同 id 重复会让 cordis 拒绝启动整个 profile（duplicate loader entry id）。` +
+        `（在任何写入之前就拒绝，profile 保持原样。）`;
+      log(result.error);
+      return result;
+    }
+  }
+
   // ⚠️ 宿主半个**不能**在这里再挂一遍 `/memory-panel/*`。
   //
   // 2026-09-21 第二个真实故障：这个包原先把 `index.mjs` 直接设成 `host/math-memory-panel.mjs`
@@ -345,17 +383,8 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     log(`declared ${PKG} = "${DEP_SPEC}" in ${profilePkgPath}`);
   }
 
-  // ⚠️ 先查 id 冲突，**再**下结论。cordis 对重复 id 是硬失败（整个 profile 起不来），
-  // 而"写进去之后才发现"意味着用户已经拿到一个坏 profile —— 2026-09-21 就是这样把用户的
-  // 侧栏搞挂的。同 id 已被**别的包**占用时：明确报错。
-  const owners = findIdOwners(home, INSERT_ID).filter((o) => !o.owner.includes(PKG));
-  if (owners.length > 0) {
-    result.error =
-      `patch 里已存在 id "${INSERT_ID}"（${owners.map((o) => `${o.file}:${o.line} → ${o.owner || "(无 name)"}`).join("；")}）。` +
-      `同 id 重复会让 cordis 拒绝启动整个 profile（duplicate loader entry id）。`;
-    log(result.error);
-    return result;
-  }
+  // (The duplicate-id / missing-row decision moved to the TOP of this function — before any write.
+  // See the M7 note there: deciding after the copy left a half-modified profile.)
 
 /**
  * Splice a patch op into a profile's own `cordis.patch.yml` without creating a SECOND root node.
@@ -390,21 +419,14 @@ function spliceIntoPatchLayer(current, row) {
   return current.replace(/\s*$/, "\n") + row;
 }
 
-  // 校验那一行**确实在会被读到的那一层里**。
-  // · overlay 层：本模块不写它（那份 overlay 每次起服务都会被插件从内嵌副本重写）——那行必须来自内嵌
-  //   overlay，否则下一次服务启动就会被擦掉，而"包在、行不在"恰恰是拖拽静默失效的形状，所以正面对质。
-  // · profile 自己的 cordis.patch.yml：没有任何人会重写它，所以可以安全**插入**（幂等）。
-  const rowRe = new RegExp(`^\\s*-\\s*id:\\s*['"]?${INSERT_ID}['"]?\\s*$`, "m");
+  // Insert the row if it is not already there.
+  //
+  // The overlay-layer case cannot reach here with a missing row: the up-front check at the top of this
+  // function already refused (an overlay row must come from the embedded copy, and this module must not
+  // write that file). Keeping a second copy of that branch here would be dead code pretending to be a
+  // guard — the same "two lists that can disagree" shape this repo keeps deleting.
   let insertedRow = false;
-  if (!rowRe.test(readFileSync(rowLayerPath, "utf8"))) {
-    if (usesOverlayLayer) {
-      result.error =
-        `${OVERLAY_FILE} 里没有 id "${INSERT_ID}" 的 loader 行：${overlayPath}。` +
-        `该行必须来自仓库源 dsh/profile/${OVERLAY_FILE}（由 build 内嵌进 main.js）；` +
-        `只装包不挂行 = 拖拽引用在页面里没有接收方。`;
-      log(result.error);
-      return result;
-    }
+  if (!earlyHasRow) {
     const current = readFileSync(rowLayerPath, "utf8");
     const row = [
       "",

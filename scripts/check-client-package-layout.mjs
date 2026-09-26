@@ -218,6 +218,43 @@ try {
   rmSync(homeD, { recursive: true, force: true });
 }
 
+// ── branch 4b: an id CONFLICT must be refused BEFORE anything is written (M7, 2026-09-26) ──
+//
+// cordis treats a duplicate loader id as a hard failure (the whole profile refuses to boot). The
+// decision used to happen AFTER the package copy, the `.dsh-client-panel/` staging and the profile
+// `package.json` mutation — so refusing left a half-modified profile: our package sitting in
+// `node_modules/`, a `file:` dependency declared, and no row to justify any of it.
+//
+// The property to pin is therefore not "it errors" (that was already true) but "**it wrote nothing**".
+{
+  const homeE = mkdtempSync(join(tmpdir(), 'client-pkg-e-'));
+  try {
+    mkdirSync(homeE, { recursive: true });
+    // A profile whose own patch layer already claims our insert id, owned by SOMEBODY ELSE.
+    writeFileSync(join(homeE, 'cordis.patch.yml'),
+      `- insert:\n    - id: ${CLIENT_INSERT_ID}\n      name: '@someone-else/their-panel'\n`, 'utf8');
+    const pkgBefore = readFileSync(join(homeE, 'cordis.patch.yml'), 'utf8');
+    const res = installClientIntoProfile(homeE, { quiet: true });
+    check('branch 4b: an id owned by another package is refused', res.ok === false && /duplicate loader entry id/.test(res.error ?? ''),
+      String(res.error ?? '').slice(0, 90));
+    check('branch 4b: the refusal explains it happened before any write',
+      /任何写入之前|保持原样/.test(res.error ?? ''), String(res.error ?? '').slice(-60));
+    // The decisive part: NOTHING was created or modified.
+    check('branch 4b: no package was staged into node_modules/',
+      !existsSync(join(homeE, 'node_modules')));
+    check('branch 4b: no .dsh-client-panel staging was left behind',
+      !existsSync(join(homeE, STAGING_DIR)));
+    check('branch 4b: no profile package.json was created (no file: dependency declared)',
+      !existsSync(join(homeE, 'package.json')));
+    check('branch 4b: the conflicting patch layer is byte-identical to before',
+      readFileSync(join(homeE, 'cordis.patch.yml'), 'utf8') === pkgBefore);
+  } catch (error) {
+    check('branch 4b did not throw', false, String(error?.message ?? error));
+  } finally {
+    rmSync(homeE, { recursive: true, force: true });
+  }
+}
+
 // ── branch 5: the panel's HTTP error reporting (2026-09-26) ─────────────────
 //
 // Every call site used `await res.json()`. When the route is not mounted — the client half
