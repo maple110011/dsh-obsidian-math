@@ -3,6 +3,64 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · 发版前验收：与 dsh 0.1.7-rc.2 的**安装/管理**适配实测（用户提问驱动）
+
+**问题**：「插件当前与 dsh 的插件安装和管理是否适配」。**做法：全部用已安装的 dsh 实测，不读文档猜接口。**
+
+**先厘清 dsh 真实的接口面（读 `dsh --help`，不是猜的）**：
+`dsh plugin --profile <name> <pnpm-args...>` —— **`dsh plugin` 是 pnpm 的薄封装**，只有
+add/rm 这类透传；**没有** `list` / `enable` / `disable` 子命令。所谓"插件管理"是**客户端页面**，
+它的数据来自 `dsh-plugin-manager` + `dsh-app-boot` 的读取器。所以"是否适配"要分三层验：
+①命令行安装/卸载闭合 ②管理页卡片素材被**真读取器**接受 ③装出来的 profile 真能起、preset 真能挂。
+
+**实测结果（全部通过）**：
+
+| 层次 | 手段 | 结果 |
+|---|---|---|
+| 命令行全流程 | `node scripts/qa/release-accept.mjs`（隔离 `DSH_HOME`，本仓库自带探针） | **13/13**：`dsh plugin add` exit 0 → `dsh.profile.bundles` 含本包 → `dependencies` 声明 → 包真在 `node_modules` → 装出来的副本带 `dsh.bundle.patch: ./dsh/cordis.patch.yml` → **插件管理页卡片三样（icon + locale）都在** → 真启动 dsh → 认证握手拿到 cookie → `agentPresets/list` 列出 `notes-assistant`（**中文名「数学笔记助手」生效**）→ **无 `broken` 行**（组合整体挂上）→ `session/create` **ok:true** → `dsh plugin rm` exit 0 → bundle 行消失（残留仅 profile 自己的脚手架） |
+| 管理页素材 | `scripts/check-plugin-manifest-meta.mjs`（跑 dsh **自己的** `readPluginMeta`） | en/zh 标题**不同**（证明 `locale/zh.json` 真被读，而不是回退英文）、两侧描述非空、图标被读成与仓库字节一致的 data URL |
+| 反代与握手 | `scripts/test-panel-auth.mjs`（对真实 dsh） | **8/8**（详见下一节：这条此前在本机整条 SKIP，现已能真跑） |
+| preset 挂载 | `scripts/test-agent-preset.mjs` | **24/24**（含 `session/create` ok:true、失败原因不是 preset 挂载错误） |
+
+**发现并修掉的一处不适配（真缺陷，不是噪声）**：每次 `dsh plugin add` 都打印
+`[WARN] Issues with peer dependencies found`，`pnpm peers check` 报 `missing peer @deepseek-ai/dsh`。
+根因：dsh 是**全局 CLI**、不是 profile 依赖，profile 里永远解析不到它 ⇒ pnpm 每次都报"缺 peer"。
+读者极易把这条**安装期**警告误读成"插件与 dsh 不兼容"。
+
+**修法及其安全性依据（读 dsh 源码得出，不是推断）**：加
+`peerDependenciesMeta["@deepseek-ai/dsh"].optional = true`。安全的原因是 dsh 的兼容性门禁
+`evaluatePluginCompatibility()`（`dsh-app-boot/lib/index.js`，实测行 286-313）**直接读
+`manifest.peerDependencies`**（`Object.hasOwn(fields, "peerDependencies")`），而
+**全仓 grep `peerDependenciesMeta` 在 dsh 里 0 命中** ⇒ 元数据只影响 pnpm，门禁仍然求值那个范围。
+实测对照：改前有 WARN、`pnpm peers check` 退出 1；改后**无 WARN**、`No peer dependency issues
+found`，且 `release-accept` **仍 13/13**（门禁没被放松）。守卫两条（范围必须在 + 必须标 optional），
+变异各自只红一条 —— 见提交 `4287d3b`。
+
+**第二个发现：一条门禁在本机"整条跳过"，而它恰好是唯一覆盖反代的**（见下一节）。
+
+## 2026-09-26 · 门禁自证：把"没有已部署 profile"从 SKIP 改成**自己满足的前置条件**
+
+`scripts/test-panel-auth.mjs` 是唯一覆盖**反代那一半**（`DshWebProxy`：401 透传、启动令牌兑换
+公开权威、iframe 拿到 shell、真实 asset bundle、`/api` 载体、websocket 升级）的套件。它的门是
+"本机必须有 `$DSH_HOME/profiles/notes-assistant/notes-assistant.patch.yml`"，没有就 `__SKIP__`
+并 exit 0 ⇒ **在 `$DSH_HOME` 被重置过的机器、全新克隆与 CI 上，这 8 条断言静默变成 0 条**
+（正是坑 98 点名的形态）。
+
+**修法**：把该 profile 变成**我们满足的前置条件** —— 有已部署的就用现场的（那是用户真在跑的
+东西），没有就离线在临时 `$DSH_HOME` 里铺一份等价的；脚手架取自 `PROFILE_SCAFFOLD_FILES`、
+体文件走 `deployPresetBody()`（**都用权威清单**，不新增第四份手写列表，坑 96）；只有连 dsh 都
+没装才仍 SKIP。结束时只删自己建的 home，已部署的 profile 一字不动。
+
+**实测两条路径**：真实 `.dsh`（无该 profile）⇒ 打印 `note … provisioned an offline one` 后
+`__CHECKS__ 8/8`；有已部署 profile 的 home ⇒ **无** `note` 行、同样 `8/8`。跑完检查真实
+`.dsh\profiles` 仍只有 `web` ⇒ 没往用户家里写东西。整体从 **49 ok / 2 SKIP** 变成
+**50 ok / 1 SKIP**（见提交 `2ecc492`）。
+
+**剩下那条 SKIP 为什么留着**：`test: agent preset mounts` 有一半断言在读**真实已部署** profile
+的清单与 overlay（坑 100 那类事故的静态前置），没有现场就没有可比对象；而它的动态那一半
+（bundle 冷启动建会话）已由自带的 `test: self-provisioned profile accepts a session` 覆盖。
+
+
 ## 2026-09-26 · 环境修复：让 workspace-write 沙箱能在工作区根上写 DACL（`SetNamedSecurityInfoW` Win32 5）
 
 **这不是代码缺陷，但它让「跑一遍门禁」变得不可能**，所以按维护者细账记在这里。
