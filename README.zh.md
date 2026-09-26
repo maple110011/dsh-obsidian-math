@@ -51,7 +51,7 @@
 - 记忆全部是 vault 内 markdown；归档代替删除；模型不得修改策略/统计字段。
 
 ## 要求
-- Obsidian 桌面版；Node.js ≥ 22.5；DeepSeek Harness（npm 全局 `@deepseek-ai/dsh`，**已在 0.1.5-rc.1 上验证**；会话数据格式 V3 的适配见 [`docs/dsh-0.1.5-adaptation.md`](docs/dsh-0.1.5-adaptation.md)）；已配置的 DeepSeek 模型。
+- Obsidian 桌面版；Node.js ≥ 22.5；DeepSeek Harness（npm 全局 `@deepseek-ai/dsh`，**要求 ≥ 0.1.7-rc.2**——本版适配了 0.1.7 的 preset 声明机制，见 [`docs/dsh-0.1.7-adaptation.md`](docs/dsh-0.1.7-adaptation.md)；会话数据格式 V3 的适配见 [`docs/dsh-0.1.5-adaptation.md`](docs/dsh-0.1.5-adaptation.md)）；已配置的 DeepSeek 模型。
 - 默认端口 **3180**（与 dsh web 的 3080 并存不冲突，可在设置里改）。
 
 ## 安装
@@ -90,7 +90,7 @@ vault/
 ## 开发与质量
 
 ```bash
-npm test          # 语法 + 426 项零 token 回归 + 路由回归（62 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
+npm test          # 语法 + 427 项零 token 回归 + 路由回归（62 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
 npm run qa        # 引擎探针：真实 vault 12 组召回断言 + 可达性分层/A-B 测量（零 token）
 npm run qa:e2e    # 真实会话端到端验收（烧真实 tokens，报告 API 级 usage）
 node scripts/build-obsidian.mjs   # 重建 main.js（改共享文件后必跑）

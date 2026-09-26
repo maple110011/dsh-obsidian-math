@@ -51,7 +51,7 @@ Being explicit about the boundary matters more than listing features:
 - All memory lives as markdown inside the vault; archiving instead of deleting; the model may not edit policy or statistics fields.
 
 ## Requirements
-- Obsidian desktop; Node.js ≥ 22.5; DeepSeek Harness (npm global `@deepseek-ai/dsh`, **verified against 0.1.5-rc.1** — see [`docs/dsh-0.1.5-adaptation.md`](docs/dsh-0.1.5-adaptation.md) for the session-format-V3 adaptation); a configured DeepSeek model.
+- Obsidian desktop; Node.js ≥ 22.5; DeepSeek Harness (npm global `@deepseek-ai/dsh`, **requires ≥ 0.1.7-rc.2** — this release adapts to 0.1.7's preset-declaration mechanism, see [`docs/dsh-0.1.7-adaptation.md`](docs/dsh-0.1.7-adaptation.md); the session-format-V3 adaptation is in [`docs/dsh-0.1.5-adaptation.md`](docs/dsh-0.1.5-adaptation.md)); a configured DeepSeek model.
 - Default port **3180** (coexists with the regular `dsh web` on 3080; configurable in settings).
 
 ## Install
@@ -92,7 +92,7 @@ vault/
 ## Development & quality
 
 ```bash
-npm test          # syntax + 426 zero-token regression checks + 62 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
+npm test          # syntax + 427 zero-token regression checks + 62 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
 npm run qa        # engine probe: 12 ground-truth recall assertions + reachability layering / pooling A/B on the real vault (zero tokens)
 npm run qa:e2e    # real-session end-to-end acceptance (spends real tokens; reports API-level usage)
 node scripts/build-obsidian.mjs   # rebuild main.js (required after shared-file changes)
