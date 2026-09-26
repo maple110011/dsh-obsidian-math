@@ -3,6 +3,51 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · 环境修复：让 workspace-write 沙箱能在工作区根上写 DACL（`SetNamedSecurityInfoW` Win32 5）
+
+**这不是代码缺陷，但它让「跑一遍门禁」变得不可能**，所以按维护者细账记在这里。
+
+**症状**：本机**任何** `pwsh` 调用都在建立沙箱前失败，命令从未执行：
+
+```
+Error: SetNamedSecurityInfoW failed (Win32 5): grantWrite(E:\software\ss\Deepseek-Harness)
+```
+
+Win32 5 = `ERROR_ACCESS_DENIED`。这条来自 `@deepseek-ai/dsh-sandbox-windows-acl`：它是
+**fail-closed** 的 —— `init()` 在任何 Win32 失败时抛错，**子进程绝不会不受限制地 spawn**，
+所以「沙箱起不来」表现为「一条命令都跑不了」，而不是「沙箱被绕过」。
+
+**为什么需要写 DACL**：该沙箱给工作区根写一条**能力 SID** 的允许 ACE
+（`S-1-4-<…>`，实测形态 `DeleteSubdirectoriesAndFiles, Write, Delete, Synchronize`）＋一条对
+world SID 的 `FILE_DELETE_CHILD` 拒绝 ＋ Low 完整性标签，**三处编辑在同一个
+`SetNamedSecurityInfoW` 调用里**完成。而「修改对象的 DACL」需要对象上的 **`WRITE_DAC`**。
+
+**根因**：该根的属主是 `LAPTOP-20RLLBTM\air15`（当前身份），但当时**没有任何显式 ACE** ——
+权限全部继承自 `Authenticated Users:(M)`。**`Modify` 不包含 `WRITE_DAC`**，所以那次调用被拒。
+（Windows 对**属主**会隐式授予 `WRITE_DAC`，这也是为什么修法不需要提权。）
+
+**修法（无需提权，因为当前身份就是属主）**：
+
+```
+icacls "E:\software\ss\Deepseek-Harness" /grant "air15:(OI)(CI)F"
+```
+
+**实测结果**：根上出现显式 ACE `LAPTOP-20RLLBTM\air15 | Allow | FullControl`（`FullControl`
+包含 `ChangePermissions`，即 `WRITE_DAC`）；`(OI)(CI)` 让它对 `dsh-obsidian-math\` 与
+`…\scripts\` 都**继承**（两处实测 `inherited=True`）；沙箱自己那条能力 SID ACE **仍然在**
+（没有被这次编辑冲掉）。原始安全描述符已备份为 SDDL，放在仓库**之外**
+（`%TEMP%\workspace-root-acl-SDDL-before-fix.txt`），需要回退时用它。
+
+**⚠️ 证据边界（必须说明）**：修好之后我**没能**在本会话里重新触发「`workspace-write` 模式下跑一条
+命令」来复验 —— 本会话的文件策略被设成了 `danger-full-access`，那条路径**根本不走 ACL 授予**。
+所以我确认的是**修法所需的权限条件已经成立**（`WRITE_DAC` 经显式 ACE 与继承都具备，
+且能力 ACE 未被破坏），**不是**「我亲眼看到 workspace-write 模式跑通了」。复验方式：把策略切回
+`workspace-write` 再跑任意一条命令即可（失败发生在 `init()`，与命令内容无关）。
+
+**顺带一条纪律**：遇到「门禁全跑不了」时，先分清**环境结果**与**代码缺陷**（坑 59 的教训）。
+本轮正是先把它判成环境、再去修环境，才没有掉进「改断言/改文档去迎合一个假的红」的坑。
+
+
 ## 2026-09-26 · 发版前审计（第三轮）：卸载会删掉**用户的** dsh 配置 + 让 Release 正文说实话
 
 ### ① 真缺陷：`uninstall` 无条件删除 `manifest.posture` 里的每个文件 ⇒ 可能删掉与插件无关的用户配置
