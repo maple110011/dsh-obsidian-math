@@ -22,12 +22,39 @@ const installer = join(repo, 'dsh', 'install.mjs');
 // Inherit stdio instead of piping: sandboxed CI environments may forbid
 // capturing a child process's output through anonymous pipes.
 const run = (args) => spawnSync(process.execPath, [installer, ...args], { stdio: ['ignore', 'inherit', 'inherit'] });
+// Same, but capturing stdout — used by the argument-rejection assertions, which need the message.
+const runCapture = (args) => spawnSync(process.execPath, [installer, ...args], { encoding: 'utf8' });
 
 let failed = 0;
 const check = (label, cond, detail = '') => {
   console.log((cond ? '[ok]' : '[FAIL]'), label + (detail === '' || cond ? '' : ` | ${detail}`));
   if (!cond) failed += 1;
 };
+
+// 0. an unrecognised flag must FAIL LOUDLY, never be dropped in silence.
+//
+// This is not hypothetical: `docs/installation.md` told users to run `install --native`, which has
+// never existed. The parser ignored it, `--profile` fell back to `notes-assistant`, and the command
+// quietly installed the panel's client half into the SIDEBAR profile while `web` stayed without a
+// panel — with no warning at all (found 2026-09-26 while auditing the docs).
+//
+// Asserted through the real CLI (not by importing parseArgs) because what matters is the exit code a
+// user or a script sees.
+{
+  const rejected = runCapture(['install', '--native']);
+  check('an unknown flag exits non-zero (2) instead of silently installing somewhere else',
+    rejected.status === 2, `status=${rejected.status}`);
+  check('the rejection names the offending flag',
+    `${rejected.stdout ?? ''}${rejected.stderr ?? ''}`.includes('--native'),
+    `${(rejected.stderr ?? '').split('\n')[0]}`);
+  // A valid command must still succeed — otherwise "reject unknown flags" could be satisfied by
+  // rejecting everything.
+  const accepted = runCapture(['status', '--dsh-home', home, '--quiet']);
+  check('a valid command is still accepted (the stricter parser did not reject everything)',
+    accepted.status === 0, `status=${accepted.status}`);
+  const help = runCapture(['--help']);
+  check('--help still exits 0', help.status === 0, `status=${help.status}`);
+}
 
 // 1. install --direct (fresh)
 const installArgs = ['install', '--direct', '--dsh-home', home, '--vault', vault];

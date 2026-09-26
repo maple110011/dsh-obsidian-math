@@ -117,7 +117,7 @@ const DIRECT_PROFILE_FILES = [
 /** Exported for `scripts/check-preset-body-lists.mjs` (import the real array). */
 export { DIRECT_PROFILE_FILES };
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = {
     command: "install",
     direct: false,
@@ -132,6 +132,15 @@ function parseArgs(argv) {
     purgeData: false,
     confirm: ""
   };
+  // An unrecognised flag used to be dropped in silence, and that caused a real, documented
+  // mistake: `docs/installation.md` told users to run `install --native`, which does not exist —
+  // the flag vanished, `--profile` fell back to its default `notes-assistant`, and the command
+  // quietly installed the panel's client half into the SIDEBAR profile while `web` still had no
+  // panel. Nothing warned (found 2026-09-26 while auditing the docs).
+  //
+  // Collect first, report once: a typo'd flag plus its stray value should produce one actionable
+  // message, not one error per token.
+  const unknown = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "install" || arg === "status" || arg === "uninstall") options.command = arg;
@@ -167,9 +176,18 @@ Options:
   --purge             uninstall: also remove scaffold templates (vault)
   --purge-data        uninstall: also remove memory CONTENT (requires --confirm)
   --confirm <phrase>  exact phrase for --purge-data ("${PURGE_DATA_CONFIRM}")
-  --yes               uninstall: execute (default is a dry-run)`);
+  --yes               uninstall: execute (default is a dry-run)
+
+Exit codes:
+  0  success / --help
+  1  the command failed (ownership conflict, missing dsh, write refused)
+  2  an unrecognised argument (a typo is reported, never silently ignored)`);
       process.exit(0);
     }
+    else unknown.push(arg);
+  }
+  if (unknown.length > 0) {
+    return { ...options, unknown };
   }
   return options;
 }
@@ -917,6 +935,13 @@ function commandUninstall(options) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  // Fail LOUDLY on an unrecognised flag instead of silently doing something else. See parseArgs
+  // for the `--native` incident this prevents.
+  if (Array.isArray(options.unknown) && options.unknown.length > 0) {
+    console.error(`dsh-math-memory: 无法识别的参数：${options.unknown.map((a) => `"${a}"`).join(', ')}`);
+    console.error('是拼错了吗？看帮助：node dsh/install.mjs --help');
+    process.exit(2);
+  }
   const code =
     options.command === "status" ? commandStatus(options) :
     options.command === "uninstall" ? commandUninstall(options) :
