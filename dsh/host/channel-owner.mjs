@@ -31,7 +31,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The legacy per-preset owner marker (retired: read-only, for old installs). */
@@ -82,7 +82,21 @@ export function readChannelOwner({ profileDir = null, home = null, presetId }) {
   if (typeof profileDir === "string" && profileDir !== "") {
     candidates.push({ path: join(profileDir, CHANNEL_MANIFEST), source: "manifest" });
   }
-  if (typeof home === "string" && home !== "" && typeof presetId === "string" && presetId !== "") {
+  // ⚠️ The legacy marker is keyed by PRESET, not by profile: `$DSH_HOME/.agent-presets/<presetId>/
+  // .owner.json` says "this preset was once installed by the direct channel somewhere under this
+  // home". Consulting it for a DIFFERENT profile is a false positive whose consequence is silent
+  // (measured 2026-09-26): the `web` profile read the retired `direct` marker, the host half
+  // logged "skipping bundle activation", `/memory-panel/*` was never registered, and the memory
+  // panel in 3080 answered 404 with an EMPTY body — which the client surfaced as
+  // `SyntaxError: Unexpected end of JSON input`. The preset itself still appeared (it is declared
+  // by the bundle patch, which this guard does not touch), so the symptom looked like a panel bug.
+  // Therefore: honor the marker only when the profile being asked about IS that preset's profile.
+  const profileName = typeof profileDir === "string" && profileDir !== "" ? basename(resolve(profileDir)) : "";
+  if (
+    typeof home === "string" && home !== "" &&
+    typeof presetId === "string" && presetId !== "" &&
+    profileName === presetId
+  ) {
     candidates.push({ path: join(home, LEGACY_PRESET_DIR, presetId, OWNER_MARKER), source: "legacy" });
   }
   for (const candidate of candidates) {

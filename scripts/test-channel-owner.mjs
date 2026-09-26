@@ -44,20 +44,35 @@ const legacyMarkerPath = join(legacyDir, OWNER_MARKER);
 const owner = () => readChannelOwner({ profileDir, home, presetId: 'notes-assistant' });
 
 // ── 1. the anchor and its precedence ────────────────────────────────────────
+//
+// ⚠️ The retired marker lives at `$DSH_HOME/.agent-presets/<presetId>/.owner.json` — keyed by
+// PRESET, not by profile. Since 2026-09-26 it is consulted ONLY when the profile being asked
+// about IS that preset's profile (same directory name); otherwise every other profile in the
+// home would inherit its verdict. Measured consequence of ignoring that: the `web` profile saw
+// the retired `direct` marker, silently skipped bundle activation, never registered
+// `/memory-panel/*`, and the memory panel in 3080 answered 404 with an empty body — which the
+// client reported as `SyntaxError: Unexpected end of JSON input`.
+const legacyProfileDir = join(home, 'profiles', 'notes-assistant');
+mkdirSync(legacyProfileDir, { recursive: true });
+const ownerLegacyShaped = () => readChannelOwner({ profileDir: legacyProfileDir, home, presetId: 'notes-assistant' });
+
 check('owner: nothing anywhere reads as unowned', owner() === null);
 writeFileSync(legacyMarkerPath, JSON.stringify({ owner: 'direct', version: '0.7.0' }), 'utf8');
-check('owner: a legacy-only install is still recognised (the fallback is load-bearing)',
-  owner()?.owner === 'direct' && owner()?.source === 'legacy');
+check('owner: the retired marker is IGNORED for a differently-named profile (the 3080 false positive is gone)',
+  owner() === null, JSON.stringify(owner()));
+check('owner: a legacy-only install is still recognised for the profile it belongs to (the fallback is load-bearing)',
+  ownerLegacyShaped()?.owner === 'direct' && ownerLegacyShaped()?.source === 'legacy');
 writeFileSync(manifestPath, JSON.stringify({ owner: 'npm', version: '1.0.0' }), 'utf8');
 check('owner: the profile manifest WINS when the two disagree',
   owner()?.owner === 'npm' && owner()?.source === 'manifest');
 rmSync(manifestPath, { force: true });
 check('owner: falls back to the legacy marker when the manifest is absent',
-  owner()?.source === 'legacy' && owner()?.owner === 'direct');
+  ownerLegacyShaped()?.source === 'legacy' && ownerLegacyShaped()?.owner === 'direct');
 writeFileSync(manifestPath, '{ this is not json', 'utf8');
-check('owner: a malformed manifest is skipped, not fatal', owner()?.source === 'legacy');
+check('owner: a malformed manifest is skipped, not fatal', ownerLegacyShaped()?.source === 'legacy');
 writeFileSync(manifestPath, JSON.stringify({ version: '1.0.0' }), 'utf8');
-check('owner: a manifest without an owner does not count as owned', owner()?.source === 'legacy');
+check('owner: a manifest without an owner does not count as owned',
+  owner() === null && ownerLegacyShaped()?.source === 'legacy');
 check('owner: no anchors passed at all ⇒ unowned, not a guess',
   readChannelOwner({ presetId: 'notes-assistant' }) === null);
 check('owner: an owner-less manifest with no legacy fallback ⇒ unowned',
@@ -108,6 +123,22 @@ try {
     !warnsB.some((m) => /skipping bundle activation/.test(m)), warnsB.join(' | ').slice(0, 160));
   check('runtime guard: it goes on to attempt the panel routes (fake ctx cannot provide ctx.effect)',
     warnsB.some((m) => /panel routes failed/.test(m)), warnsB.join(' | ').slice(0, 160));
+  // Case C — the 3080 shape (2026-09-26): a DIFFERENTLY-NAMED profile whose only anchor is the
+  // retired home-level marker. It must NOT be skipped — being skipped is what left the memory
+  // panel answering 404 with an empty body ("Unexpected end of JSON input").
+  const webProfileDir = join(home, 'profiles', 'web');
+  mkdirSync(webProfileDir, { recursive: true });
+  writeFileSync(legacyMarkerPath, JSON.stringify({ owner: 'direct', version: '0.7.8' }), 'utf8');
+  const warnsC = [];
+  const { apply: applyC } = await import(`../dsh/host/index.mjs?case=c-${Date.now()}`);
+  await applyC({
+    baseUrl: pathToFileURL(webProfileDir).href + '/',
+    logger: { warn: (m) => warnsC.push(String(m)), info: () => {} }
+  }, {});
+  check('runtime guard: a differently-named profile does NOT inherit the retired marker (the 3080 bug)',
+    !warnsC.some((m) => /skipping bundle activation/.test(m)), warnsC.join(' | ').slice(0, 200));
+  check('runtime guard: it goes on to attempt the panel routes for that profile (routes get registered)',
+    warnsC.some((m) => /panel routes failed/.test(m)), warnsC.join(' | ').slice(0, 200));
 } finally {
   if (previousHome === undefined) delete process.env.DSH_HOME;
   else process.env.DSH_HOME = previousHome;

@@ -95,6 +95,43 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · 3080 里记忆面板"加载失败：Unexpected end of JSON input"
+
+**症状**：把引擎装进 `web` profile 之后，3080 侧**能**看到「数学笔记助手」模式（bundle 补丁声明的，
+不受影响），但记忆面板报 `SyntaxError: Unexpected end of JSON input`。
+
+**取证**：直接探测 `http://127.0.0.1:3080/memory-panel/workspaces` ⇒ **404 且响应体为空**。客户端半个
+`res.json()` 解析空体 ⇒ 那句话 ✓（"空体 404" 在浏览器里长得像 JSON 解析 bug，其实是没有路由）。
+
+**根因（读代码 + 变异复现确认）**：宿主半 `dsh/host/index.mjs` 有一道通道归属守卫——
+`owner !== null && owner.owner !== "npm"` ⇒ 打印 `skipping bundle activation` 并 **return**（面板路由与
+工作区注册都跳过）。而 `readChannelOwner()` 的第二来源是 **home 级**的退役标记
+`$DSH_HOME/.agent-presets/notes-assistant/.owner.json`——**它按 "preset" 索引，却被当成"任意 profile"的
+归属**。你机器上那个标记写着 `owner: "direct"`（2026-09-25 的旧安装留下的）⇒ `web` profile 被误判成
+"归 direct 通道"，于是**静默跳过激活**；`preset` 由 bundle 补丁声明、不走这道守卫，所以模式照常出现，
+症状看着像面板的 bug。
+
+**两个真 bug 与修法**：
+1. **退役标记的适用范围**（`dsh/host/channel-owner.mjs`）：只有当被问的 profile **就是该 preset 自己的
+   profile**（目录同名）时才读它；否则忽略。这样侧栏（`notes-assistant`）的原保护不变，别的 profile
+   不再继承这个判定。
+2. **native 通道不写归属锚点**（`dsh/install.mjs` 的 `nativeInstall()`）：现在会写 profile 自己的
+   `.install-manifest.json`（`owner: "npm"`）。三个通道都写锚点，回退路径就不再需要被用到。
+
+**守卫与变异**：`scripts/test-channel-owner.mjs` **14 → 18** 项——新增"**不同名 profile 不得继承退役
+标记**"（读侧）+ 两条**运行时**用例（真的调用 `dsh/host/index.mjs`，断言不出现
+`skipping bundle activation` 且确实去挂面板路由）。**变异 M25**：把限定改回去 ⇒ **4 条红**，并原样打出
+根因句 `this profile is owned by "direct" (legacy .agent-presets marker) — skipping bundle activation`；
+还原后 18/18 ✓。
+
+**实机修复（用户机器）**：给 `<web>/.install-manifest.json` 写入 `owner: "npm"`；把修好的
+`channel-owner.mjs` 覆盖进已安装包（bundle 用的是**已安装那份**，不重建就还是旧逻辑）。就地验证（用
+**已安装的**那份代码）：`web → owner=npm/manifest` ✓、`notes-assistant → owner=direct/manifest` ✓
+（侧栏不受影响）。**需再重启一次 3080** 才会重新执行激活。
+
+**留下的粗糙面（已记 §7）**：客户端半个把"空体 404"报成 JSON 解析错误 ⇒ 应改成先看 `res.ok`/空体并显示
+HTTP 状态；这是纯客户端改动（要重建 `client.js` 并重装到两个 profile）。
+
 ## 2026-09-26 · "两侧通用"：让主 dsh web（3080）也有笔记助手模式与记忆面板
 
 **用户的观察**：侧栏（`notes-assistant` profile，3180）里能看到"数学笔记助手"模式和记忆面板，

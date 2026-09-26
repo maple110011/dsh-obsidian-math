@@ -412,6 +412,14 @@ function nativeInstall(options, dshHome) {
     return false;
   }
 
+  // Anchor ownership IN THE PROFILE (every channel writes this file; `dsh/host/index.mjs` reads it
+  // to decide whether to activate the host half). Without it the read side fell back to the
+  // home-level retired marker — which is keyed by PRESET, so a profile that never had a direct
+  // install (e.g. `web`) was misread as "direct" and silently skipped bundle activation. Measured
+  // 2026-09-26: the memory panel in 3080 answered 404 with an empty body, and the client showed it
+  // as `SyntaxError: Unexpected end of JSON input`. `write()` honours --dry-run.
+  writeManifest(options, profileRoot, "npm", ["cordis.patch.yml"], []);
+
   // The bundle delivers the ENGINE + the panel's HOST routes, but the panel's CLIENT half is
   // a separate locally staged package — and this path used to skip it entirely, which is why
   // the main `dsh web` (3080) had no memory panel even after a native install (2026-09-26).
