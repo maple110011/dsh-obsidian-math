@@ -51,6 +51,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -954,21 +955,46 @@ function commandUninstall(options) {
     }
 
     if (options.purgeData) {
-      const contentFiles = [
-        "AGENTS.md", ".deepseek/memory/profile.md", ".deepseek/memory/notation.md",
-        ".deepseek/capture-policy.md", ".deepseek/config.md", ".deepseek/working.md"
-      ];
-      for (const rel of contentFiles) {
-        const path = join(vault, ...rel.split("/"));
-        if (existsSync(path)) remove(options, path);
+      // DERIVED FROM THE MANIFEST, not hand-written (M6, 2026-09-26).
+      //
+      // These used to be a second copy of `dsh/templates-manifest.json` — which AGENTS.md §3.2
+      // forbids ("安装器与插件引导都按清单遍历，所以只需改清单、不要另加硬编码列表") — and they happened
+      // to cover exactly that day's entries. So a NEW template would be seeded on install and then
+      // silently SURVIVE `--purge-data`: "I deleted my memory" would be false, and nothing would fail.
+      //
+      // Now every template the manifest names is cleaned, minus the ones restored deliberately
+      // (skeletons are `--purge`'s business). That covers a template added ANYWHERE, including a
+      // future card layer — not just the ones someone remembered to list.
+      const isSkeletonTarget = (rel) => rel.endsWith("index.md")
+        || (rel.split("/").pop() ?? "").startsWith("_README");
+      // Read the manifest here rather than reusing a variable from the block above: the two work on
+      // different guarantees, and an implicit reliance on an outer name is exactly how this landed as
+      // `rel.endsWith is not a function` on the first run (measured 2026-09-26).
+      const templateTargets = Object.values(JSON.parse(readFileSync(MANIFEST_FILE, "utf8")))
+        .filter((rel) => typeof rel === "string");
+      const contentRel = templateTargets.filter((rel) => !isSkeletonTarget(rel));
+      // Parent DIRECTORIES of every manifest target, plus the card layers a vault may hold beyond
+      // what the manifest names (`archive` is never seeded, so it only ever holds user data).
+      //
+      // This is derived too, on purpose: my first attempt kept a hand-written `containers` list, and a
+      // planted future layer's own directory survived the purge while its named file was deleted — the
+      // exact half-deletion this defect is about (measured 2026-09-26). Taking the manifest's parent
+      // dirs means a new layer cannot be missed.
+      const containers = new Set([".deepseek/archive"]);
+      for (const rel of templateTargets) {
+        const parts = rel.split("/");
+        parts.pop();
+        if (parts.length > 0) containers.add(parts.join("/"));
       }
-      const contentDirs = [
-        ".deepseek/memory/records", ".deepseek/memory/topics", ".deepseek/memory/theorems",
-        ".deepseek/memory/templates", ".deepseek/memory/episodes", ".deepseek/strategy",
-        ".deepseek/inbox", ".deepseek/archive"
-      ];
-      for (const rel of contentDirs) {
-        const path = join(vault, rel);
+      for (const rel of contentRel) {
+        const path = join(vault, ...rel.split("/"));
+        if (!existsSync(path)) continue;
+        // Recurse for directories (a card layer may hold nested files); ask the filesystem which it is
+        // rather than maintaining a third list classifying them.
+        remove(options, path, statSync(path).isDirectory());
+      }
+      for (const rel of containers) {
+        const path = join(vault, ...rel.split("/"));
         if (existsSync(path)) remove(options, path, true);
       }
       log(options, "[note] memory content removed with --purge-data. Restore from a backup if needed.");

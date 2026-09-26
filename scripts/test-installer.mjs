@@ -457,6 +457,50 @@ check('posture removed', !existsSync(join(profileRoot, 'cordis.patch.yml')));
 check('manifest removed', !existsSync(join(profileRoot, '.install-manifest.json')));
 check('vault AGENTS.md removed', !existsSync(join(vault, 'AGENTS.md')));
 check('vault cache removed', !existsSync(join(vault, '.deepseek', 'cache')));
+// `--purge-data` must remove EVERY content file the manifest names — derived, not a second hand-written
+// list (M6, 2026-09-26). The lists used to be a copy of `templates-manifest.json` that happened to cover
+// exactly that day's entries, so a new template would be seeded on install and then silently SURVIVE the
+// purge: "I deleted my memory" would be false and nothing would fail.
+//
+// ⚠️ A first version of this assertion only checked that the manifest's own targets were gone — and that
+// passed EVEN WITH the hand-written list restored, because the recursive container pass removes those
+// same files. A guard that cannot fail is decoration (trap 68/81), so this one plants a content file at a
+// **top-level, manifest-named** target in a THROWAWAY vault of its own, where only the derived per-file
+// list can reach it, and asserts it is removed. Then it asserts a non-manifest file in the same
+// directory SURVIVES (so the check cannot be satisfied by "delete the whole vault").
+{
+  const pv = mkdtempSync(join(tmpdir(), 'dsh-purge-manifest-'));
+  const pvVault = mkdtempSync(join(tmpdir(), 'dsh-purge-vault-'));
+  try {
+    const install = run(['install', '--direct', '--dsh-home', pv, '--vault', pvVault, '--quiet']);
+    check('purge fixture: seeded install exit 0', install.status === 0, `status=${install.status}`);
+    // A manifest-named target at the vault ROOT: no container directory covers it.
+    writeFileSync(join(pvVault, 'AGENTS.md'), '# content\n', 'utf8');
+    // A file the manifest does NOT name, in the same directory: it must survive, proving the purge is
+    // driven by the manifest rather than by "remove everything".
+    writeFileSync(join(pvVault, 'not-a-template.md'), '# mine\n', 'utf8');
+    const purged = run(['uninstall', '--purge-data', '--yes', '--confirm', 'DELETE MY MATH MEMORY',
+      '--dsh-home', pv, '--vault', pvVault]);
+    check('purge fixture: uninstall exit 0', purged.status === 0, `status=${purged.status}`);
+    check('a manifest-named content file at the vault root is removed (the list is derived, not remembered)',
+      !existsSync(join(pvVault, 'AGENTS.md')));
+    check('...while a file the manifest does not name is left alone (the purge is manifest-driven)',
+      existsSync(join(pvVault, 'not-a-template.md')));
+  } finally {
+    rmSync(pv, { recursive: true, force: true });
+    rmSync(pvVault, { recursive: true, force: true });
+  }
+}
+// Every manifest target should be gone from the main fixture vault too (skeletons were removed by
+// `--purge`, content by `--purge-data`) — a cheap end-to-end sweep.
+{
+  const manifest = JSON.parse(readFileSync(join(repo, 'dsh', 'templates-manifest.json'), 'utf8'));
+  const survivors = Object.values(manifest)
+    .filter((rel) => typeof rel === 'string')
+    .filter((rel) => existsSync(join(vault, ...rel.split('/'))));
+  check('--purge --purge-data left no manifest-seeded file behind at all',
+    survivors.length === 0, survivors.join(', ') || 'none left');
+}
 
 rmSync(home, { recursive: true, force: true });
 rmSync(vault, { recursive: true, force: true });
