@@ -346,6 +346,39 @@ export function installClientIntoProfile(profileHome, opts = {}) {
     return result;
   }
 
+/**
+ * Splice a patch op into a profile's own `cordis.patch.yml` without creating a SECOND root node.
+ *
+ * WHY (2026-09-26, measured). The file dsh writes for a fresh profile ends with an EMPTY root array:
+ *
+ *     # Your patch layer for this dsh profile, applied after every bundle layer:
+ *     # …
+ *     []
+ *
+ * Appending `- insert:` after that `[]` produces two root nodes in one document with no `---`
+ * separator, which is a hard YAML error — the same failure text our own `cordis.patch.yml:15-22`
+ * documents as fatal for a whole profile. Measured with the repo's own `js-yaml`:
+ * `load()` and `loadAll()` both throw `end of the stream or a document separator is expected (9:1)`,
+ * while the identical row appended to a comment-only file parses fine. So the empty document must be
+ * REPLACED, not appended to. When a real op already follows (a profile someone already edited), the
+ * row is appended normally.
+ *
+ * @param {string} current - existing file text.
+ * @param {string} row - the block to add (leading blank line + comments + the `- insert:` op).
+ * @returns {string} the new file text.
+ */
+function spliceIntoPatchLayer(current, row) {
+  const lines = current.split("\n");
+  const isBlankOrComment = (line) => /^\s*(?:#|$)/.test(line);
+  const emptyDocAt = lines.findIndex((line) => /^\s*\[\s*\]\s*$/.test(line));
+  // Only treat it as "the empty document" when nothing but blanks/comments precedes it — otherwise a
+  // later `[]` could belong to something else entirely and must not be touched.
+  if (emptyDocAt >= 0 && lines.slice(0, emptyDocAt).every(isBlankOrComment)) {
+    return lines.slice(0, emptyDocAt).join("\n") + row;
+  }
+  return current.replace(/\s*$/, "\n") + row;
+}
+
   // 校验那一行**确实在会被读到的那一层里**。
   // · overlay 层：本模块不写它（那份 overlay 每次起服务都会被插件从内嵌副本重写）——那行必须来自内嵌
   //   overlay，否则下一次服务启动就会被擦掉，而"包在、行不在"恰恰是拖拽静默失效的形状，所以正面对质。
@@ -372,7 +405,7 @@ export function installClientIntoProfile(profileHome, opts = {}) {
       `      name: '${PKG}'`,
       ""
     ].join("\n");
-    writeFileSync(rowLayerPath, current.replace(/\s*$/, "\n") + row, "utf8");
+    writeFileSync(rowLayerPath, spliceIntoPatchLayer(current, row), "utf8");
     insertedRow = true;
     log(`已在 ${rowLayerPath} 插入 ${INSERT_ID} 行`);
   }

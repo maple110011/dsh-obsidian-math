@@ -25,6 +25,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+// The patch layer this module writes is YAML that dsh must PARSE. Asserting on substrings is not
+// enough: the 2026-09-26 defect appended `- insert:` after dsh's own empty `[]` root node, which is a
+// hard YAML error ("end of the stream or a document separator is expected") while every substring
+// assertion still passed. Parse it here.
+import { load } from 'js-yaml';
 import {
   CLIENT_PKG,
   CLIENT_ENTRY_REL,
@@ -162,7 +167,19 @@ try {
     `${res.inserted} ${res.rowLayer ?? ''}`);
   const layer = readFileSync(join(homeC, 'cordis.patch.yml'), 'utf8');
   check('that layer now carries the client row', layer.includes(CLIENT_INSERT_ID) && layer.includes(CLIENT_PKG));
-  check('the scaffold content survives the insert', layer.includes('[]'));
+  // ⚠️ THIS assertion used to read `check('the scaffold content survives the insert', layer.includes('[]'))`
+  // — i.e. it DEMANDED that the empty `[]` root node survive next to the appended op. That is exactly the
+  // invalid two-root-node document (see spliceIntoPatchLayer's comment), so the gate was pinning the defect
+  // as the expectation. Parse instead, and require the row to be reachable as a real op.
+  let parsedLayer = null;
+  let parseError = '';
+  try { parsedLayer = load(layer); } catch (e) { parseError = String(e?.message ?? e).split('\n')[0]; }
+  check('the layer still parses as YAML (not two root nodes)', parseError === '', parseError);
+  check('the parsed layer is a top-level array whose insert op carries the client id',
+    Array.isArray(parsedLayer)
+    && parsedLayer.some((op) => Array.isArray(op?.insert)
+      && op.insert.some((entry) => entry?.id === CLIENT_INSERT_ID && entry?.name === CLIENT_PKG)),
+    JSON.stringify(parsedLayer)?.slice(0, 160) ?? 'null');
   const loadedClient = await loadEntry(res.pkgDir);
   check('the web-shape package host is the REAL host half (it must register /memory-panel itself)',
     loadedClient.mod.name === 'math-memory-host', String(loadedClient.mod.name));
