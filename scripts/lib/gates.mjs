@@ -18,6 +18,10 @@ export const GATES = [
   { name: 'syntax: dsh/preset/note-tools.mjs', args: ['--check', 'dsh/preset/note-tools.mjs'] },
   { name: 'syntax: dsh/preset/math-memory.mjs', args: ['--check', 'dsh/preset/math-memory.mjs'] },
   { name: 'syntax: dsh/profile/math-memory-workspace.mjs', args: ['--check', 'dsh/profile/math-memory-workspace.mjs'] },
+  // A′ module with no caller yet (docs/bundle-channel-plan-2026-09-26.md S1). Syntax-checked so it
+  // cannot rot before S4 wires it up; trap 95 is the precedent (a broken export shipped for a round
+  // because no gate ever executed it).
+  { name: 'syntax: dsh/profile/local-bundle.mjs', args: ['--check', 'dsh/profile/local-bundle.mjs'] },
   { name: 'syntax: main.js (generated bundle)', args: ['--check', 'main.js'] },
   { name: 'preset: imports and exposes its name', args: ['-e', "import('./dsh/preset/math-memory.mjs').then(m=>console.log('preset ok:', m.name))"] },
   { name: 'test: memory regression', args: ['scripts/test-memory.mjs'] },

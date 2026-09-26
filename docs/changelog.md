@@ -3,6 +3,56 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · A′ S1：离线通道"包化"的物化模块（纯函数、暂无调用方，但已被门禁执行）
+
+**背景**：用户问"为什么插件不出现在 dsh 的插件管理页"。机制已在
+[`docs/bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md) §1 查清：那一页的候选名字是
+`dsh.profile.bundles ∪ profile.dependencies ∪ installation.dependencies`，且**只有声明了 `dsh.bundle.patch`
+的包才会被列出**。离线通道（Obsidian 引导 / `install --direct`）只把文件**平铺**进 profile，从不产生
+包 ⇒ 它**连"not-bundle"项都不会出现**。这是记录在案的后果，不是缺陷。
+
+**本步做什么**：新增 `dsh/profile/local-bundle.mjs` —— 把本插件**物化成一个真正的 dsh bundle 包**
+（`<profile>/.dsh-math-memory/`）。它是**纯函数模块**：不 spawn、不联网、不依赖 dsh，只写树并报告写了什么。
+安装与否、跑不跑 `dsh plugin add`、怎么改写 overlay 属调用方（S3/S4）。
+
+**两条看着像洁癖、实际不是的约束**：
+1. **物化树必须镜像仓库布局**（`dsh/host/…`、`dsh/preset/…`、`dsh/profile/…`），**不能平铺** ——
+   `dsh/host/index.mjs` 里是 `../profile/math-memory-workspace.mjs`，平铺会让这个 specifier 解析失败，
+   而 dsh 对"模块解析不了"只报 `never started`、启动日志里什么都没有（坑 93）。
+2. **不写第二份清单**：来源与内容都是**注入**的（`files` + `read`），与 `deployPresetBody({ read })` 同形状；
+   清单本身由调用方从**已有的权威**拼出 —— 宿主入口的相对 import 闭包（`collectDshImportClosure`）＋
+   契约的 `PRESET_BODY_FILES`。手写部分只剩 5 个 `LOCAL_BUNDLE_EXTRA_FILES`（bundle patch、config 模板、
+   icon、两个 locale），每条都有理由且**必须有对应文件**。
+
+**实跑中发现并修掉的三个自己的错**（都属于"写的时候以为对，跑起来才知道"）：
+1. **分隔符没归一化**：`collectDshImportClosure` 用 `path.join` 造路径，在 Windows 上返回 `dsh\host\…`，
+   而契约派生的名字是 `dsh/preset/…` ⇒ 去重失效、同一个文件以两种写法各出现一次（**实测 18 项里只有 12 项是真的**）。
+   已在拼装处统一归一化 ⇒ 16 项、16 unique。
+2. **在 ESM 里写了 `require`**（`localBundleInstalledIn`），已改为 `readFileSync`。
+3. **第一版用正则去"解析"契约源码**取 body 清单 —— 既脆又没必要（契约是 `.mjs`，`dsh/preset/profile-contract.mjs` 里那句
+   `export const PRESET_BODY_FILES = […]` 本来就能被 import）。改成**注入**，模块不再假设任何布局。
+
+**门禁（这一步就配，不留到 S4 —— 坑 95 的形态是"零调用方的导出会腐烂"）**：
+· `scripts/lib/gates.mjs` 新增 `syntax: dsh/profile/local-bundle.mjs`（**52** 条，`AGENTS.md` 的计数同批更新 ——
+  `check-doc-counts` 当场报红并指出"claims 51 but registers 52"，这条守卫按设计工作了）；
+· `dsh/profile/local-bundle.mjs` 必须进 `build-obsidian.mjs` 的 `EMBEDDED_SOURCES`（否则 build 直接抛错），
+  `main.js` 已重建（17 个内嵌源）；
+· `check-preset-body-lists.mjs` 新增 7 条 A′ 断言：派生清单 == 宿主闭包 ∪ 契约体文件 ∪ 声明的 extras、无重复、
+  每个 extra 都真实存在、extras 不与闭包/契约重复，**以及**生成的 manifest 里 `icon` / `dsh.bundle.patch` / `main`
+   三个字段指向的文件**必须在清单里**。
+
+**变异验证（这一步比实现更值钱）**：我先后发现自己的断言有**两个**漏洞并都补上了 ——
+① 用了 `sameSet`（`a.length === b.length && every(x => b.includes(x))`），它**对重复不敏感**：往 extras 里塞一条
+`dsh/host/index.mjs` **照样通过**。改成集合比较后，重复被抓住（并单独加一条"无重复条目"断言）。
+② "派生 == 期望"这条**在构造上恒真**（两边都来自同一次调用）⇒ 把 `icon.svg` 从 extras 里**删掉仍然全绿**。
+真正的风险是"生成的 manifest 指向一个不在清单里的文件"，于是加了上面那三条字段交叉断言 —— 之后删 `icon.svg`
+与删 `dsh/cordis.patch.yml` **都立刻红**。**一条在构造上恒真的断言等于没有断言**（坑 68/81 的又一实例）。
+
+**证据边界**：本步只证明"物化出的包**结构正确**"（16 源文件 + 生成的 manifest=17 个文件；`dsh/host/index.mjs`
+的 `../profile/…` 目标在物化树内存在；`add` 参数是绝对路径的 `file:` 形式）。**没有**证明 `dsh plugin add`
+会接受它、也没证明它出现在插件管理页 —— 那是 S3/S4 的事，且需要真机。
+
+
 ## 2026-09-26 · `uninstall --dry-run` 逐条核对：确实是刻意的 no-op（并把它钉住）
 
 **背景**：`uninstall` **默认就是 dry-run**（要执行得加 `--yes`），所以这是用户敲一条裸 `uninstall` 时

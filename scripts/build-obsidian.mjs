@@ -45,6 +45,11 @@ const EMBEDDED_SOURCES = {
   "profile-cordis.patch.yml": "dsh/profile/cordis.patch.yml",
   "profile-pnpm-workspace.yaml": "dsh/profile/pnpm-workspace.yaml",
   "profile-math-memory-workspace.mjs": "dsh/profile/math-memory-workspace.mjs",
+  // A′ (offline channel package-ization, docs/bundle-channel-plan-2026-09-26.md S1). The Obsidian
+  // bootstrap cannot import from `dsh/`, so the module that materializes the local bundle is embedded
+  // and loaded the same way the other injected modules are. It has no caller yet — that is why the
+  // syntax gate below exists (trap 95: a zero-caller export rots silently).
+  "profile-local-bundle.mjs": "dsh/profile/local-bundle.mjs",
   "profile-notes-assistant.patch.yml": "dsh/profile/notes-assistant.patch.yml",
   "host-memory-admin.mjs": "dsh/host/memory-admin.mjs",
   "host-math-memory-panel.mjs": "dsh/host/math-memory-panel.mjs"

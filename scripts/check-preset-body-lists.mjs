@@ -31,7 +31,7 @@
  * overlay keeps `./…` rows and the caller stages the files. See
  * `scripts/lib/preset-declaration.mjs` for the measurement behind that split.
  */
-import { mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,9 @@ import {
 } from '../dsh/preset/preset-deploy.mjs';
 import { DIRECT_PROFILE_FILES } from '../dsh/install.mjs';
 import { collectDshImportClosure } from '../dsh/client-panel/install-into-profile.mjs';
+// A′ (offline package-ization): the materialized bundle's source list is derived from the two
+// authorities above, so this gate is where "did the derivation stay honest" belongs.
+import { localBundleSourceFiles, localBundleManifest, LOCAL_BUNDLE_EXTRA_FILES } from '../dsh/profile/local-bundle.mjs';
 import { DECLARATION_BEGIN, DECLARATION_END } from './lib/preset-declaration.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -63,6 +66,61 @@ const closure = collectDshImportClosure('dsh/preset/math-memory.mjs', root)
 check('the preset body list equals the entry module\'s relative-import closure',
   sameSet(closure, PRESET_BODY_FILES),
   `closure=[${closure.join(', ')}] list=[${PRESET_BODY_FILES.join(', ')}]`);
+
+// ── 1b. A′ (offline package-ization): the materialized bundle's list is DERIVED, and its only
+// hand-written part is a short, auditable list of extras.
+//
+// Why this assertion has to exist before the module has a caller: the materialized package is the
+// fifth consumer of this same inventory (deployer / CLI installer / Obsidian bootstrap / client-half
+// closure / now the bundle). A module dropped from the materialized tree produces a package that
+// installs, is listed in dsh's plugin manager, and then **silently mounts nothing** — dsh reports a
+// module that fails to resolve only as `never started`, with nothing in the boot log (trap 93).
+// Trap 95 is the sibling: an export nothing executes rots unnoticed, which is why this ran before S4.
+{
+  const bundleClosure = collectDshImportClosure('dsh/host/index.mjs', root).map((rel) => rel.replaceAll('\\', '/'));
+  const derived = localBundleSourceFiles({ repoRoot: root, collectClosure: collectDshImportClosure, presetBodyFiles: PRESET_BODY_FILES });
+  const expected = [...new Set([...bundleClosure, ...PRESET_BODY_FILES.map((n) => `dsh/preset/${n}`), ...LOCAL_BUNDLE_EXTRA_FILES])].sort();
+  // ⚠️ Compare as SETS, not with `sameSet`. `sameSet` is duplicate-TOLERANT (`a.length === b.length &&
+  // every(x => b.includes(x))`), so an entry listed twice in the same array satisfies it. Measured
+  // 2026-09-26: a deliberately duplicated extra ("dsh/host/index.mjs" appended to the extras) PASSED
+  // this assertion until the comparison was switched to sets. `sameSet` remains fine for the older
+  // assertions — those compare a list with itself-derived forms — but a list whose whole point is
+  // "derived and de-duplicated" needs a comparison that can see a duplicate.
+  const derivedSet = new Set(derived);
+  const expectedSet = new Set(expected);
+  const sameAsSets = derivedSet.size === expectedSet.size && [...expectedSet].every((x) => derivedSet.has(x));
+  check('the local bundle\'s source list == host entry closure ∪ preset body ∪ declared extras (as SETS: duplicates fail)',
+    sameAsSets,
+    `derived=${derived.length} (unique ${derivedSet.size}) expected=${expected.length} (unique ${expectedSet.size})`);
+  check('the local bundle\'s source list contains no duplicate entry',
+    derived.length === derivedSet.size,
+    `${derived.length} entries, ${derivedSet.size} unique`);
+  // Every EXTRA must be a real file: this list is the only hand-written part, so a typo here would ship
+  // a package missing a card asset or the bundle patch itself.
+  const missingExtra = LOCAL_BUNDLE_EXTRA_FILES.filter((rel) => !existsSync(join(root, ...rel.split('/'))));
+  check('every declared local-bundle extra file exists on disk', missingExtra.length === 0, missingExtra.join(', '));
+  // And the extras must not be doing work the closure/contract already covers — that would be the
+  // "second list" smell this repo keeps deleting.
+  const redundant = LOCAL_BUNDLE_EXTRA_FILES.filter((rel) => bundleClosure.includes(rel) || PRESET_BODY_FILES.includes(rel.replace(/^dsh\/preset\//, '')));
+  check('no declared extra duplicates the closure or the contract', redundant.length === 0, redundant.join(', '));
+
+  // The assertion above compares two things derived from the SAME call, so it is true by construction
+  // and cannot notice a needed file being dropped from the extras (measured: removing `icon.svg`
+  // passed). What actually matters is that the MANIFEST this module GENERATES only points at files the
+  // list carries — because the generated `package.json` is what dsh reads:
+  //   · `icon`          — the plugin-management card silently keeps the default artwork without it;
+  //   · `dsh.bundle.patch` — without the patch file the package is not a bundle and never appears.
+  const manifest = localBundleManifest({ name: 'dsh-math-memory', version: '0.0.0', description: 'x', dshEngine: '>=0.0.0' });
+  for (const [field, rel] of [['icon', manifest.icon], ['dsh.bundle.patch', manifest.dsh?.bundle?.patch]]) {
+    const clean = String(rel ?? '').replace(/^\.\//, '');
+    check(`the generated bundle manifest's \`${field}\` is carried by the source list`,
+      clean !== '' && derived.includes(clean), `${field}=${rel} present=${derived.includes(clean)}`);
+  }
+  // `main` must also be carried, or dsh loads the bundle row and finds no module.
+  const mainRel = String(manifest.main ?? '').replace(/^\.\//, '');
+  check('the generated bundle manifest\'s `main` entry is carried by the source list',
+    mainRel !== '' && derived.includes(mainRel), `main=${manifest.main} present=${derived.includes(mainRel)}`);
+}
 
 // ── 2. the deployer actually works (a dead export cannot hide here) ────────
 const tmp = mkdtempSync(join(tmpdir(), 'preset-body-lists-'));
