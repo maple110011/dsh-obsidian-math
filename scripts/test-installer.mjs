@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { verifyPostureDigests } from '../dsh/install.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const home = mkdtempSync(join(tmpdir(), 'dsh-home-test-'));
@@ -30,6 +31,41 @@ const profileRoot = join(home, 'profiles', 'notes-assistant');
 // overlay and its modules live in the profile directory). `uninstall` still
 // CLEANS UP a directory a pre-2026-09-26 install left behind — asserted in step 6.
 check('the retired .agent-presets directory is NOT created by --direct', !existsSync(presetRoot));
+
+// ── the "third copy" integrity baseline (B0, 2026-09-26) ─────────────────────
+//
+// docs/decoupling-assessment-2026-09-26.md §2.3 measured the problem: the flat profile
+// files are written by an installer that ran some time ago, and NOTHING could tell whether
+// what is on disk is still what was written (4 of 12 files had already drifted, and no gate
+// red). The manifest now records one sha256 per posture file, and this block proves the
+// verifier — reused by the real-deployed-profile gate — actually notices a change.
+{
+  const manifest = JSON.parse(readFileSync(join(profileRoot, '.install-manifest.json'), 'utf8'));
+  const present = manifest.posture.filter((n) => existsSync(join(profileRoot, n)));
+  const recorded = Object.keys(manifest.postureDigests ?? {});
+  check('manifest records a digest for every posture file present on disk',
+    recorded.length === present.length && present.every((n) => typeof manifest.postureDigests[n] === 'string'),
+    `${recorded.length}/${present.length}`);
+
+  const clean = verifyPostureDigests(profileRoot, manifest);
+  check('the digests verify against a freshly installed profile',
+    clean.unrecorded === false && clean.drifted.length === 0 && clean.missing.length === 0,
+    JSON.stringify({ drifted: clean.drifted, missing: clean.missing }));
+
+  // self-mutation: the verifier must notice a byte changed behind the manifest's back,
+  // and must go quiet again once the file is restored.
+  const victim = join(profileRoot, 'cordis.patch.yml');
+  const original = readFileSync(victim, 'utf8');
+  writeFileSync(victim, original + '\n# tampered\n', 'utf8');
+  const dirty = verifyPostureDigests(profileRoot, manifest);
+  writeFileSync(victim, original, 'utf8');
+  check('a tampered posture file is reported as drifted (and restoring it clears the report)',
+    dirty.drifted.includes('cordis.patch.yml') && verifyPostureDigests(profileRoot, manifest).drifted.length === 0,
+    JSON.stringify(dirty.drifted));
+
+  check('a manifest from before this change is reported as unrecorded, NOT as clean',
+    verifyPostureDigests(profileRoot, { owner: 'direct', posture: ['cordis.patch.yml'] }).unrecorded === true);
+}
 
 // ── the profile manifest must declare name AND version ───────────────────────
 //

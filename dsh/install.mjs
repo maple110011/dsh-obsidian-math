@@ -54,6 +54,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -309,9 +310,68 @@ function writeManifest(options, profileRoot, channel, postureFiles, vaults) {
     installedAt: new Date().toISOString(),
     profile: options.profile,
     posture: postureFiles,
+    // The integrity baseline for the "third copy" (docs/decoupling-assessment-2026-09-26.md §2.3):
+    // the flat profile files are written by an installer that ran some time ago, and until now
+    // NOTHING could tell whether what is on disk is still what was written. A live profile
+    // legitimately LAGS the repo between deployments (that is reported as a notice, not a
+    // failure), but it must never silently DIVERGE from its own record.
+    postureDigests: postureDigests(profileRoot, postureFiles),
     vaults
   };
   write(options, manifestPath, JSON.stringify(payload, null, 2) + "\n");
+}
+
+/** sha256 of one file, or undefined when it is not readable. */
+function fileDigest(path) {
+  try {
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Record one sha256 per posture file that exists — the manifest's integrity baseline.
+ *
+ * @param profileRoot - profile directory holding the flat files.
+ * @param files - posture file names (relative to `profileRoot`).
+ * @returns `{ [name]: sha256 }` for the files that are present.
+ */
+export function postureDigests(profileRoot, files) {
+  const out = {};
+  for (const name of files) {
+    const digest = fileDigest(join(profileRoot, name));
+    if (digest !== undefined) out[name] = digest;
+  }
+  return out;
+}
+
+/**
+ * Compare a manifest's recorded digests with what is on disk right now.
+ *
+ * This is the part that can be a HARD check: a profile whose files no longer match the
+ * manifest that claims to have written them has been hand-edited, half-written, or
+ * clobbered by a stale plugin. (Whether the profile still matches the REPO is a different
+ * question — lag is normal until the next install — so gates report that as a notice.)
+ *
+ * @param profileRoot - profile directory.
+ * @param manifest - parsed `.install-manifest.json` (may be an old one without digests).
+ * @returns `{ checked, drifted, missing, unrecorded }`.
+ */
+export function verifyPostureDigests(profileRoot, manifest) {
+  const recorded = manifest?.postureDigests;
+  if (recorded === null || typeof recorded !== "object") {
+    return { checked: 0, drifted: [], missing: [], unrecorded: true };
+  }
+  const drifted = [];
+  const missing = [];
+  const names = Object.keys(recorded);
+  for (const name of names) {
+    const now = fileDigest(join(profileRoot, name));
+    if (now === undefined) missing.push(name);
+    else if (now !== recorded[name]) drifted.push(name);
+  }
+  return { checked: names.length, drifted, missing, unrecorded: false };
 }
 
 // ── native install ───────────────────────────────────────────────────────────

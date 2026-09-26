@@ -95,6 +95,38 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · B0：给"第三份"（装好后的 profile 平铺文件）装上护栏
+
+**背景**：解耦评估（`docs/decoupling-assessment-2026-09-26.md` §2.3）实测：现场 profile 的 12 项
+posture 文件里 **4 项已与仓库不一致，而没有任何门禁会红**。根因是这"第三份"由**上一次**安装写下，
+此后没人知道磁盘上的东西是否还是当初写的那份。
+
+**落地（两件不同严格度的事，刻意分开）**：
+
+- **硬检查——完整性基线**：`.install-manifest.json` 新增 `postureDigests`（每个 posture 文件一条
+  sha256），两个安装器都写（CLI 的 `dsh/install.mjs` → `postureDigests()`；Obsidian 引导的
+  `main.template.js` → `postureDigestsOf()`，同一形状）。校验用导出的
+  `verifyPostureDigests()`：**磁盘与 manifest 记录的摘要必须一致**。不一致 = 有人绕过安装器改了
+  profile、或写入被截断/被旧代码覆盖——这正是 2026-09-26 两次实机故障的同一族。
+- **提示行——落后于仓库**：profile 的**代码文件**与仓库当前源码逐项比，差异打印成提示但**不失败**。
+  **为什么不做成硬失败**：改动要等下一次安装/引导才落盘，滞后是**正常的**；做成硬失败会让每个没重装的
+  用户永久飘红，那种门禁活不过一天。比较对象**派生**自仓库布局（只比 `dsh/preset|host` 下的同名文件），
+  **不新增第四份文件名清单**（坑 96 的病根）。
+  实测输出：`落后 2/6 个：math-memory.mjs (dsh/preset), note-tools.mjs (dsh/preset)` ✓ 与解耦文档
+  独立测得的漂移一致（另两项 `cordis.patch.yml`/`package.json` 属 profile 专有文件，按设计排除）。
+
+**踩到的坑（值得记）**：第一版落后提示写成"遍历 `postureDigests` 的键"——而现场的 manifest 是旧版本
+写的、**没有** `postureDigests` ⇒ 遍历空集合、打印"与仓库一致"：**一个什么都没比的假绿**。改成从
+`posture` 名单派生后立刻报出真实的 2 项落后。**空集合上的"通过"比没有检查更糟**（坑 69/98 同族）。
+
+**守卫与变异验证**：
+- `test-installer.mjs` 增 **4 条**：每个 posture 文件都有摘要；新装即验证通过；**自我变异**（测试内
+  故意改动一个文件 ⇒ 必须报 drifted，还原后必须清零）；**旧 manifest 必须报 `unrecorded`，不能报
+  clean**（否则等于把"没记录"当成"没问题"）。
+- 真 dsh 门禁 `test-agent-preset.mjs` 增 **2 条**：完整性硬检查 + 落后提示（后者恒绿、只报数字）。
+- **变异 M23**（临时 home，不碰真实 profile）：manifest 摘要与磁盘不符 ⇒
+  `[FAIL] …完整性基线 | {"checked":3,"drifted":["cordis.patch.yml"],"missing":[]}` ✓，恰一条红。
+
 ## 2026-09-26 · 侧栏面板 403 与"vault 路径变成文本框"是同一个缺口：客户端半个不带 token
 
 **两个症状**（实机同一时刻）：

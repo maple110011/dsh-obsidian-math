@@ -25,6 +25,12 @@ import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { verifyPostureDigests } from '../dsh/install.mjs';
+
+/** Repo root — derived, so this gate does not depend on the caller's cwd. */
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 import { setTimeout as sleep } from 'node:timers/promises';
 
 let passed = 0;
@@ -136,6 +142,58 @@ if (existsSync(realManifestPath)) {
   check('已部署 overlay 的每个相对行都有对应文件（行在文件不在 = 会话建不起来）',
     relativeRows.length > 0 && missingFiles.length === 0,
     missingFiles.length === 0 ? `${relativeRows.length} 个相对行` : `缺 ${missingFiles.join(', ')}`);
+}
+
+// ── 第三份（装好后的平铺文件）：完整性基线 + 落后提示（B0, 2026-09-26）──────────
+//
+// docs/decoupling-assessment-2026-09-26.md §2.3 实测过：现场 12 项里有 4 项与仓库不一致，
+// 而**没有任何门禁会红**。这里分两件事，因为它们该有不同的严格度：
+//   · **硬检查**：磁盘上的文件必须与 manifest 记录的摘要一致 —— 不一致说明有人绕过安装器
+//     改了 profile、或写入被截断/被旧插件覆盖（这是"第三份"能立刻抓到的真故障）。
+//   · **提示行**：profile 的**代码文件**与仓库当前源码的差异逐项打印。滞后是**正常的**
+//     （改动要等下一次安装/引导才落盘），把它做成硬失败会让每个没重装的用户永久飘红 ——
+//     所以只提示。比较对象**派生**自仓库布局（只比 `dsh/preset|host` 下的同名文件），
+//     不新增第四份文件名清单（坑 96 的病根）。
+{
+  const manifestPath = join(realProfileDir, '.install-manifest.json');
+  if (!existsSync(manifestPath)) {
+    check('已部署 profile 有 .install-manifest.json（归属锚点）', false, manifestPath);
+  } else {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const integrity = verifyPostureDigests(realProfileDir, manifest);
+    if (integrity.unrecorded) {
+      console.log('[note] 已部署 profile 的 manifest 没有 postureDigests（旧版本写的）：重新安装/引导一次即可获得完整性基线');
+    } else {
+      check('已部署 profile 的文件与 manifest 记录的摘要一致（第三份完整性基线）',
+        integrity.drifted.length === 0 && integrity.missing.length === 0,
+        JSON.stringify({ checked: integrity.checked, drifted: integrity.drifted, missing: integrity.missing }));
+    }
+    const lagging = [];
+    // Iterate the POSTURE list, not the digest keys: an older manifest has no digests at
+    // all, and iterating those keys would compare nothing while printing "consistent" —
+    // a vacuous green, which is worse than no check.
+    for (const name of manifest.posture ?? []) {
+      for (const dir of ['preset', 'host']) {
+        const source = join(repoRoot, 'dsh', dir, name);
+        if (!existsSync(source)) continue;
+        const onDisk = join(realProfileDir, name);
+        if (!existsSync(onDisk)) break;
+        const a = createHash('sha256').update(readFileSync(onDisk)).digest('hex');
+        const b = createHash('sha256').update(readFileSync(source)).digest('hex');
+        if (a !== b) lagging.push(`${name} (dsh/${dir})`);
+        break;
+      }
+    }
+    const compared = (manifest.posture ?? []).filter((name) =>
+      ['preset', 'host'].some((dir) => existsSync(join(repoRoot, 'dsh', dir, name)))).length;
+    check('已部署 profile 的代码文件与仓库当前源码的差异（滞后只提示，不算失败）',
+      compared > 0,
+      compared === 0
+        ? '没有可比较的代码文件（profile 形态变了？）'
+        : lagging.length === 0
+          ? `全部一致（比较了 ${compared} 个）`
+          : `落后 ${lagging.length}/${compared} 个：${lagging.join(', ')} —— 重新安装/引导一次即可追上`);
+  }
 }
 
 // 本次会话**真正用来启动 dsh** 的 home：临时目录里种一份副本（见 isolated-dsh-home.mjs 的 WHY）。

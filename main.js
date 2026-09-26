@@ -12,7 +12,7 @@ const { spawn, spawnSync } = require('child_process');
 const { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, appendFileSync, appendFile, openSync, readSync, closeSync } = require('fs');
 const { join, dirname, resolve } = require('path');
 const { homedir } = require('os');
-const { randomBytes } = require('crypto');
+const { randomBytes, createHash } = require('crypto');
 const { zstdDecompressSync } = require('zlib');
 const http = require('http');
 const { createServer, request: httpRequest } = http;
@@ -202,6 +202,28 @@ function ensureFile(target, content, overwrite = false) {
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, content, 'utf8');
   return true;
+}
+
+/**
+ * Record one sha256 per flat profile file that exists — the integrity baseline written
+ * into `.install-manifest.json`.
+ *
+ * Mirrors `postureDigests()` in `dsh/install.mjs` (the two installers share no module:
+ * this one must run inside Obsidian with no npm/pnpm). The manifest is the anchor that
+ * `dsh/host/channel-owner.mjs` reads, so the digests travel with the ownership record.
+ *
+ * @returns `{ [name]: sha256 }` for the files that are present.
+ */
+function postureDigestsOf(profileRoot, files) {
+  const out = {};
+  for (const name of files) {
+    try {
+      out[name] = createHash('sha256').update(readFileSync(join(profileRoot, name))).digest('hex');
+    } catch {
+      /* absent file: say nothing rather than recording a digest of nothing */
+    }
+  }
+  return out;
 }
 
 /**
@@ -1938,6 +1960,12 @@ function bootstrapDshConfig(plugin, force = false) {
     installedAt: new Date().toISOString(),
     profile: PRESET_NAME,
     posture: DIRECT_PROFILE_FILES,
+    // Integrity baseline for the flat files this bootstrap wrote (same shape as the CLI
+    // installer's; see dsh/install.mjs → postureDigests). A live profile legitimately
+    // LAGS the repo until the next bootstrap, so the gate reports that as a notice — but
+    // it must never silently DIVERGE from its own record (hand edit / half write /
+    // clobbering), which is what these digests make detectable.
+    postureDigests: postureDigestsOf(profileRoot, DIRECT_PROFILE_FILES),
     vaults: []
   }, null, 2) + '\n', 'utf8');
 
