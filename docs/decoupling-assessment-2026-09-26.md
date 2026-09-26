@@ -330,11 +330,13 @@ node scripts/run-gates.mjs --list  →  50 条
 - 选项 A：现在做（第 1 步）。代价：动 `dsh/profile/cordis.patch.yml` 与生成器、要重跑 preset 门禁；需要真机复验一次冷启动。
 - 选项 B：先只加"启动前断言真启动路径里必须有声明"的门禁（现有 `test: agent preset mounts` 已有一条读真实部署 overlay 的断言），搬家留到下一轮。
 - **我的建议：选 A**，但**拆成两个提交**：先搬声明 + 加门禁，再删旧位置的生成。理由是它对应的事故形态（静默、无声、每一轮回复都失败）已经真实发生过一次（2026-09-26 实机）。
+- **✅ 已落地（2026-09-26，见 changelog 的 B3 节），并且刻意偏离了"拆两个提交"**：中间态会**同时存在两份声明**，而同一个 preset id 出现在两个生效层是硬失败（`duplicate loader entry id`）⇒ 拆分反而会造出一个"装了就起不来"的中间提交。搬 + 删旧家 + 自愈 + 门禁在**一个提交**里完成。
 
 **D4 — 方案 A 的契约放在哪、用什么格式？**
 - 选项 A：`dsh/contract/profile-contract.json`（纯数据）。代价：插件侧要走 build 注入才能读到，多一层生成。
 - 选项 B：`dsh/contract/profile-contract.mjs`（可 import 的模块）。代价：`dsh/**` 多一个 `.mjs`，会被 `build-obsidian.mjs:90-100` 的完备性门禁要求嵌入或写 `NOT_EMBEDDED` 理由。
 - **我的建议：选 A**。契约是**数据**，不是代码；用 `NOT_EMBEDDED` 的现有机制把它排除在 bundle 之外（它只被门禁和安装器读，插件侧由 build 把常量注入 `EMBEDDED_PRESET` 即可）。
+- **⚠️ 这条建议已被实测否掉（2026-09-26 落地时）**：选 A（`dsh/contract/*.json`）在当前构建里做不到——**契约必须能被内嵌后的模块 import**，而内嵌源码会被**平铺**进 profile 目录（`./math-memory.mjs` 那一套）⇒ 放进 `dsh/contract/` 子目录会让平铺后的相对路径失效。实际落地取的是"B 的位置 + A 的形态"：`dsh/preset/profile-contract.mjs`（平铺可用、被内嵌、由 build 注入模板），并**否掉**了"A 的 `env` 字段"——env 已由 `docs/env-vars.md` + `check-env-vars.mjs` 双向守住，再加一份就是第四份拷贝。
 
 **D5 — "46/100 条陷阱与契约不同步有关"这个统计要不要进 `handoff.md`？**
 - 选项 A：**写进 `handoff.md` §4 顶部**作为一条元记录（不改 100 这个数字本身）。代价：多一个会腐烂的数字，需要守卫或改成"按簇引用编号"。
