@@ -3669,6 +3669,14 @@ class DshObsidianSettingTab extends PluginSettingTab {
           new Notice(value === 'current' ? '笔记链接将替换当前标签页。' : '笔记链接将在新标签页打开。');
         }));
 
+    // 归属说明（2026-09-26，见 docs/settings-surfaces-2026-09-26.md）。用户问过"Obsidian 里一个设置、
+    // dsh 里一个设置，怎么融洽"——取证结论是**三个面各管一类事，且每个键只有一个执行点**（这里的三项
+    // 都只是转发到 MEMORY_ADMIN.*，与面板走同一份实现、同一个文件）。缺的不是代码，是**归属说明**：
+    // 面板常驻在侧栏、和记忆内容在一起；设置页放连接与进程类，外加这几个最常用的开关。
+    containerEl.createEl('h3', { text: '记忆相关' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '记忆的完整面板（看卡、✅ 确认 / ⚖️ 互证 / ❓ 未确认的反馈、归档、保存本轮）在侧栏的「记忆」里——它与 dsh 侧（3080）看到的是同一份代码。下面这几项只是最常用的开关，和面板改的是同一个文件、走同一份实现，改哪边都算数。' });
+    containerEl.createEl('p', { text: '另有六个开关目前在 vault 的 .deepseek/config.md 里（首次初始化会按模板生成、带逐项说明）：enabled 记忆总开关、dialogueIndex 跨会话问答线索、reminders 备忘录提醒、audit 每日体检、autoArchive 体检自动归档低效用卡、captureSubagents 是否也保存子代理会话。' });
+
     containerEl.createEl('h3', { text: '捕获策略' });
     containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制助手把新信息写入记忆的方式。选择结果直接写入 vault 内的 .deepseek/capture-policy.md（模型不得修改此文件；你的口头指令永远优先于策略）。' });
     containerEl.createEl('p', { text: 'auto = 按三写协议直接写入（回复末尾注明）；ask = 先用提问征得同意再写；off = 不主动捕获（你明确要求除外）。' });

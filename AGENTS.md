@@ -28,6 +28,7 @@
 | 每条行为/契约**为什么**变成现在这样 | [`docs/changelog.md`](docs/changelog.md) |
 | 面向用户的版本变更 | [`CHANGELOG.md`](CHANGELOG.md) |
 | 面板/路由/信任边界 | [`docs/memory/control-panel.md`](docs/memory/control-panel.md) |
+| **Obsidian 插件设置 / dsh 设置 / 记忆面板 三个面怎么分工**（含"为什么不算双写者"的查证过程） | [`docs/settings-surfaces-2026-09-26.md`](docs/settings-surfaces-2026-09-26.md) |
 | **为什么用独立端口 / 两套用途的隔离边界**（含"端口解决不了什么"） | [`docs/port-and-isolation.md`](docs/port-and-isolation.md) |
 | **环境变量**（唯一参考：谁读、别名优先级、死开关） | [`docs/env-vars.md`](docs/env-vars.md)（代码与本表双向一致由 `check-env-vars.mjs` 保证） |
 | 发布流程与 npm 侧一次性配置 | [`docs/release.md`](docs/release.md) |
