@@ -56,6 +56,47 @@ const check = (label, cond, detail = '') => {
   check('--help still exits 0', help.status === 0, `status=${help.status}`);
 }
 
+// 0b. `status` must describe a profile by the shape that channel ACTUALLY uses.
+//
+// `describePresetBody` used to ask only "are the four flat body files in the profile directory?".
+// The bundle channel never stages them (its declaration names a package subpath instead), so every
+// healthy native install was told `[missing 4/4: …]` — a working profile reported as broken, which
+// invites people to "fix" it (measured 2026-09-26). The check now asks whether the entry the
+// composition declares actually resolves, in whichever layout applies.
+{
+  const shapeHome = mkdtempSync(join(tmpdir(), 'dsh-status-shape-'));
+  const directHome = mkdtempSync(join(tmpdir(), 'dsh-status-direct-'));
+  try {
+    // The bundle shape, built the way the package really is (installed under node_modules).
+    const webProfile = join(shapeHome, 'profiles', 'web');
+    mkdirSync(join(webProfile, 'node_modules', 'dsh-math-memory', 'dsh', 'preset'), { recursive: true });
+    for (const name of ['math-memory.mjs', 'note-tools.mjs', 'hook-frontmatter.mjs', 'engine-shared.mjs']) {
+      writeFileSync(join(webProfile, 'node_modules', 'dsh-math-memory', 'dsh', 'preset', name), '// stub\n', 'utf8');
+    }
+    const native = runCapture(['status', '--profile', 'web', '--dsh-home', shapeHome]);
+    check('status on a bundle-shaped profile does NOT claim the flat body is missing',
+      /^preset:\s+\[via bundle\]/m.test(native.stdout ?? ''),
+      (String(native.stdout ?? '').match(/^preset:.*$/m) ?? [''])[0].slice(0, 90));
+
+    // Anti-constant: remove the very entry the declaration resolves, and status must say so again.
+    rmSync(join(webProfile, 'node_modules', 'dsh-math-memory', 'dsh', 'preset', 'math-memory.mjs'), { force: true });
+    const broken = runCapture(['status', '--profile', 'web', '--dsh-home', shapeHome]);
+    check('...but it still reports missing once that entry is gone (not a blanket "healthy")',
+      /^preset:\s+\[missing/m.test(broken.stdout ?? ''),
+      (String(broken.stdout ?? '').match(/^preset:.*$/m) ?? [''])[0].slice(0, 90));
+
+    // The flat shape must keep reporting honestly too.
+    run(['install', '--direct', '--dsh-home', directHome, '--quiet']);
+    const flatOk = runCapture(['status', '--dsh-home', directHome, '--quiet']);
+    check('status on a flat (--direct) profile still reports [present]',
+      /^preset:\s+\[present\]/m.test(flatOk.stdout ?? ''),
+      (String(flatOk.stdout ?? '').match(/^preset:.*$/m) ?? [''])[0].slice(0, 90));
+  } finally {
+    rmSync(shapeHome, { recursive: true, force: true });
+    rmSync(directHome, { recursive: true, force: true });
+  }
+}
+
 // 1. install --direct (fresh)
 const installArgs = ['install', '--direct', '--dsh-home', home, '--vault', vault];
 let r = run(installArgs);

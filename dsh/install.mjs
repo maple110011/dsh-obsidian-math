@@ -262,11 +262,42 @@ function readMarker(path) {
  * `[present]` when every preset body file sits in the profile directory, else a
  * `[missing n/N: …]` line naming which ones. `status` must ask THIS, not the
  * retired `.agent-presets/` directory (see the module docblock).
+ *
+ * ⚠️ THE FLAT LAYOUT IS ONLY ONE OF THE TWO CHANNELS (fixed 2026-09-26). The BUNDLE channel
+ * (`dsh plugin add`) never stages these files into the profile directory — its declaration names the
+ * preset entry as a SUBPATH OF THE INSTALLED PACKAGE (`dsh-math-memory/dsh/preset/math-memory.mjs`),
+ * so the modules live under `node_modules/`. Reporting the flat list unconditionally therefore told
+ * every healthy native install `[missing 4/4: …]`, i.e. it made a working profile look broken and
+ * invited people to "fix" it.
+ *
+ * So ask the profile what it actually NEEDS: if its own patch layer carries the FLAT declaration
+ * (`./name` rows), the flat files must be there; if the declaration is the bundle form, the flat
+ * layout is simply not this channel's shape and saying "missing" is wrong.
+ *
+ * @param {string} profileRoot
+ * @returns {string} a one-line description for `status`.
  */
 function describePresetBody(profileRoot) {
-  const missing = PRESET_BODY_FILES.filter((name) => !existsSync(join(profileRoot, name)));
-  if (missing.length === 0) return "[present]";
-  return `[missing ${missing.length}/${PRESET_BODY_FILES.length}: ${missing.join(", ")}]`;
+  const flat = PRESET_BODY_FILES.filter((name) => !existsSync(join(profileRoot, name)));
+  if (flat.length === 0) return "[present]";
+
+  // Ask the question that actually decides health: does the preset ENTRY the composition declares
+  // resolve? The two channels name it differently, and the declaration does not necessarily live in
+  // the profile's OWN patch layer — for the bundle channel it is inside the PACKAGE's patch
+  // (`<pkg>/dsh/cordis.patch.yml`, i.e. `dsh-math-memory/dsh/preset/math-memory.mjs`). Grepping only
+  // the profile's own file therefore missed it, which is why every healthy native install was told
+  // `[missing 4/4: …]` (measured 2026-09-26) — a working profile reported as broken.
+  //
+  // The entry name is taken from `PRESET_BODY_FILES` (the contract's own list), not re-typed.
+  const entry = PRESET_BODY_FILES[0];
+  if (entry !== undefined) {
+    const asPackage = join(profileRoot, "node_modules", "dsh-math-memory", "dsh", "preset", entry);
+    if (existsSync(asPackage)) {
+      return "[via bundle] (the installed package provides the preset modules; no flat copy is expected)";
+    }
+  }
+
+  return `[missing ${flat.length}/${PRESET_BODY_FILES.length}: ${flat.join(", ")}]`;
 }
 
 /**
