@@ -1,6 +1,6 @@
 # 管道方案：让离线通道也「包化」（A′）
 
-> **状态**：`提案`（**未实现**，本文只调研 + 设计，不含代码改动）。
+> **状态**：`提案` → **S1/S2 已落地（2026-09-26 二次标注）**。原文写的"未实现，本文只调研 + 设计，不含代码改动"描述的是**成文时**：现在 §S1（物化模块 `dsh/profile/local-bundle.mjs`，门禁 `syntax: dsh/profile/local-bundle.mjs`）与 §S2（`test: self-provisioned profile accepts a real session` 改为**真物化**后冷启动，实测 `__CHECKS__ 10/10`，含两条变异验证）都已完成。**S3–S6 未做**，卡在 §7 的 A1–A7 与 `docs/pending-decisions-2026-09-26.md`；A2 另有一处实现方式待定（`dsh/profile/cordis.patch.yml` 已占用同名 basename，不能直接内嵌第二份）。**仍然成立**的是：未拍板前不替用户动代码。
 > **面向版本**：0.7.8（本机 `package.json:3` / `manifest.json`）。
 > **一句话目标**：Obsidian 引导与 `install --direct` 这两条**离线**路径，改为在 profile 内物化一个**真正的 dsh bundle 包**并走 `dsh plugin add <本地目录>`，使插件用户在**不联网**的前提下自动安装，同时该插件出现在 dsh 的「内置插件 → 插件管理」页且可启用 / 禁用 / 移除；现有的**平铺通道保留为兜底**。
 > **证据来源**：仓库文件（相对路径）+ 本机安装的 dsh **0.1.7-rc.2**（`C:\Users\小新air15\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\`，下文 `@deepseek-ai/...` 均指该目录下的包）。实测与本机现场读取的差别在文中逐条标注。

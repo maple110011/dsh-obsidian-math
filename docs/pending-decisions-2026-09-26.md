@@ -3,9 +3,9 @@
 > **状态：待用户决定。** 三份评估各自成文，本文只做一件事：把**需要你拍板**的项收在一处，每项给「选项 / 代价 / 我的建议」。原文里的证据、复现命令、未验证项、量化底数**不在这里重复**。
 >
 > 三份原文：
-> - **A′ 离线通道包化** → [`bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md)（状态：提案，未动代码）
-> - **解耦评估** → [`decoupling-assessment-2026-09-26.md`](decoupling-assessment-2026-09-26.md)（状态：评估 + 推荐路线）
-> - **脏笔记与记忆保真度** → [`note-noise-and-memory-fidelity-2026-09-26.md`](note-noise-and-memory-fidelity-2026-09-26.md)（状态：评估 + 改进方案）
+> - **A′ 离线通道包化** → [`bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md)（状态：**S1/S2 已落地**，S3–S6 待 A1–A7 拍板）
+> - **解耦评估** → [`decoupling-assessment-2026-09-26.md`](decoupling-assessment-2026-09-26.md)（状态：评估 + 推荐路线；**第 0/1/2 步已落地**，第 3 步进行中）
+> - **脏笔记与记忆保真度** → [`note-noise-and-memory-fidelity-2026-09-26.md`](note-noise-and-memory-fidelity-2026-09-26.md)（状态：评估 + 改进方案；**P1–P3 已实现**，P4–P7 仍为提案）
 >
 > 编号规则：**A** = A′ 方案、**B** = 解耦、**C** = 保真度。下表里的编号可直接用来回我（例如"B1 选 A，A1 选 ①，C1 先做 B"）。
 
@@ -102,6 +102,7 @@
 | 1 | **C = 原文 B（P1+P2 成对）**：可信度进注入（一行一个 `❓/⚖️/✅`）+ 注入措辞分级 | 直接回应你"越看越乱"的担忧，证据门槛最低（可变异验证）；与解耦无文件冲突，可并行 | 引擎两处（`math-memory.mjs` / 对应 host 侧）+ `test-memory.mjs` 文案断言 + 重建 `main.js` |
 | ~~2~~ | ~~**B3 第 1 步**：preset 声明搬进 profile 自己的 `cordis.patch.yml`~~ | ✅ **已落地**（见 §2 的 B3 行与 `docs/changelog.md` 的 B3 条目）；"声明的家只能有一个"由 `RETIRED_TARGETS` 在同一趟里删旧块 + 门禁「profile 层带着 + overlay 里不许有」保证 | 已完成 |
 | ~~3~~ | ~~**B2 契约化**（四份文件名清单并成一份）~~ | ✅ **已落地**：`dsh/preset/profile-contract.mjs` 成为唯一陈述，配 `check: profile contract is the single source` | 已完成 |
-| 4 | **A′ 全案** | 让离线通道既离线又在管理页可见；本文最大的一件 | 见原文 §3 分步计划（10+ 门禁受影响） |
+| 4 | **A′ 全案** | 让离线通道既离线又在管理页可见；本文最大的一件 | 见原文 §3 分步计划（10+ 门禁受影响）。**进度（2026-09-26）**：S1 物化模块 ✅、S2「物化包能被真 dsh 冷启动」✅（10/10 + 2 变异）；**S3–S6 待 A1–A7** |
+| 5 | **D-baseline：`scripts/qa/runs/*/baseline.json` 的去留**（2026-09-26 补登记 —— 它此前**只**记在 `docs/handoff.md` §7，没进本清单） | 三份基线已提交进 git，而**除 `scripts/qa/e2e.mjs:247` 写入外全仓没有任何代码读它**（全仓扫描 `.mjs/.js/.ts/.json/.yml/.yaml/.cjs` 排除 node_modules/.git/main.js ⇒ 唯一命中就是那个写入点；`.github` 0 命中）。所以 `docs/memory/testing.md:68` 说的"CI 可比对"**是目标而非现状**，那三份现在是死产物 | ①**让守卫真的消费它**（先定义"退步"判据：阈值 / 回归门禁）②**移出 git**（当本机产物）。在此之前不要在文档里声称"可比对" |
 
 **回我格式建议**：`A1=①, A2=①, B1=A, B2=C, B3=A拆分, C1=B, C3=A, C4=A` 这样一行就够；没提到的项我按"我的建议"暂不动。
