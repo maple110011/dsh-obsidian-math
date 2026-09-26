@@ -3136,12 +3136,23 @@ export function buildAuditReport(root, helpers) {
 
   /** Model-facing checklist: terse, imperative, paths and thresholds included. */
   const checklistLines = [];
+  const listOf = (items, limit = 3, withDays = false) => items.slice(0, limit)
+    .map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]${withDays && card.days !== null ? `(${card.days}天)` : ""}`)
+    .join("、");
   if (cards.length > 0) {
     checklistLines.push(`记忆体检（${today}，共 ${cards.length} 张卡）${status === "degraded" ? "［DEGRADED］" : ""}`);
     if (status === "degraded") checklistLines.push(`- ⚠️ 未确认项：${warnings.join("；")}`);
     if (sections.harmed.length > 0) {
       checklistLines.push(`- 负反馈（用过但结果更差）: ${sections.harmed.slice(0, 3).map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]](${card.harmed}/${card.uses})`).join("、")}`);
     }
+    // Evidence findings come FIRST, immediately after 负反馈 — before every improvement list.
+    // WHY (2026-09-26, P3 of docs/note-noise-and-memory-fidelity-2026-09-26.md): the checklist is
+    // truncated at MAX_AUDIT_CHARS, and `unverified` used to be the LAST evidence list, so once a
+    // vault grew it was silently eaten — the one section that prevents MISTAKEN BELIEF (a
+    // single-source card of unknown age, a card awaiting re-review), while 强/弱/未用 are
+    // improvements. Trap 81: proving this needs a fixture that CROSSES the threshold.
+    if (sections.unverified.length > 0) checklistLines.push(`- unverified: ${listOf(sections.unverified)}`);
+    if (sections.pendingReview.length > 0) checklistLines.push(`- 待重审: ${listOf(sections.pendingReview)}`);
     // The ledger line states a FACT, never an instruction: a carried-over item is
     // not a new problem. Without this split, a card flagged for eleven days reads
     // exactly like a card flagged today.
@@ -3186,16 +3197,12 @@ export function buildAuditReport(root, helpers) {
       const emptyPct = Math.round((passive.empty / passive.calls) * 100);
       checklistLines.push(`- 检索健康：上次体检以来 ${passive.calls} 次检索，空结果 ${passive.empty} 次（${emptyPct}%）`);
     }
-    const listOf = (items, limit = 3, withDays = false) => items.slice(0, limit)
-      .map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]${withDays && card.days !== null ? `(${card.days}天)` : ""}`)
-      .join("、");
     if (sections.antipatterns.length > 0) checklistLines.push(`- 反模式: ${listOf(sections.antipatterns)}`);
-    if (sections.pendingReview.length > 0) checklistLines.push(`- 待重审: ${listOf(sections.pendingReview)}`);
     if (sections.archiveCandidates.length > 0) {
       checklistLines.push(`- 低效用归档候选: ${sections.archiveCandidates.map((c) => `[[${c.rel.replace(/\.md$/, "")}|${c.title}]](${c.utility})`).join("、")}`);
     }
     if (sections.archived.length > 0) checklistLines.push(`- 已自动归档 ${sections.archived.length} 张: ${sections.archived.slice(0, 3).map((a) => a.stem).join("、")}`);
-    for (const [label, items] of [["strong", sections.strong], ["weak", sections.weak], ["unused", sections.unused], ["unverified", sections.unverified]]) {
+    for (const [label, items] of [["strong", sections.strong], ["weak", sections.weak], ["unused", sections.unused]]) {
       if (items.length === 0) continue;
       checklistLines.push(`- ${label}: ${listOf(items, 3, label === "unused")}`);
     }
@@ -3670,6 +3677,19 @@ function indexLineEvidenceMark(stemFiles, line) {
   return " " + (INDEX_EVIDENCE_MARK[level] ?? "❓");
 }
 
+/**
+ * Section-level provenance note for the WHOLE-FILE layers (profile / notation / topics).
+ *
+ * Those files are injected as one block, so they cannot carry the per-card ✅/⚖️/❓ marks that
+ * index lines get (P2). The honest fallback is a statement in the section title: if the file
+ * carries no user-confirmation trace at all, say so — otherwise the model reads a file full of
+ * AI summaries as if it were the user's own settled position.
+ */
+function unconfirmedSectionNote(text) {
+  const confirmed = /(?:^|\n)\s*(?:verified:\s*["']?user-confirmed|verified_by:\s*["']?user["']?)/.test(text);
+  return confirmed ? "" : "；其中含 AI 归纳，未经你逐条确认，按\"笔记里的说法\"引用";
+}
+
 function appendOnlyIndexDigest(root, relativePath, maxChars, withEvidenceMarks = false) {
   const path = join(root, ...relativePath);
   const stemFiles = withEvidenceMarks ? cardFilesByStem(dirname(path)) : null;
@@ -3821,7 +3841,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   );
 
   if (profile !== "") {
-    lines.push("", "### 用户画像与稳定偏好（.deepseek/memory/profile.md）", "", profile);
+    lines.push("", `### 用户画像与稳定偏好（.deepseek/memory/profile.md${unconfirmedSectionNote(profile)}）`, "", profile);
   } else {
     lines.push("", "### 用户画像与稳定偏好", "", "（尚未建立。按 AGENTS.md 在首次对话后创建 .deepseek/memory/profile.md。）");
   }
@@ -3831,11 +3851,11 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   // are in AGENTS.md (收集→统一→维护).
   const notation = readMemoryFile(vaultRoot, join(MEMORY_DIR, "memory", "notation.md"), budgets.notation);
   if (notation !== "") {
-    lines.push("", "### 记号体系（.deepseek/memory/notation.md；收集→统一→维护，回复时遵循已采纳记号，发现不一致按 AGENTS.md 提议统一）", "", notation);
+    lines.push("", `### 记号体系（.deepseek/memory/notation.md；收集→统一→维护，回复时遵循已采纳记号，发现不一致按 AGENTS.md 提议统一${unconfirmedSectionNote(notation)}）`, "", notation);
   }
 
   if (topics !== "") {
-    lines.push("", "### 研究主题索引（.deepseek/memory/topics/index.md）", "", topics);
+    lines.push("", `### 研究主题索引（.deepseek/memory/topics/index.md${unconfirmedSectionNote(topics)}）`, "", topics);
   } else {
     lines.push("", "### 研究主题索引", "", "（尚未建立。按 AGENTS.md 在 .deepseek/memory/topics/index.md 维护主题条目。）");
   }
@@ -3944,6 +3964,12 @@ function normalizeConfig(config) {
   const dialogueIndexEnabled = config.dialogueIndex !== false;
   const remindersEnabled = config.reminders !== false;
   const auditMaintainHookStats = config.auditMaintainHookStats !== false;
+  // The checklist has always PRINTED "台账已关闭（auditMaintainLedger: false）" — but nothing ever
+  // set that switch: the audit read `helpers.maintainLedger`, which only tests inject, so the
+  // documented config field was inert and the disabled branch was unreachable from config
+  // (docs/note-noise-and-memory-fidelity-2026-09-26.md P3; trap 80: a documented promise with no
+  // execution point). Same shape as `auditMaintainHookStats` beside it: config → helpers.
+  const auditMaintainLedger = config.auditMaintainLedger !== false;
   const autoArchive = config.autoArchive === true;
   // Dialogue capture is opt-in: OFF unless explicitly enabled. The default is
   // no longer true so the assistant never silently archives whole conversations.
@@ -3969,7 +3995,7 @@ function normalizeConfig(config) {
   const budgetTier = budgetExplicit ? String(config.budget) : "standard";
   const budgets = BUDGET_TIERS[budgetTier];
   if (!isAbsolute(sessionsRoot)) throw new TypeError("math-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, autoArchive, sessionCapture, captureSubagents, auditIntervalMs, budgetTier, budgetExplicit, budgets };
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, auditMaintainLedger, autoArchive, sessionCapture, captureSubagents, auditIntervalMs, budgetTier, budgetExplicit, budgets };
 }
 
 function fingerprint(logs) {
@@ -4117,7 +4143,7 @@ class MemoryEngine {
     }
     let report;
     try {
-      report = buildAuditReport(vaultRoot, { ...this.#helpers, maintainHookStats: config.auditMaintainHookStats, autoArchive });
+      report = buildAuditReport(vaultRoot, { ...this.#helpers, maintainHookStats: config.auditMaintainHookStats, maintainLedger: config.auditMaintainLedger, autoArchive });
     } catch {
       return cached; // a failed audit must never break prompt assembly
     }

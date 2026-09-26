@@ -95,6 +95,36 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · P2 剩余（段级声明）+ P3（体检清单前置 + 台账开关成真）
+
+**① 段级声明**（P2 的第 3 项）：`profile.md` / `notation.md` / `topics/index.md` 是**整段注入**，没法像索引行
+那样逐卡标 ✅/⚖️/❓。新增 `unconfirmedSectionNote(text)`：文件里**不存在**任何用户确认痕迹
+（`verified: user-confirmed` 或 `verified_by: user`）时，给段标题加
+「；其中含 AI 归纳，未经你逐条确认，按"笔记里的说法"引用」；有痕迹就不加。三个标题都接上。
+
+**② 体检清单前置**（P3a）：`unverified` 原本排在 `strong/weak/unused` **最后**，而清单在
+`MAX_AUDIT_CHARS` 处截断 ⇒ 库一大就被**静默吃掉**——偏偏它是唯一"防误信"的那类（单源卡、待重审），
+而强/弱/未用只是"改进"。现在 `unverified` 与 `待重审` 紧跟 `负反馈` 之后、所有改进列表之前。
+（`listOf` 助手相应上移。）
+
+**③ 台账开关成真**（P3b）：清单一直会打印「台账已关闭（auditMaintainLedger: false）」，但**没有任何配置
+能触发它**——审计读的是 `helpers.maintainLedger`（只有测试注入），`normalizeConfig` 从不产出该字段
+⇒ 这条分支不可达（坑 80：文档里的承诺没有执行点）。现按旁边 `auditMaintainHookStats` 的既有模式接线：
+`config.auditMaintainLedger` → 返回对象 → `buildAuditReport(..., { maintainLedger: config.auditMaintainLedger })`，
+同时保留 `helpers.maintainLedger` 作为测试缝合点。
+
+**守卫与变异**：`test-memory.mjs` **404 → 412**。
+- 段级声明：**只看 profile 自己那一行**（整段里 notation/topics 也带同样声明，`includes` 分不出来——我第一版就
+  这么写错了，被"有痕迹时不该有"那条抓出来）；成对断言（无痕迹 ⇒ 有声明；有痕迹 ⇒ 无声明）。
+- 清单顺序：**fixture 实测跨过阈值**（`len=1235 > 1200`、`truncated=true`）并断言 `unverified` 在截断后**仍在**
+  —— 这正是坑 81 要求的那种夹具。
+- 台账：`maintainLedger: false` 必须打印事实行、默认不打印；另加一条**源码接线**断言
+  （`maintainLedger: config.auditMaintainLedger`）。
+- **变异 M28/M29/M31**（三处同时改坏）：分别让「unverified 存活」「无痕迹段的声明」「台账关闭行」变红，
+  另外还连带两条**既有的**台账用例 ⇒ 读侧确实被覆盖。**M30（接线那条源码断言）未单独变异**，覆盖边界如实
+  写在测试注释里。
+- 文档计数连带：7 处 404 → 412；中英 README 已重记。`node scripts/run-gates.mjs` = 50/50。
+
 ## 2026-09-26 · P1+P2：证据分级进注入（可信度不再是"面板上有、模型看不见"）
 
 **为什么**：保真度评估（`docs/note-noise-and-memory-fidelity-2026-09-26.md` §1.3）用合成夹具实测到

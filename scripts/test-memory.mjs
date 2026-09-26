@@ -3238,6 +3238,51 @@ check('archive: a real memory card is still archived',
   rmSync(bare2, { recursive: true, force: true });
 }
 
+// ── 9. P3 + P2-remainder (2026-09-26): section notes, checklist order, ledger switch ──
+// Runs while the fixture still exists (the rmSync below owns its lifetime).
+{
+  // P2-remainder: whole-file layers cannot carry per-card marks, so the TITLE must say when a file
+  // has no user-confirmation trace at all — otherwise AI summaries read as the user's own position.
+  const profilePath = join(root, '.deepseek', 'memory', 'profile.md');
+  const sectionWith = () => buildMemorySection(
+    { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
+    'live-session', { sources: [], entries: [] }, undefined, '');
+  // Assert on the PROFILE'S OWN title line: the whole section also carries notes for the other
+  // whole-file layers (notation/topics), so a section-wide `includes` cannot tell them apart.
+  const profileTitle = () => sectionWith().split('\n').find((line) => line.startsWith('### 用户画像与稳定偏好')) ?? '';
+  writeFileSync(profilePath, '# 画像\n\n- 喜欢简洁\n', 'utf8');
+  check('section note: a profile with NO user-confirmation trace is declared as AI-summarized',
+    profileTitle().includes('其中含 AI 归纳'), profileTitle());
+  writeFileSync(profilePath, '---\nverified_by: user\n---\n# 画像\n\n- 喜欢简洁\n', 'utf8');
+  check('section note: a witnessed profile does NOT carry that note',
+    !profileTitle().includes('其中含 AI 归纳'), profileTitle());
+}
+{
+  // P3(a): evidence findings are listed BEFORE the improvement lists, because the checklist is
+  // truncated at MAX_AUDIT_CHARS. This fixture's checklist is >1200 chars (measured below), so the
+  // ORDER assertion here is the threshold-crossing case the trap-81 rule asks for: `unverified`
+  // must still be present after the cut.
+  const audit = buildAuditReport(root, {});
+  const checklist = audit.checklist;
+  const at = (label) => checklist.indexOf(label);
+  check('audit order: the fixture actually crosses MAX_AUDIT_CHARS (otherwise this proves nothing)',
+    checklist.length > 1200 && audit.checklistTruncated === true, `len=${checklist.length} truncated=${audit.checklistTruncated}`);
+  check('audit order: unverified survives the truncation', at('unverified') >= 0, `len=${checklist.length}`);
+  check('audit order: unverified is listed before the improvement lists (strong/weak/unused)',
+    ['strong', 'weak', 'unused'].every((label) => at(label) < 0 || at('unverified') < at(label)),
+    `unverified@${at('unverified')} strong@${at('strong')} weak@${at('weak')} unused@${at('unused')}`);
+}
+{
+  // P3(b): `auditMaintainLedger: false` is now a REAL switch (config → helpers). Before this the
+  // checklist printed a "台账已关闭" line that NO configuration could trigger (trap 80).
+  check('ledger switch: disabled prints the fact line',
+    buildAuditReport(root, { maintainLedger: false }).checklist.includes('台账已关闭'));
+  check('ledger switch: enabled does not',
+    !buildAuditReport(root, {}).checklist.includes('台账已关闭'));
+  check('ledger switch: the config field is wired to the audit (config → helpers)',
+    /maintainLedger: config\.auditMaintainLedger/.test(readFileSync(new URL('../dsh/preset/math-memory.mjs', import.meta.url), 'utf8')));
+}
+
 rmSync(root, { recursive: true, force: true });
 // The counter must be DERIVED here, not tracked incrementally: a local `failed`
 // variable inside one of the fixture blocks silently shadowed it, so this line threw

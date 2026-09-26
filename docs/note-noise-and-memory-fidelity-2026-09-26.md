@@ -211,7 +211,7 @@ node --input-type=module -e "const nt=await import('file:///E:/software/ss/Deeps
 > 每条都给了：改什么 / 预期效果 / 代价 / 风险 / **怎么验证（含门禁与变异方式）**。
 > 所有方案的共同纪律（照 AGENTS.md §4）：**声称验证必须说覆盖范围**，且**加守卫必须做变异验证**（故意造缺陷 ⇒ 确认报错 ⇒ 恢复 ⇒ `git diff` 为空）。
 
-### P1【最小】注入措辞分级：让"未核实"在注入里可见
+### P1【最小】注入措辞分级：让"未核实"在注入里可见 —— ✅ **已实现（2026-09-26，与 P2 成对）**
 
 - **改什么**：`dsh/preset/math-memory.mjs` 的 `buildMemorySection`（`:3756-3790` 三段小标题与后缀）。在 `records` 段的标题与结尾加一句**确定性措辞**，例如
   `### 记忆记录摘要（…；**未经用户确认的条目一律按"笔记里的说法"引用，不得当作已核实事实**）`；
@@ -221,7 +221,7 @@ node --input-type=module -e "const nt=await import('file:///E:/software/ss/Deeps
 - **风险**：纯措辞的效果**不可测**——这恰好是本仓库的老问题（坑 80：文档里的纪律要能指出代码执行点；`docs/handoff.md:243-246`）。所以 P1 **必须与 P2 成对**，单独做就是口号。
 - **怎么验证**：`scripts/test-memory.mjs` 加断言：注入段包含该分级措辞**且**不含"类型化原子事实"/"稳定偏好"这种无保留的措辞（**否定性断言**）。变异：把措辞删掉 ⇒ 断言红。覆盖率仅"注入文本含该串"，**不覆盖模型实际行为**（诚实声明）。
 
-### P2【最小可落地·推荐先做】可信度进注入：一行一个 `❓/⚖️/✅` + 未确认标记
+### P2【最小可落地·推荐先做】可信度进注入：一行一个 `❓/⚖️/✅` + 未确认标记 —— ✅ **已实现（2026-09-26）**：逐行标记（records/templates）+ 三处**段级声明**（profile/notation/topics）；fail-closed（缺 `verified` ⇒ ❓）；`test-memory.mjs` 8 条断言，变异 M27/M28/M29。**覆盖面**：标记计入行预算（可能挤掉更旧的行）。
 
 - **改什么**：
   1. `math-memory.mjs` 新增 `indexEntryVerification(root, layer)`：解析 `records/index.md` / `templates/index.md` 的每行 stem，读对应卡的 `hook.verified`（复用 `parseHookFrontmatter`，避免新写 frontmatter 正则——坑 65 / AGENTS.md §6）。
@@ -236,7 +236,7 @@ node --input-type=module -e "const nt=await import('file:///E:/software/ss/Deeps
   - **变异 M-P2**：把 `?? "❓"` 改成 `?? ""` ⇒ 该否定性断言必须红；把标记追加整段删掉 ⇒ 正向断言红。
   - 判据锚在**代码提供的性质**上（构造条件 + 断言），不锚在"某个 fixture 恰好长这样"上（AGENTS.md §6：测试锚代码不锚数据）。
 
-### P3【小改】体检清单：`unverified` 前置 + 台账开关名修正
+### P3【小改】体检清单：`unverified` 前置 + 台账开关名修正 —— ✅ **已实现（2026-09-26）**：`unverified`/`待重审` 紧跟 `负反馈`；`auditMaintainLedger` 现在真的接线（config → helpers，与旁边 `auditMaintainHookStats` 同形）。`test-memory.mjs` 以**跨越 1200 字符阈值**的夹具（`len=1235, truncated=true`）断言 `unverified` 截断后仍存活；变异 M28/M31。**未做**：`design.md:212` 的措辞是否也要跟着改（文档侧对齐）。
 
 - **改什么**：`math-memory.mjs:3198-3201` 把 `unverified`（与 `pendingReview`）提到清单**最前面**（在 `harmed` 之后、`strong/weak/unused` 之前）；`:2996` 的 `helpers.maintainLedger` 与 `normalizeConfig`（`:3861-3905`）对齐，真正接上 `auditMaintainLedger`（或删掉这个名字，照坑 34 的纪律）。
 - **预期效果**：库变大后，"单源 60 天"不再被 1200 字符截断吃掉；`design.md:212` 与代码不再是两套说法。
