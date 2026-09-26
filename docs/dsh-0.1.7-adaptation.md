@@ -11,6 +11,12 @@
 > 每项都有"先在旧代码上跑红"的变异证据。`node scripts/run-gates.mjs` = **45/45**。
 > 仍未做：C1/C2（设置搬到插件 `Config`、locale/icon）与 B4（`decodeZstdSessionLog` 名字统一），见 §5/§9。
 >
+> **⚠️ 更正与现状（2026-09-26 发版前审计，只加不改正文）**——本 header 有两处会误导读者：
+> 1. **"已落地 / 全绿 44/44、45/45"是当时的数字，且第 3 行与第 11 行自相矛盾**（44 vs 45）。**门禁总数现在是 51**（真值来自 `scripts/lib/gates.mjs`，由 `check-doc-counts.mjs` 守）。"本机跑绿几条"**刻意不再写进文档**——那是环境结果。
+> 2. **A1b 的验收③（给 `check-patch-yaml.mjs` 加"patch 行的 id 必须在当前 schema 里存在"）从未实施**，所以它既不在上面的"已落地"清单里、也不在"仍未做"清单里。**实测（2026-09-26）**：`check-patch-yaml.mjs` 只有六类断言（可解析／顶层序列／有 `id`|`insert`／注释未吞行／文件内 id 不重复／客户端半行恰好一次），**没有** schema 存在性断言。`docs/changelog.md` 已把这条记为"从未实施，仍列为未做"。**仍未做。**
+> 3. 另外两项在本文写作之后已经落地、但本文没提：**C2（locale/icon）已做**（`locale/en.json` + `locale/zh.json` + `icon.svg`，配 `check: plugin manifest meta (icon/locale)`）；**A4 的那条门禁已被替换**——`test: deployed profile accepts a session` 依赖机器上已部署的 profile，`$DSH_HOME` 事故后它会 **0/0 断言 + exit 0**（坑 98），现在换成自带 profile 的 `test: self-provisioned profile accepts a session (real dsh)`。
+> 4. **本文的代码锚点有多处已失效**（引用的文件/符号此后改名或删除）：`dsh/host/preset-sync.mjs` → 现名 `dsh/host/channel-owner.mjs`；A3 引用的 `obsidian/main.template.js:1593` 的 `syncGlobalPackageLinks` → **已删除**（junction 镜像整条退役，见 `docs/changelog.md` 的 P2-D）；`scripts/check-engine-sync.mjs:172-183` 说 `decodeZstdSessionLog`/`decodeSessionLog` **不在**守卫里 → 现在**在** `KNOWN_ESCAPES` 里。**读代码锚点请以当前代码为准。**
+>
 > **写于本轮**，基于本机实测：`@deepseek-ai/dsh@0.1.7-rc.2`、`@linxin666/dsh-web-all@0.4.2`、
 > 556 份真实会话日志（392 × V2 / 147 × V3 / 17 × V4）。所有结论带 `文件:行号` 或命令原文；
 > 推断处标注【推断】，无法确证处标注【待取证】并写进 §9。
@@ -418,6 +424,8 @@ Obsidian 插件的 `data.json` 里，而 dsh 侧看不到、也不参与 profile
 | **A1** | **preset 改为声明式**（§4.1 的路 A 或路 B）：`preset.yml` + `agent.cordis.yml` 继续作权威源；停用/卸载时释放声明（路 B 走 `dispose`） | `dsh/host/index.mjs`、`dsh/host/preset-sync.mjs`（改造或退役）、`dsh/cordis.patch.yml`（或 `profile/cordis.patch.yml`）、`dsh/install.mjs`、`obsidian/main.template.js` 的同步旁路 | ① `node scripts/run-gates.mjs --only 'agent preset mounts'` 由 **10/12 红 → 12/12 绿**（判据：`session/create` 返回 `ok:true`）；② **变异验证**：故意不声明 → 该门禁必须重新红；③ 卸载后 `$DSH_HOME` 里不再出现 `.agent-presets/notes-assistant/`，其他 preset 目录零改动 |
 | **A1b** | **修掉那条已死的 patch 行**：`- id: agent-presets` 改为现行 id（`agent-preset-registry`）——**两处源**：仓库 [dsh/profile/cordis.patch.yml:18-21](dsh/profile/cordis.patch.yml#L18-L21) 与本机 `~/.dsh/profiles/notes-assistant/cordis.patch.yml`；同时处置 `includeUserRoot`（现行 schema 无此字段） | `dsh/profile/cordis.patch.yml`（仓库源）；实装文件由插件重写覆盖 | ① `dsh --profile notes-assistant --dump-config` 里能看到目标行被真正 patch 上（而不是只剩 warn）；② **变异验证**：把 id 改回 `agent-presets` → 必须能观察到 `patch: entry … not found` 警告；③ `scripts/check-patch-yaml.mjs` 增一条"patch 行的 id 必须在当前 schema 里存在"的断言 |
 | **A2** | **V4 权威版本判据**：把 `/\.v3\./` 单标签判定改成"版本号大者优先"（`vN`，无标记 = 最旧），并保留 mtime 兜底 | `dsh/preset/math-memory.mjs:626-631`、`dsh/host/memory-admin.mjs:1222-1227`（**两处同名符号，`check-engine-sync` 同步项**） | ① 新增断言：`selectAuthoritativeLogs([{v4, 旧 mtime}, {v3, 新 mtime}])` 必须返回 v4（现行代码返回 v3，**先用现有代码跑一次确认它红**）；② 补一条真实夹具："v3+v4 并存 + v4 有新增轮次"整链捕获必须写出 episode；③ `npm test` 两条相关套件计数不得下降 |
+
+> **A1b 的验收③ 状态：❌ 从未实施**（2026-09-26 发版前审计实测）。上表 A1b 与 A1 的验收①② 已落地，但**第 ③ 条**——给 `scripts/check-patch-yaml.mjs` 加"patch 行的 id 必须在当前 schema 里存在"的断言——**代码里不存在**：该守卫全文只有六类断言（可解析／顶层是 op 序列／每项有 `id`|`insert`／注释未吞行／文件内 id 不重复／客户端半行恰好一次）。`docs/changelog.md` 记的"仍列为未做"是对的。**影响**：一个指向**上游已删除的 id** 的 patch 行仍然能通过所有门禁，只在真机启动时表现为一行 `patch: entry … not found` 警告——也就是 A1b 本来要防的那类静默失效，目前**仍然没有守卫**。
 | **A3** | **镜像失效清理**：`syncGlobalPackageLinks` 增加"遍历 Obsidian 侧、删除 web 侧已不存在的 junction"分支（判据用 `lstatSync`，只动 junction，绝不动真实目录/文件） | `obsidian/main.template.js:1593`（`syncGlobalPackageLinks`）+ 重建 `main.js` | ① 在隔离 `$DSH_HOME` 里造 3 条悬空 junction → 启动后必须只剩 0 条，且真实目录与真实文件**零改动**；② 变异验证：把清理分支注释掉 → 该断言必须红；③ `scripts/check-skin-fallback.mjs` 仍绿 |
 | **A4** | **A1–A3 之后的端到端收口**：侧栏真机验证（服务启动 → 新建会话成功 → 拖一篇笔记 → 记忆面板可见） | 无代码改动（验收） | 见 §6 阶段 3；**必须真机**，因为 A1 失败的表现正是"会话起不来"，而门禁只能证明 RPC 成功 |
 

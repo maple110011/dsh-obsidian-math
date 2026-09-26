@@ -82,8 +82,13 @@ names = dsh.profile.bundles ∪ profile.dependencies ∪ installation.dependenci
 dsh plugin --profile web add dsh-math-memory
 
 # ② 面板的客户端半个（安装器会把 loader 行插进 web 自己的 cordis.patch.yml —— 那一层没人重写）
-dsh-math-memory install --native            # 或直接：node dsh/install.mjs install --profile web
+node dsh/install.mjs install --profile web
 ```
+
+> ⚠️ **`--profile web` 不能省。** 这里此前写着 `dsh-math-memory install --native`，而 `--native` 这个
+> flag **不存在**：`install.mjs` 的参数解析没有它、也不报错（未知参数被静默忽略），于是命令会退回默认
+> profile `notes-assistant`，把客户端半个装进**侧栏那个 profile**，而 `web` 依旧没有面板——正好是本节
+> 想解决的反面，而且全程没有任何提示（2026-09-26 查文档时发现并删掉）。
 
 三点注意：
 

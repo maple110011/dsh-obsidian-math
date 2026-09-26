@@ -3,6 +3,181 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · 发版前审计（第三轮）：卸载会删掉**用户的** dsh 配置 + 让 Release 正文说实话
+
+### ① 真缺陷：`uninstall` 无条件删除 `manifest.posture` 里的每个文件 ⇒ 可能删掉与插件无关的用户配置
+
+**形态**：`manifest.posture` 读起来像"我们写的文件、可以删"，但它**不是**那个意思。native 通道记录的 posture 恰好就是 **`cordis.patch.yml` 一个文件**（`install.mjs:518`），而在 `web` profile 里那正是**用户自己的 dsh patch 层**——provider、默认模型等设置都住在里面，而且 **dsh 自己的 config editor 也会写它**（`docs/dsh-0.1.7-adaptation.md:374` 实测过）。旧实现在卸载时对 `manifest.posture` 逐项 `remove()`，于是"卸载一个笔记插件"可以**静默销毁毫不相关的 dsh 配置**。
+
+**最刺的地方**：`verifyPostureDigests(profileRoot, manifest)` **早就存在**，它的文档注释写的正是这件事——*"a profile whose files no longer match the manifest that claims to have written them has been hand-edited, half-written, or clobbered"*——但卸载路径**从未调用它**。这与坑 95（`presetBodyDeployed()` 里未 import 的 `existsSync`、零调用方）是同一族：**已经建好的安全设施没有被接上**。
+
+**修法**：卸载前先 `verifyPostureDigests`；**漂移过的文件不删**，改为打印
+`[keep] … 已被手工或 dsh 自己改过（与安装时的记录不一致）——不删。确认不需要时请手动删除。`
+其余（未漂移的）照旧删除，`.install-manifest.json` 仍然删掉。`writeManifest` 顺带改为导出，好让测试能造出"安装时记录过摘要"的真实夹具。
+
+**守卫**：`test-installer.mjs` 新增 5 条（独立临时 home，不碰主流程）——
+① 用**产品的** `writeManifest` 造出带 `postureDigests` 的真实 manifest；② 断言摘要确实被记录了；
+③ 然后模拟用户/dsh 编辑该文件，并**先断言这次编辑被判定为 drift**（否则第 ④ 条会空洞通过——坑 68 的"前置条件不成立"）；④ 卸载后断言文件**仍在**且用户的 `user-llm` 行还在；⑤ 清理。
+
+**变异验证**：把 `if (drifted.has(rel))` 改成 `if (false)` ⇒ 那条立刻红并报 `survived=false`；恢复后 `installer: all checks passed`。
+
+**⚠️ 代价（要写清）**：这会让卸载"不那么干净"——被 dsh editor 改过的 profile 会留下 `cordis.patch.yml` 并提示手工删除。这是**刻意**的取舍：**宁可留下一个文件并说明，也不要静默删掉用户的配置**。同一天那次事故（把 `临时.md` 归档）已经证明了这类"顺手删/顺手改"的代价（坑 25）。
+
+### ② 文档：`CHANGELOG.md` 的 `[Unreleased] → Added` 把"未完成的功能"写成了已交付
+
+**形态**：拖拽引用在 `[Unreleased] → Added` 里有一条**正面陈述**（"从 Obsidian 的文件树把笔记拖进 dsh 输入框，直接变成一次 `@引用`"），只在括号里留了一句"本版仍不可用，见下方 Fixed 最后一条"。而 `[Unreleased]` 发布时会被 `release.yml` **原样抽成 Release 正文**（`awk` 取 `## [<tag>]` 段落）⇒ 用户会先读到"能拖了"，再读到"但也可能不行"。
+
+**为什么危险**：Release 正文是**用户唯一会读的那一版说明**。把"改好了接收端"写成"功能上线"，会让用户在下一个版本里报一个我们**已经知道**的 bug 并被当成回归。
+
+**修法**：
+- 在 `[Unreleased]` 标题**正下方**加一条块级警告（`> ⚠️ 拖拽引用在本版仍不可用…`），并把 Added 那条改名为**「（半个修复，整体仍不可用）」**，正文只描述"客户端半个此前从未被加载、现在会加载了"这个**确实完成**的事实；"松手后草稿为空、尚未判定"单独成条。
+- Fixed 里那条重复的警告改为**只补证据**（修前 0 次 / 修后出现 bundle、`__dshMentionInsert` 存在但草稿仍空），不再重复"仍不可用"的结论，并去掉对"下方 Fixed 最后一条"的交叉引用（它已随结构改动失效）。
+
+### ③ 文档：`handoff.md` 的版本横幅会把"工作区版本"读成"线上版本是好的"
+
+`handoff.md` 的横幅写着 `> 当前版本：0.7.8`，而**已发布的 0.7.8 是 dsh 0.1.7 适配之前的形态**（bundle 补丁里没有 preset 声明）⇒ 装它之后**每次新建会话都失败**。此前**只有 `docs/installation.md` 一处**警告"已发布的 0.7.8 不要用"，而 `handoff.md`/`design.md`/`AGENTS.md` 都用"当前版本 0.7.8"的语气描述这批**未发布**的修复 ⇒ 维护者（或 agent）会以为"侧栏新建会话已修好并已发出去"。
+
+**修法**：在横幅下加一段显式说明——**"当前版本 0.7.8"是仓库工作区的版本号，不等于商店/npm 上那份是好的**；并点明本文件与 `CHANGELOG.md` 的 `[Unreleased]` 描述的修复**都还没有发布**，附上 `installation.md` 的用户侧警告。`check-version-consistency` 的横幅锚点不受影响（它只认 `^>当前版本：` 那一行）。
+
+### ④ 文档：三份"活文档"把已完成的事记成待办（更正，不改写正文）
+
+发版前审计发现三处**同族**漂移，都是"一次改动改了代码、没回头改所有引用点"（坑 42）：
+
+- **`handoff.md` §7 内部自相矛盾**：一条写「`web` profile 不会自动装客户端半个…3080 上那个入口从来没被装上过」并给"中"优先级，而同一份清单另一条已标 ✅ 说"native 路径也装客户端半个"。**代码站在后者**：`nativeInstall()` 与 `directInstallProfile()` 两条路径**都**调用 `installClientIntoProfile()`。已把前者改成"已完成（插件引导侧刻意不做）"，并写明它**曾与另一条互相矛盾**——让别人知道这条曾被改过。
+- **`pending-decisions-2026-09-26.md` 把已落地的决策列为"待你拍板"**：B2（嵌入 loader 退役）与 B3（声明搬家）当天就已执行，B4/B5 也已选定，而"下一刀建议顺序"还把 B2/B3 列成待做。已加**文档级状态说明**并把对应行改为 ✅，**同时如实写明 B4/B5 实际选的不是"我的建议"那个选项**（B4 选了 `.mjs` 可 import 契约而非纯 `.json`；B5 没把百分比写进 §4）。**刻意不改写正文**：当时建议 X、实际做 Y，本身就是记录。
+- **`dsh-0.1.7-adaptation.md` 的 header 说"已落地"、而它的 A1b 验收③ 从未实施**，且 header 第 3 行（44/44）与第 11 行（45/45）**自相矛盾**。已加更正块：门禁总数现为 **51**、"本机跑绿几条刻意不写进文档"、**A1b③ 实测不存在**（`check-patch-yaml.mjs` 只有六类断言，没有 schema 存在性断言）；另点出该文**多处代码锚点已失效**（`preset-sync.mjs` → `channel-owner.mjs`；`syncGlobalPackageLinks` 已删；`decodeZstdSessionLog`/`decodeSessionLog` 现**在** `KNOWN_ESCAPES` 里）。并在 A1b 表格行后就地补了一条"❌ 从未实施"的状态说明——**因为一个指向上游已删除 id 的 patch 行至今仍无任何门禁能拦**。
+
+### ⑤ 本轮实况
+
+
+`node scripts/run-gates.mjs` → **49/51 ok、2 SKIP、0 FAIL**（两条 SKIP 仍是本机没有已安装 dsh 的 auth e2e 与 agent preset mounts，**不是通过**）。`node scripts/test-installer.mjs` 单独跑：`all checks passed`。
+
+
+## 2026-09-26 · 发版前审计（第二轮）：loader 行被追加到 `[]` 之后 ⇒ profile 起不来 + `--dry-run` 其实会改盘
+
+### ① 真缺陷：往 dsh 自己的 `[]` 空文档后面追加 patch 行，产生两个根节点
+
+**形态**：dsh 给新 profile 写的 `cordis.patch.yml` 模板（`dsh-app-boot` 的 `initProfile`）以**空根数组**结尾：
+
+```yaml
+# Your patch layer for this dsh profile, applied after every bundle layer:
+# …
+[]
+```
+
+而 `install-into-profile.mjs` 插入客户端行时是在**文件末尾追加**。`[]` 是**一个完整的文档节点**，在它后面再写 `- insert:` 就是**同一文档里的第二个根节点**、且没有 `---` 分隔 ⇒ 硬 YAML 错误。
+
+**实测（用仓库自己的 js-yaml，2026-09-26）**：
+```
+load()    → YAMLException: end of the stream or a document separator is expected (9:1)
+loadAll() → 同样的错（不是"多文档"，是语法错）
+对照组：同样的行追加到"只有注释"的文件 → OK，解析为 [{insert:[{id:…,name:…}]}]
+```
+
+这就是 `dsh/profile/cordis.patch.yml:15-22` 记为**致命**的那个形状（`整个 profile 拒绝启动`），与坑 88（一行被注释吞掉让整个 profile 起不来）同族。触发面是 **`web` 这类"没有 overlay、只能写自己那一层"的 profile**——正是 2026-09-26 那轮为了"两侧通用"新开的路径。
+
+**为什么没有任何门禁发现**：唯一的守卫 `check-client-package-layout.mjs` 当时断言的是
+`check('the scaffold content survives the insert', layer.includes('[]'))` —— 它**要求那个 `[]` 留下来**，也就是说**把缺陷当成了期望**（同族：坑 89 的"把 bug 写成期望"、坑 96 的"门禁给坏通道盖章"）。它只做子串检查，**从不解析**这一层。
+
+**修法**：新增 `spliceIntoPatchLayer(current, row)` —— **替换**空文档而不是追加：
+- 找 `[]` 所在行；只有**它前面全是空行/注释**时才认定为"空文档"（避免误伤后面某处的 `[]`），此时丢掉该行、把 row 接在它前面，**模板的注释说明因此保留**；
+- 否则（已存在真实 op，即别人编辑过的 profile）按原样追加。
+
+**守卫改成解析**：`check-client-package-layout.mjs` 的副标题断言换成两条——`load(layer)` **必须不抛**、并断言解析出来是**顶层数组**且其中 `insert` 真的带 `CLIENT_INSERT_ID`/`CLIENT_PKG`。为此该守卫新增 `js-yaml` 依赖（仓库已有，devDependency）。
+
+**变异验证**：把 `spliceIntoPatchLayer` 中的替换分支改回 `current.replace(/\s*$/, "\n") + row` ⇒ 两条断言立刻红，报的正是 `end of the stream or a document separator is expected (7:1)`；恢复后 `client-package-layout: ok`。
+
+### ② 真缺陷：`--dry-run` 承诺"不碰文件系统"，实际会改两处
+
+- `repairProfileManifest()` **无条件写入**。它修的是"有 `name` 缺 `version`"的 manifest —— 而这正是**用户手改过**的 profile 才会出现的形状。于是 `install --dry-run` 会把它改写掉。修法：函数接收 `options`，`options.dryRun` 时不写、只打印 `[dry-run] 会补上缺失的 name/version`。
+- `--direct` 通道在 dry-run 下**真的调用** `installClientIntoProfile()`：拷包进 `node_modules/`、写 `.dsh-client-panel/`、改 `package.json` 的 `dependencies`。它没有自己的 dry-run 模式，所以唯一正确的做法是**不调用**。
+
+**守卫**：`test-installer.mjs` 新增三条，判据是**整棵树的字节**而不是某一个文件（因为这个缺陷的形态就是"变的是别的东西"）：先给 profile 造出"缺 version"这个可修状态（否则 no-op 会**空洞通过**——坑 68 的"前置条件不成立"），快照 → 跑 `--dry-run` → 再快照，断言**零改动、零新增**，并断言那个 manifest **仍然是缺 version 的**（证明夹具真的能失败）。
+
+**变异验证**：把 `options.dryRun` 的早退改回写入 ⇒ 两条红，第一条明确指出 `changed=1 first=…\package.json`；恢复后 `installer: all checks passed`。
+
+### ③ 本轮实况
+
+`node scripts/run-gates.mjs` → **49/51 ok、2 SKIP、0 FAIL**（两条 SKIP 仍是"本机没有已安装的 dsh"的 auth e2e 与 agent preset mounts，**不是通过**）。修 ① 之后 `check: client package layout` 从"钉着缺陷的绿"变成"解析通过的绿"。
+
+
+## 2026-09-26 · 发版前审计：声明标记被截断（真缺陷，已复现）+ 冷启动 native install 丢客户端半个 + 两处**误报**的自我更正
+
+**起因**：发版前按"潜在 bug 与文档漂移"过一遍。本轮最大的收获不是找到缺陷，而是**区分了"我推断门禁会红"与"门禁真的红"**——我起初报了两条门禁红，实跑后**两条都是我误报**。先把更正写在前面，因为它们比结论更重要。
+
+### ① 更正：两处门禁红是我误报，代码没错、文档也没错
+
+- **版本横幅**：我曾判定 `check-version-consistency.mjs` 必然红，理由是它的正则 `/^>\s*当前版本：…/m` 会取到 `docs/handoff.md:159` 里**示例**代码块的 `0.7.5`（缩进三空格）。**错在"允许前置空格"这个前提**：`^>` 要求 `>` 就是行的第一个字符，三空格缩进的行**根本不匹配**，所以它取到的是真实的 `handoff.md:4`（`> 当前版本：0.7.8`）。实跑：`EXIT=0`，四处 `当前版本`/`版本` 全部 OK。
+- **陷阱计数**：我曾判定 `check-doc-counts.mjs` 会因为陷阱 63 里那个顶格编号行而把"陷阱 1"算两遍（101 项 + 重复）。**实测抽取结果是 100 项、1..100 无重无缺**。实跑：`EXIT=0`。我从这个错里学到一条可复用的纪律：**要判断一个正则的行为，就把它跑一遍，不要靠读**——我用同一个正则写了个 6 行的复现脚本，一次就把两个错误都推翻了。
+
+**残留的真问题（低危，未改）**：`check-doc-counts.mjs` 的文件头声称它断言"numbering must be **1..N** with no repeats and no gaps"，而第 66–79 行实际只查**重复与缺口**、**不查顺序**。实测陷阱表里 **73 排在 72 之前**（1..100 的集合完整，所以门禁绿）。要么把注释改成"集合完整"、要么补一条顺序断言——**不要**只改其中一半。
+
+### ② 真缺陷 1：生成声明的 END 标记被截断 ⇒ 第二次 `install --direct` 往 YAML 里写进一行裸 `<<<`
+
+**形态**：`scripts/lib/preset-declaration.mjs:45` 的权威常量是
+`'# <<< END GENERATED agent-preset declaration <<<'`（**带尾部 ` <<<`**），而 `dsh/install.mjs` 与
+`obsidian/main.template.js` 各硬编码了一份**截断拷贝**（`…declaration`，无尾部 ` <<<`）。
+`stripPresetDeclaration()` 用 `to + DECL_END.length` 来切块 ⇒ 少切 ` <<<` 四个字符 ⇒
+写回时把 ` <<<` 留成**一行裸的根级 YAML token**。第二次 `install --direct` 还会用短标记**重新写入**声明。
+
+**实测复现（本机，2026-09-26）**：连做两次 `install --direct`，同一份 `cordis.patch.yml` 的尾部从
+
+```
+            excludePatterns: ['.obsidian', '.trash', '.git', 'node_modules']]
+# <<< END GENERATED agent-preset declaration <<<
+```
+
+变成
+
+```
+            excludePatterns: ['.obsidian', '.trash', '.git', 'node_modules']]
+# <<< END GENERATED agent-preset declaration
+ <<<                                  ← 裸 token
+```
+
+而 `dsh/profile/cordis.patch.yml:15-22` 恰好把这个形状记为**致命**（`YAMLException: end of the stream or a document separator is expected`，整个 profile 拒绝启动）。触发面：**任何 native install**，以及**第二次 `--direct`**（第一次是干净的，这解释了为什么它长期没被发现）。
+
+**为什么"全绿"没拦住**：`scripts/test-installer.mjs` 的 `no drift … cordis.patch.yml`（第 160 行那对、第 165 行断言）**本来就是红的**——本轮开始时 `node scripts/test-installer.mjs` → `installer: 1 check(s) failed`，唯一红项正是它。所以这不是"加一条新守卫"，而是**一条早已存在的守卫在报一个没人跑的真缺陷**。
+
+**修法（两处，都改成引用权威常量）**：
+- `dsh/install.mjs`：`import { DECLARATION_BEGIN, DECLARATION_END } from "../scripts/lib/preset-declaration.mjs"`，`DECL_END`/`ensurePresetDeclaration` 的局部 `begin`/`end` 全部改用导入值。**不再有第二份字面量可以漂移**。
+- `obsidian/main.template.js`：模板在插件 bundle 里求值、**不能 import**，所以保留字面量，但补成完整形态**并写明"必须与 `preset-declaration.mjs` 的两个常量相同；要改一起改"**。它是**运行期**路径（插件每次起服务刷新声明），与安装器同一形状 ⇒ 同一个坑。
+- `scripts/test-installer.mjs`：**它的夹具也硬编码了截断标记**（第 285 行），于是 `staleBlock` 比真块短一个 ` <<<`。修完 `install.mjs` 后这条立刻变成**假失败**（`returned false`）——这正是"标记字面量在测试里和生产代码里一样会漂移"。现在同样从 `./lib/preset-declaration.mjs` 导入。
+- `main.js` 已按 §3.1 重建并提交。
+
+**变异验证**：把 `install.mjs` 的 `DECL_END` 改回截断字面量 ⇒ `test-installer` 立刻红且**只红那一条**（`[FAIL] no drift …cordis.patch.yml`）；恢复后 `installer: all checks passed`。
+
+**一度想走的错路（记下来）**：那条断言红了之后，最省事的"修复"是把它放宽成前缀匹配（`repo content is a prefix`——第 152 行那段注释记录的旧做法）。那会**重新盖住**这个 YAML 损坏。**红的第一假设是缺陷，不是夹具太严。**
+
+### ③ 真缺陷 2：冷启动 native install 装不上记忆面板的客户端半个（静态判定，**未经运行时验证**）
+
+**形态**：`commandInstall` 里 `nativeInstall(...)`（第 678 行）**先于** `writePosture(...)`（第 679 行）执行，而 native 通道**只有** `writePosture` 会创建 `<profile>/cordis.patch.yml`；`nativeInstall` 内部在 dsh `plugin add` 之后才调用 `installClientIntoProfile`。于是**冷启动**时那个文件还不存在 ⇒ `install-into-profile.mjs:184-188` 直接早退（`没有 cordis.patch.yml`）⇒ 客户端半个（记忆面板 + 拖拽引用的接收端）**根本没装**，而命令照常打印 `Done (native)`、`exit 0`。只有**第二次**安装才补上。这与坑 97（冷启动第一次必坏、第二次就好）是同一族。
+
+**修法**：把"写 manifest 锚点 + 铺 `cordis.patch.yml`"前移到 `nativeInstall` 内、`installClientIntoProfile` **之前**（`if (!options.dryRun)` 保护，dry-run 语义不变）。这样**取消前置条件**，而不是把它写进注释。`--direct` 通道不受影响（它在更早的 `directInstallProfile` 里铺 `notes-assistant.patch.yml`，所以那条路径本来就是好的——这也是为什么这个缺陷只在 native 冷启动出现）。
+
+**证据边界（必须说明）**：本机没有可用的 pnpm/dsh 来跑真正的 native 安装（`dsh plugin add` 需要它们），所以这条**只做了代码与顺序的静态确认**：
+- 顺序是显式的（678 行 vs 679 行，`writePosture` 是 native 通道唯一的 `cordis.patch.yml` 写入点）；
+- 早退分支是显式的（`install-into-profile.mjs:184-188`）；
+- 失败只记日志（`install.mjs:513-517` 只 `log`，随后 `return true`）。
+⇒ 判定为真，但**修法的运行时验证尚未取得**。下一次在装了 pnpm 的机器上，验收动作是：**清空一个临时 `DSH_HOME`，跑一次 `node dsh/install.mjs install --profile web`，检查 `<home>/profiles/web/node_modules/@dsh-math-memory/` 存在且 `cordis.patch.yml` 里有客户端行**。在没有这一步之前，不要把它记成"已验证"。
+
+### ④ 真缺陷 3：用户文档教了一个**不存在**的 flag，且它会静默装错 profile
+
+`docs/installation.md:85` 曾写 `dsh-math-memory install --native`。`--native` 在全仓**只有这一处**（`dsh/install.mjs` 的参数解析没有它、`--help` 也没有），而且那个解析循环**没有 else、不报错** ⇒ 未知参数被静默忽略，`--profile` 缺省为 `notes-assistant` ⇒ 命令把客户端半个装进**侧栏那个 profile**，而 `web` 依旧没有面板——正好是那一节想解决的反面且毫无提示。已改成 `node dsh/install.mjs install --profile web` 并就地写明理由。
+
+**顺带记一条**：这个缺陷的真正放大器是"未知参数静默忽略"。给 `parseArgs` 加未知参数报错是独立且值得做的加固（今天踩到的是 `--native`，下次是别的）——**未做**，登记在 `handoff.md` §7。
+
+### ⑤ 本轮同时发现（更严重）：**工作区里本来就有 14 个文件未提交**
+
+`git diff --stat` 在本轮改动之前就显示 `dsh/host/memory-admin.mjs`、`scripts/test-memory.mjs`、`scripts/check-doc-consistency.mjs`、`scripts/test-panel-routes.mjs`、`README.md`、`README.zh.md`、`ARCHITECTURE.md`、`README.i18n.yaml`、`docs/handoff.md`、`docs/memory/README.md` 等已被修改。**这些不是本轮的改动**，本轮只碰了 `dsh/install.mjs`、`obsidian/main.template.js`、`main.js`、`scripts/test-installer.mjs`、`docs/installation.md` 与本文。提交前请先确认那 14 个文件的意图，别把它们与本轮修复混进同一个提交。
+
+### ⑥ 门禁实况（本机，2026-09-26）
+
+`node scripts/run-gates.mjs` → **48/51 ok、2 SKIP、1 FAIL（即 ②，已修）**。修完 ② 后 `test-installer` 单独复跑为 `all checks passed`。
+- **2 条 SKIP 都不是通过**：`test: panel auth e2e` 与 `test: agent preset mounts` 都因"本机没有已安装的 dsh + notes-assistant profile"声明跳过 ⇒ 它们**一条都没比**（坑 98 的三态汇总在这里救了场）。
+- **427 项有守卫背书**：本机 `test: memory regression (427/427 checks)` 实测通过，5 处文档锚点由 `check-doc-consistency.mjs` 与该运行期计数比对，所以 `handoff.md` §3 里的 `240/240`、§1 banner 里的 `376` 是**过期数字**（要改成 427 或改成不写数字），但 427 本身是对的。
+
+
 ## 2026-09-26 · 0.1.7 适配收口：三条激活形态全坏，而"全绿"里含一条 0/0 断言的门禁
 
 **状态**：已实施，三个新门禁 + 两个重写门禁，全部做过变异验证。
