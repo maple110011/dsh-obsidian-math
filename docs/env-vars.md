@@ -34,6 +34,7 @@
 | `DSH_BIN` | QA 端到端（`scripts/qa/e2e.mjs`） | 真实 dsh 的 **JS 入口**（`npm run qa:e2e` 用；不设则 SKIP） | 无（未设即跳过真实 E2E） |
 | `BENCHMARK_VAULT` | QA 种子探针（`scripts/qa/seed-probe.mjs`） | 仿真 vault 路径 | `scripts/qa/benchmark-vault` |
 | `CHROME_PATH` | 侧栏性能探针 | 侧栏性能探针用的 Chromium/Edge 可执行文件 | Edge 默认安装路径 |
+| `DSH_TEST_FORCE_CLIENT_FAIL` | `dsh/client-panel/install-into-profile.mjs`（**仅测试缝**） | 设成 `1` 时让"装客户端半个"这个函数**确定性地报失败**，好让门禁断言"客户端半个没装上 ⇒ 安装必须非零退出、不许打印 Done"（M3，2026-09-26）。生产路径永不设置它 | 无（未设 = 正常安装） |
 | `APPDATA` | Obsidian 插件 + 两个脚本 | **平台变量**：定位全局 npm 安装目录（`%APPDATA%\npm\node_modules\@deepseek-ai\dsh`） | 无（Windows 上由系统提供） |
 | `USERPROFILE` | 侧栏性能探针 | **平台变量**：推导 `DSH_HOME` 默认值 | 无（Windows 上由系统提供） |
 

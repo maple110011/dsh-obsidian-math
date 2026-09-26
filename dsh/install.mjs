@@ -575,13 +575,49 @@ function nativeInstall(options, dshHome) {
   // the main `dsh web` (3080) had no memory panel even after a native install (2026-09-26).
   // `installClientIntoProfile` picks the patch layer the target profile's boot actually reads
   // (the notes-assistant overlay, or the profile's own `cordis.patch.yml` for e.g. `web`).
+  return stageClientHalf(options, profileRoot);
+}
+
+/**
+ * Stage the memory panel's CLIENT half and report whether it really landed.
+ *
+ * WHY THIS IS ONE FUNCTION WITH A POSTCONDITION (M3, 2026-09-26). This is the user-visible half of
+ * the feature — without it there is no memory panel and dragging a note into the composer does
+ * nothing — yet BOTH install routes used to `try { … } catch { log(…) }` and then report success.
+ * The command therefore printed `Done` and exited 0 while the panel was simply absent, which is the
+ * exact shape the repo keeps being bitten by: success by exit code instead of by structure
+ * (trap 44 "写完就当成功", trap 89 "包装进了 node_modules 却没有任何 loader 挂载它").
+ *
+ * Returning a boolean — instead of only logging — makes both callers able to fail. `ok:true` is not
+ * taken on trust either: the staged package must actually carry `client.js` next to its manifest,
+ * which is the file the row's bundle resolves.
+ *
+ * @returns {boolean} true when staged (or legitimately skipped under --dry-run), false on failure.
+ */
+function stageClientHalf(options, profileRoot) {
+  if (options.dryRun) {
+    log(options, `[dry-run] 会安装客户端半个到 ${profileRoot}`);
+    return true;
+  }
+  let client = null;
   try {
-    const client = installClientIntoProfile(profileRoot, { quiet: true });
-    if (!client.ok) log(options, `[client] 客户端半个安装失败：${client.error ?? "unknown"}`);
-    else log(options, `[client] 客户端半个已装（${client.inserted ? "新插入行" : "行已在"}：${client.rowLayer ?? "?"}）`);
+    client = installClientIntoProfile(profileRoot, { quiet: true });
   } catch (error) {
     log(options, `[client] 客户端半个安装异常：${String(error)}`);
+    return false;
   }
+  if (client === null || !client.ok) {
+    log(options, `[client] 客户端半个安装失败：${client?.error ?? "unknown"}`);
+    return false;
+  }
+  // Postcondition: the row's package must exist with its entry file. A row that points at a package
+  // whose `client.js` is missing loads nothing, and the panel silently never appears.
+  const entry = join(client.pkgDir, "client.js");
+  if (!existsSync(entry)) {
+    log(options, `[client] 行已挂载但入口缺失：${entry}（面板不会出现）`);
+    return false;
+  }
+  log(options, `[client] 客户端半个已装（${client.inserted ? "新插入行" : "行已在"}：${client.rowLayer ?? "?"}）`);
   return true;
 }
 
@@ -656,21 +692,7 @@ async function directInstallProfile(options, dshHome) {
   // 客户端半个（记忆面板的 Settings 面板 + **拖拽引用**）。以前只有 `web` profile 装它，于是
   // Obsidian 侧栏（notes-assistant）里"从文件树拖一篇笔记进输入框"根本不加载 —— 代码对、也测过，
   // 但没被装上（2026-09-21 发现）。这一步让安装路径自己负责，而不是靠手工跑另一个脚本。
-  try {
-    const { installClientIntoProfile } = await import("./client-panel/install-into-profile.mjs");
-    // `--dry-run` must not stage the client package either: it copies into `node_modules/`, writes the
-    // `.dsh-client-panel/` staging dir, adds a `dependencies` entry and may insert a patch row. It has
-    // no dry-run mode of its own, so the only correct thing to do under the flag is not to call it.
-    if (options.dryRun) {
-      log(options, `[dry-run] 会安装客户端半个到 ${profileRoot}`);
-    } else {
-      const res = installClientIntoProfile(profileRoot, { quiet: true });
-      if (!res.ok) log(options, `[client] 客户端半个安装失败：${res.error ?? "unknown"}`);
-      else log(options, `[client] 客户端半个已装（${res.inserted ? "新插入 patch" : "patch 已包含"}）`);
-    }
-  } catch (error) {
-    log(options, `[client] 客户端半个安装异常：${String(error)}`);
-  }
+  const clientStaged = stageClientHalf(options, profileRoot);
   // Postcondition: everything the manifest is about to claim must exist on disk.
   //
   // WHY (2026-09-26, B2 experiment): this installer reported `Done (direct)` while
@@ -685,6 +707,13 @@ async function directInstallProfile(options, dshHome) {
     }
   }
   writeManifest(options, profileRoot, "direct", DIRECT_PROFILE_FILES, []);
+  // A missing client half means the memory panel is absent from the UI — report it as a failure
+  // rather than printing `Done`. (Everything above has already been written; the point is that the
+  // exit code must not claim success, so a script or a user can tell.)
+  if (!clientStaged) {
+    log(options, `[client] 客户端半个没装上 —— 记忆面板在 ${options.profile} 里不会出现（面板的其余部分已写入）`);
+    return false;
+  }
   return true;
 }
 

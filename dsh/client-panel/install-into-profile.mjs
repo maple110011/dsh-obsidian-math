@@ -179,6 +179,17 @@ export function installClientIntoProfile(profileHome, opts = {}) {
   const pkgDir = join(home, "node_modules", ...PKG.split("/"));
   const result = { ok: false, pkgDir, inserted: false };
 
+  // Test seam (2026-09-26): the installer must be able to prove that a client-half failure is NOT
+  // reported as success. Reproducing a real failure inside a gate would need a deliberately broken
+  // profile on disk; this switch makes the module report `ok:false` deterministically, so the
+  // exit-code contract can be asserted without dsh, pnpm or the network. OFF unless the variable is
+  // exactly "1"; production paths never set it.
+  if (process.env.DSH_TEST_FORCE_CLIENT_FAIL === "1") {
+    result.error = "forced by DSH_TEST_FORCE_CLIENT_FAIL";
+    log(result.error);
+    return result;
+  }
+
   const overlayPath = join(home, OVERLAY_FILE);
   const posturePath = join(home, "cordis.patch.yml");
   if (!existsSync(posturePath)) {

@@ -97,6 +97,46 @@ const check = (label, cond, detail = '') => {
   }
 }
 
+// 0c. A missing CLIENT half must not be reported as success.
+//
+// The client half is the user-visible part (the memory panel; the receiver that turns a dragged
+// note into an `@reference`). Both install routes used to `try { … } catch { log(…) }` and then print
+// `Done` with exit 0, so the panel could be absent while every signal said the install worked — the
+// repo's recurring "success by exit code instead of by structure" (traps 44 / 89).
+//
+// The failure is injected through the hook that `install-into-profile.mjs` exposes for exactly this
+// purpose, so this suite needs no dsh, pnpm or network:
+//   DSH_TEST_FORCE_CLIENT_FAIL=1  =>  installClientIntoProfile reports `ok:false`.
+{
+  const forceHome = mkdtempSync(join(tmpdir(), 'dsh-client-fail-'));
+  try {
+    const forced = spawnSync(process.execPath, [installer, 'install', '--direct', '--dsh-home', forceHome],
+      { encoding: 'utf8', env: { ...process.env, DSH_TEST_FORCE_CLIENT_FAIL: '1' } });
+    const forcedOut = `${forced.stdout ?? ''}${forced.stderr ?? ''}`;
+    check('a client-half failure makes the direct install exit non-zero (no more silent Done)',
+      forced.status !== 0, `status=${forced.status}`);
+    check('...and it says the panel will not appear',
+      /没装上/.test(forcedOut) && /记忆面板/.test(forcedOut),
+      (forcedOut.split('\n').find((l) => l.includes('没装上')) ?? '').trim().slice(0, 90));
+    check('...and it does not print the success banner',
+      !/Done \(direct\)/.test(forcedOut));
+
+    // Anti-constant: the same command WITHOUT the hook must still succeed, so the assertions above
+    // cannot be satisfied by "this command always fails".
+    const okHome = mkdtempSync(join(tmpdir(), 'dsh-client-ok-'));
+    try {
+      const fine = spawnSync(process.execPath, [installer, 'install', '--direct', '--dsh-home', okHome],
+        { encoding: 'utf8' });
+      check('without the failure the same install still exits 0',
+        fine.status === 0, `status=${fine.status}`);
+    } finally {
+      rmSync(okHome, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(forceHome, { recursive: true, force: true });
+  }
+}
+
 // 1. install --direct (fresh)
 const installArgs = ['install', '--direct', '--dsh-home', home, '--vault', vault];
 let r = run(installArgs);
