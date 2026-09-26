@@ -25,6 +25,10 @@ dsh plugin --profile web add dsh-math-memory
 
 **注意**：`@deepseek-ai/dsh-web-app` 是 dsh 的 **in-box bundle**（随 dsh 安装自带），**不能** `dsh plugin add`（会去注册表拉一个版本对不上的副本）。新建专用 profile 请用方式 B（安装程序会写骨架），方式 A 只适合往已有 `web` profile 里加 bundle。方式 A 也**没有** fail-closed 沙箱（沿用 web 的沙箱）。
 
+> ⚠️ **实测症状（2026-09-26）**：把它加到 dsh 新建的**自定义** profile（例如 `dsh plugin --profile myprobe add …`）时，`add` 会成功、`bundles` 也写对了，但启动日志只说一句
+> `dsh: warning: 2 entries did not activate`（`math-memory-host … pending (waiting for services: webServer, workspaceRegistry)`、`preset-notes-assistant … pending (waiting for service: agentPresets)`），**并且永远不会打印 token 地址** —— 那个 profile 没有 web 栈。要用方式 A 就加到已有的 `web`；要新 profile 请走方式 B。
+> 可复现探针：`node scripts/qa/release-accept.mjs`（临时 `DSH_HOME`，不碰你的真实环境）。
+
 ### 方式 B：安装程序（能力 + 姿态 + 模板，CLI/npm 用户）
 
 ```bash

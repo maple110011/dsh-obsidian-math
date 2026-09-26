@@ -95,6 +95,31 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · 发版验收：用 dsh 推荐的方式（`dsh plugin add`）真装一遍 —— 新增可复用探针
+
+**为什么**：已有的 `test-real-profile-accept.mjs` 是**离线复刻** bundle 形态（把包拷进 `node_modules`），
+它证明"包内的东西对不对"；**推荐路径本身**（pnpm 装完 profile 的 `bundles`/`dependencies`/`dsh.bundle.patch`
+是否闭合、起不起得来、preset 挂不挂得上、卸载干不干净）此前**没有门禁覆盖**。
+
+**新增** `scripts/qa/release-accept.mjs`（全部在临时 `DSH_HOME` 里做，不碰真实环境）：
+1. `dsh plugin --profile web add file:<repo>`（`dsh plugin` 是 pnpm 的薄封装）；
+2. 逐条断言：profile 的 `dsh.profile.bundles` 含本包、`dependencies` 声明了它、包真的进了 `node_modules`、
+   包内声明了 `dsh.bundle.patch`、插件管理页卡片要的三样（`icon` + `locale/zh.json` + `locale/en.json`）都在；
+3. 起 dsh（`--no-open --port 0`）→ 握手拿 cookie → `agentPresets/list` → `session/create`；
+4. `dsh plugin rm` → 断言 bundle 行消失，并**列出卸载后仍存在的条目**。
+
+**实测结果（本机）**：**全部通过** ✓ —— `bundles = [@deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app,
+dsh-math-memory]`、`session/create` 返回 `ok:true`；卸载后只剩 profile 自己的脚手架
+（`cordis.yml` / `cordis.patch.yml` / `package.json`，那是 dsh 的 pocfile init 产物，不是本插件的东西）。
+顺带在 roster 里看到**精简后的新描述**已经生效 ✓。
+
+**踩到并值得写进文档的一点**：**profile 名很重要**。第一次我用自定义名（`--profile release-accept`）跑，
+`dsh plugin add` 成功、bundles 也写了，但启动日志说
+`2 entries did not activate / math-memory-host … pending (waiting for services: webServer, workspaceRegistry) /
+preset-notes-assistant … pending (waiting for service: agentPresets)` —— 因为自定义 profile 没有 web 栈
+（缺 `@deepseek-ai/dsh-web-app`）。改成文档里那条命令用的 `web` 之后一切正常。所以探针固定用 `web`，
+并把这条写进 `docs/installation.md`。
+
 ## 2026-09-26 · 发版准备：preset 描述精简 + 顺手挖出"存量安装的声明永不更新"
 
 **（1）preset 描述精简**（`dsh/preset/preset.yml`）：原来是一整句把全部功能与实现细节都塞进去的长描述
