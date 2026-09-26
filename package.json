@@ -55,6 +55,11 @@
   "peerDependencies": {
     "@deepseek-ai/dsh": ">=0.1.7-rc.2"
   },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
   "engines": {
     "node": ">=22.5"
   },

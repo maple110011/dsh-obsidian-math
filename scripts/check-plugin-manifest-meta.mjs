@@ -80,6 +80,30 @@ for (const rel of ['locale/', iconRel]) {
   if (typeof rel === 'string') check(`package.json \`files\` ships ${rel}`, files.includes(rel), files.join(', '));
 }
 
+// ── the peer declaration must stay INSTALL-QUIET without losing its TEETH ───
+//
+// `@deepseek-ai/dsh` cannot resolve from inside a profile: dsh runs as a global CLI, not a profile
+// dependency, so pnpm reports `missing peer @deepseek-ai/dsh` and prints
+// `[WARN] Issues with peer dependencies found` on EVERY `dsh plugin add` (measured 2026-09-26; that
+// warning is about installation, and readers reasonably mistake it for "this plugin is incompatible").
+// Marking the peer optional silences it at install time.
+//
+// That is ONLY safe because dsh never looks at these metadata fields: the real gate,
+// `evaluatePluginCompatibility` in `dsh-app-boot`, reads `manifest.peerDependencies` directly
+// (`Object.hasOwn(fields, "peerDependencies")`) and consults no optionality — verified by reading the
+// installed dsh (dsh-app-boot/lib/index.js:286-313). So the range below is still enforced; only
+// pnpm's install-time warning goes away.
+//
+// Assert BOTH halves, because either one alone is a regression: dropping the metadata brings the
+// noisy warning back, and dropping the peer range disarms the compatibility gate.
+check('package.json keeps the @deepseek-ai/dsh peer RANGE (the compatibility gate reads this, not the metadata)',
+  typeof pkg.peerDependencies?.['@deepseek-ai/dsh'] === 'string'
+  && pkg.peerDependencies['@deepseek-ai/dsh'].trim() !== '',
+  String(pkg.peerDependencies?.['@deepseek-ai/dsh']));
+check('package.json marks that peer optional (silences pnpm\'s install-time "missing peer" warning)',
+  pkg.peerDependenciesMeta?.['@deepseek-ai/dsh']?.optional === true,
+  JSON.stringify(pkg.peerDependenciesMeta?.['@deepseek-ai/dsh']));
+
 // ── dynamic: the REAL reader, over a throwaway install ─────────────────────
 if (!existingFile(appBoot)) {
   console.log('__SKIP__ plugin-manifest-meta (no installed dsh-app-boot to read the metadata with)');
