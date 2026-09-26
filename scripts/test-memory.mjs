@@ -329,6 +329,50 @@ check('nav: notation system injected', navSection.includes('记号体系') && na
 check('nav: no per-request recall section', !navSection.includes('本轮记忆召回'));
 check('nav: total memory section is bounded', navSection.length <= MAX_TOTAL_MEMORY_CHARS, `len=${navSection.length}`);
 check('nav: adaptive-mem applicability guard injected', navSection.includes('记忆是候选') && navSection.includes('任务边界') && navSection.includes('信念扭曲'));
+
+// ── 6b. evidence markers in the injected map (P1+P2, 2026-09-26) ─────────────
+//
+// WHY: docs/note-noise-and-memory-fidelity-2026-09-26.md §1.3 measured that a single-source
+// AI-written card scored 0.9363 and OUTRANKED a card the user had personally confirmed (0.9173),
+// while the injected map said nothing about evidence at all (the panel already showed ✅/⚖️/❓).
+// Now the injection carries the same three marks, and a card with NO `verified` field must read
+// ❓ — fail-closed, because the least evidenced item must never look cleanest.
+{
+  const recordsIndex = join(recordsDir, 'index.md');
+  const indexSeed = existsSync(recordsIndex) ? readFileSync(recordsIndex, 'utf8') : '# 记忆记录索引（按类型分组）\n';
+  const evidenceCard = (title, verified) => card([
+    '---',
+    `title: ${title}`,
+    'type: fact',
+    'hook:',
+    ...(verified === null ? [] : [`  verified: ${verified}`]),
+    '  success_rate: 0.8',
+    'needs_review: false',
+    '---',
+    `# ${title}`
+  ]) + '\n';
+  writeFileSync(join(recordsDir, 'ev-confirmed.md'), evidenceCard('证据-已确认', 'user-confirmed'));
+  writeFileSync(join(recordsDir, 'ev-cross.md'), evidenceCard('证据-互证', 'cross-referenced'));
+  writeFileSync(join(recordsDir, 'ev-single.md'), evidenceCard('证据-单源', 'single-source'));
+  writeFileSync(join(recordsDir, 'ev-none.md'), evidenceCard('证据-未标', null));
+  writeFileSync(recordsIndex, indexSeed
+    + '- [[ev-confirmed|证据-已确认]]\n- [[ev-cross|证据-互证]]\n- [[ev-single|证据-单源]]\n- [[ev-none|证据-未标]]\n', 'utf8');
+
+  const withMarks = buildMemorySection(
+    { vaultRoot: root, sessionsRoot: join(root, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
+    'live-session', { sources: [], entries: [] }, undefined, '');
+  const lineFor = (title) => withMarks.split('\n').find((line) => line.includes(title)) ?? '';
+  check('evidence: a user-confirmed card is marked ✅ in the injected map', lineFor('证据-已确认').includes('✅'), lineFor('证据-已确认'));
+  check('evidence: a cross-referenced card is marked ⚖️', lineFor('证据-互证').includes('⚖️'), lineFor('证据-互证'));
+  check('evidence: a single-source card is marked ❓', lineFor('证据-单源').includes('❓'), lineFor('证据-单源'));
+  check('evidence: a card with NO verified field reads ❓ (fail-closed, never unmarked)',
+    lineFor('证据-未标').includes('❓') && !lineFor('证据-未标').includes('✅') && !lineFor('证据-未标').includes('⚖️'),
+    lineFor('证据-未标'));
+  check('wording: the tiered clause ships WITH the marks (marks alone would be decoration)',
+    withMarks.includes('不得当作已核实事实') && withMarks.includes('❓ 的条目按'));
+  check('wording: the unqualified "类型化原子事实" phrasing is gone from the injection',
+    !withMarks.includes('类型化原子事实'));
+}
 // Layers added AFTER the injected header was first written (theorems / templates /
 // strategy) used to be missing from it, so the model was told the memory was
 // "五层" with no strategy layer at all (2026-09-10 iteration audit).

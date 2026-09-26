@@ -3608,8 +3608,71 @@ function titleOfMemoryFile(text, fallback) {
  * Three copies of one rule is how the two diverged in the first place, so the rule
  * lives here once.
  */
-function appendOnlyIndexDigest(root, relativePath, maxChars) {
+/** Evidence marker per level — the SAME vocabulary the panel renders (`VERIFIED_BADGES` in index.jsx). */
+const INDEX_EVIDENCE_MARK = { "user-confirmed": "✅", "cross-referenced": "⚖️", "single-source": "❓" };
+
+/**
+ * stem → card file for one layer. Cards may sit in type subdirectories, so walk the layer
+ * once instead of guessing `<stem>.md` at its root (a wrong guess would mark everything ❓).
+ */
+function cardFilesByStem(dir) {
+  const map = new Map();
+  const walk = (current) => {
+    let items = [];
+    try {
+      items = readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const item of items) {
+      const full = join(current, item.name);
+      if (item.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!item.name.endsWith(".md") || item.name === "index.md" || item.name === "_README.md") continue;
+      const stem = item.name.slice(0, -3);
+      if (!map.has(stem)) map.set(stem, full);
+    }
+  };
+  walk(dir);
+  return map;
+}
+
+/**
+ * Evidence marker for one injected index line, read from the CARD that line points at.
+ *
+ * WHY (2026-09-26): the injected map listed cards with no evidence level at all, while the
+ * panel already showed ✅/⚖️/❓. Measured consequence (docs/note-noise-and-memory-fidelity-2026-09-26.md
+ * §1.3, synthetic fixture): a single-source AI-written card scored 0.9363 and **outranked** a
+ * card the user had personally confirmed (0.9173) — and nothing in the injected text let the
+ * model tell them apart. This is P2 of that document; P1 (the wording) ships with it, because
+ * markers without wording are just decoration.
+ *
+ * FAIL-CLOSED: missing / unreadable / unrecognized frontmatter ⇒ ❓. The least evidenced item
+ * must never look cleanest — the panel's own rule (`index.jsx` VERIFIED_BADGES fallback).
+ */
+function indexLineEvidenceMark(stemFiles, line) {
+  const hit = /\[\[([^\]|]+)/.exec(line);
+  if (hit === null) return "";
+  const stem = hit[1].trim();
+  const file = stemFiles.get(stem) ?? stemFiles.get(stem.split("/").pop());
+  let level = null;
+  if (file !== undefined) {
+    try {
+      const front = readFrontmatter(readFileSync(file, "utf8"));
+      const verified = /(?:^|\n)\s*verified:\s*["']?(user-confirmed|cross-referenced|single-source)["']?/.exec(front ?? "");
+      level = verified === null ? null : verified[1];
+    } catch {
+      level = null;
+    }
+  }
+  return " " + (INDEX_EVIDENCE_MARK[level] ?? "❓");
+}
+
+function appendOnlyIndexDigest(root, relativePath, maxChars, withEvidenceMarks = false) {
   const path = join(root, ...relativePath);
+  const stemFiles = withEvidenceMarks ? cardFilesByStem(dirname(path)) : null;
   if (!existsSync(path)) return "";
   try {
     const text = readFileSync(path, "utf8").trim();
@@ -3620,12 +3683,17 @@ function appendOnlyIndexDigest(root, relativePath, maxChars) {
     const kept = [];
     let used = 0;
     for (let i = items.length - 1; i >= 0; i -= 1) {
-      const clean = clip(items[i].trim(), maxChars);
+      const base = clip(items[i].trim(), maxChars);
+      // The marker is PART of the line's budget: it is injected text, not metadata.
+      const clean = base + (stemFiles === null ? "" : indexLineEvidenceMark(stemFiles, base));
       if (used + clean.length > maxChars) break;
       kept.push(clean);
       used += clean.length + 1;
     }
-    if (kept.length === 0) return clip(items[items.length - 1].trim(), maxChars);
+    if (kept.length === 0) {
+      const last = clip(items[items.length - 1].trim(), maxChars);
+      return last + (stemFiles === null ? "" : indexLineEvidenceMark(stemFiles, last));
+    }
     return kept.reverse().join("\n");
   } catch {
     return "";
@@ -3637,14 +3705,14 @@ function episodeIndexDigest(root, maxChars) {
   return appendOnlyIndexDigest(root, [MEMORY_DIR, "memory", "episodes", "index.md"], maxChars);
 }
 
-/** Typed atomic-record digest: keep the newest index lines within budget. */
+/** Typed atomic-record digest: keep the newest index lines within budget, each with its evidence mark. */
 function recordIndexDigest(root, maxChars) {
-  return appendOnlyIndexDigest(root, [MEMORY_DIR, "memory", "records", "index.md"], maxChars);
+  return appendOnlyIndexDigest(root, [MEMORY_DIR, "memory", "records", "index.md"], maxChars, true);
 }
 
-/** Problem-template index digest (personal template-theorems graph). */
+/** Problem-template index digest (personal template-theorems graph), each line with its evidence mark. */
 function templateIndexDigest(root, maxChars) {
-  return appendOnlyIndexDigest(root, [MEMORY_DIR, "memory", "templates", "index.md"], maxChars);
+  return appendOnlyIndexDigest(root, [MEMORY_DIR, "memory", "templates", "index.md"], maxChars, true);
 }
 
 // ── the section composer ────────────────────────────────────────────────────
@@ -3676,7 +3744,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     "以下内容用于“知道去哪找”，不要当作完整证据。回答细节问题时必须按路由规则读文件：",
     "- 找内容一律先用 `note_recall`（内容发现的唯一入口），命中后读前 2-3 篇全文核实；`grep` **不是检索器**，只在「已经知道是哪个文件、要核对原话/字面字符串/行号」时用，不得用它对 vault 或 `.deepseek` 做全库扫描找内容；",
     "- 精确事实 / 用户原话 / 日期数字 → `note_recall` 先定位（记忆卡 / episode 索引 / 主题），再读命中文件；确认某文件里是否真有这句话时才在该文件上 grep；",
-    "- 类型化原子事实（fact/event/instruction/preference）→ 先看 `.deepseek/memory/records/index.md`，再 `note_recall`（或读）具体记录，记录里的 source 可回原始证据；",
+    "- 类型化记忆记录（fact/event/instruction/preference；索引行尾带证据分级 ✅/⚖️/❓，**❓ 的按\"笔记里的说法\"引用，不得当作已核实事实**）→ 先看 `.deepseek/memory/records/index.md`，再 `note_recall`（或读）具体记录，记录里的 source 可回原始证据；",
     "- 相关定理 / 命题 / 引理 → 先看 `.deepseek/memory/theorems/index.md`，再 `note_recall` 命中相关笔记并核对适用性；",
     "- 同类题型 / 解法模式 → `memory/templates/index.md` 与关联定理（去重聚合）；",
     "- 方法 / 策略类问题（证明、构造）→ 先用 `note_strategy` 取方法卡（困难 → 策略 → 检索目标），再按 move→retrieve 清单走 `note_recall`；",
@@ -3773,7 +3841,7 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
   }
 
   if (records !== "") {
-    lines.push("", "### 记忆记录摘要（.deepseek/memory/records/index.md，类型化原子事实）", "", records);
+    lines.push("", "### 记忆记录摘要（.deepseek/memory/records/index.md；每行尾的 ✅ 你确认过 / ⚖️ 与他处互证 / ❓ 单次来源是你的证据分级，**❓ 的条目按\"笔记里的说法\"引用，不得当作已核实事实**）", "", records);
   } else {
     lines.push("", "### 记忆记录摘要", "", "（尚无原子记录。每轮收尾时按 AGENTS.md 三写协议，从 episode 提炼 fact/event/instruction/preference 记录。）");
   }
