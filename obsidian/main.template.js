@@ -130,7 +130,7 @@ function probeService(port, timeoutMs = 1500) {
   });
 }
 `
-    + '\nreturn { probeService, pathInside, frontmatterSpan, replaceFrontmatter, setHookField, setTopField, setCapturePolicyMode, applyFeedback, archiveMemoryFile, archiveOldEpisodes, parseMemoryFrontmatter, titleOf, daysSinceText, collectMemoryState, readAuditText, FEEDBACK_MESSAGES, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled, setMemoryBudget };';
+    + '\nreturn { probeService, pathInside, frontmatterSpan, replaceFrontmatter, setHookField, setTopField, setCapturePolicyMode, applyFeedback, archiveMemoryFile, archiveOldEpisodes, parseMemoryFrontmatter, titleOf, daysSinceText, collectMemoryState, readAuditText, FEEDBACK_MESSAGES, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled, setMemoryBudget, setMemoryConfigFlag };';
   return new Function('existsSync', 'mkdirSync', 'writeFileSync', 'readFileSync', 'readdirSync', 'statSync', 'renameSync', 'join', 'dirname', 'zstdDecompressSync', 'openSync', 'readSync', 'closeSync', 'http', body)(
     existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, join, dirname, zstdDecompressSync, openSync, readSync, closeSync, http
   );
@@ -366,6 +366,10 @@ const setCapturePolicyMode = (vault, field, mode) => MEMORY_ADMIN.setCapturePoli
 const setSessionCaptureMode = (vault, enabled) => MEMORY_ADMIN.setSessionCapture(vault, enabled, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
 const setMemoryBudgetMode = (vault, tier) => MEMORY_ADMIN.setMemoryBudget(vault, tier, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
 const runSessionCapture = (vault, sessionsRoot) => MEMORY_ADMIN.runSessionCapture(vault, sessionsRoot, MEMORY_ADMIN.readCaptureState(vault));
+// Two flags that used to have NO UI at all (2026-09-26, docs/settings-surfaces-2026-09-26.md):
+// `enabled` (memory master switch) and `autoArchive` (may the audit archive low-utility cards). Same
+// execution point as the three above — one MEMORY_ADMIN function, one file (.deepseek/config.md).
+const setMemoryFlagMode = (vault, field, on) => MEMORY_ADMIN.setMemoryConfigFlag(vault, field, on, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
 const countUncapturedSessions = (vault, sessionsRoot) => MEMORY_ADMIN.countUncapturedSessions(vault, sessionsRoot);
 
 /** Apply one feedback action to a card file (in place, minimal diff). */
@@ -3675,7 +3679,28 @@ class DshObsidianSettingTab extends PluginSettingTab {
     // 面板常驻在侧栏、和记忆内容在一起；设置页放连接与进程类，外加这几个最常用的开关。
     containerEl.createEl('h3', { text: '记忆相关' });
     containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '记忆的完整面板（看卡、✅ 确认 / ⚖️ 互证 / ❓ 未确认的反馈、归档、保存本轮）在侧栏的「记忆」里——它与 dsh 侧（3080）看到的是同一份代码。下面这几项只是最常用的开关，和面板改的是同一个文件、走同一份实现，改哪边都算数。' });
-    containerEl.createEl('p', { text: '另有六个开关目前在 vault 的 .deepseek/config.md 里（首次初始化会按模板生成、带逐项说明）：enabled 记忆总开关、dialogueIndex 跨会话问答线索、reminders 备忘录提醒、audit 每日体检、autoArchive 体检自动归档低效用卡、captureSubagents 是否也保存子代理会话。' });
+    containerEl.createEl('p', { text: '其余档位（dialogueIndex 跨会话问答线索 / reminders 备忘录提醒 / audit 每日体检 / captureSubagents 是否也保存子代理会话）仍在 .deepseek/config.md 里，模板带逐项说明。' });
+    // 两个最常用、以前只能手改文件的开关（2026-09-26）。放在这一段里而不是后面，是因为它们属于
+    // "最常用"那一类；执行点与下面三项完全相同（同一个 MEMORY_ADMIN 函数、同一个文件）。
+    const memoryFlags = (() => {
+      try {
+        const { meta } = parseMemoryFrontmatter(readFileSync(join(this.plugin.app.vault.adapter.getBasePath(), '.deepseek', 'config.md'), 'utf8'));
+        return meta;
+      } catch {
+        return {};
+      }
+    })();
+    const addFlagSetting = (name, desc, field) => new Setting(containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addToggle((toggle) => toggle
+        .setValue(memoryFlags[field] !== 'false')
+        .onChange(async (value) => {
+          setMemoryFlagMode(this.plugin.app.vault.adapter.getBasePath(), field, value);
+          await this.plugin.saveSettings();
+        }));
+    addFlagSetting('记忆总开关（enabled）', '关掉后不注入记忆、不体检、不扫对话索引；记忆文件与缓存原样保留，笔记工具照常可用。', 'enabled');
+    addFlagSetting('体检自动归档低效用卡（autoArchive）', '体检把「零使用 + 陈旧超过 90 天 + 不是你确认过的」卡移进 .deepseek/archive/（可找回）。', 'autoArchive');
 
     containerEl.createEl('h3', { text: '捕获策略' });
     containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制助手把新信息写入记忆的方式。选择结果直接写入 vault 内的 .deepseek/capture-policy.md（模型不得修改此文件；你的口头指令永远优先于策略）。' });

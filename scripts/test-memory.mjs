@@ -3303,6 +3303,38 @@ check('archive: a real memory card is still archived',
     /maintainLedger: config\.auditMaintainLedger/.test(readFileSync(new URL('../dsh/preset/math-memory.mjs', import.meta.url), 'utf8')));
 }
 
+{
+  // config flags (2026-09-26): `enabled` and `autoArchive` gained a UI, so the writer must be correct
+  // and — more importantly — must REFUSE any field it was not built for: the field name reaches
+  // `setTopField`'s `new RegExp("^" + field + ":")`, where a metacharacter or newline rewrites
+  // unrelated lines. An allowlist is the fix; this asserts it is really there.
+  const { setMemoryConfigFlag } = await import('../dsh/host/memory-admin.mjs');
+  // `.deepseek/config.md` — NOT `.deepseek/memory/config.md`: the first version of this test wrote its
+  // own file one directory too deep and then asserted on it, so it "failed" while the code was right.
+  const configPath = join(root, '.deepseek', 'config.md');
+  if (!existsSync(configPath)) {
+    mkdirSync(join(root, '.deepseek'), { recursive: true });
+    writeFileSync(configPath, '---\nenabled: true\nautoArchive: true\n---\n\n# 配置\n', 'utf8');
+  }
+  setMemoryConfigFlag(root, 'enabled', false);
+  check('config flag: enabled is written and read back as false',
+    /^\s*enabled:\s*false\s*$/m.test(readFileSync(configPath, 'utf8')));
+  setMemoryConfigFlag(root, 'autoArchive', false);
+  const afterBoth = readFileSync(configPath, 'utf8');
+  check('config flag: a second flag flips without disturbing the first',
+    /^\s*enabled:\s*false\s*$/m.test(afterBoth) && /^\s*autoArchive:\s*false\s*$/m.test(afterBoth));
+  let refused = '';
+  try {
+    setMemoryConfigFlag(root, 'enabled2: x\nfoo', true);
+  } catch (error) {
+    refused = String(error?.message ?? error);
+  }
+  check('config flag: a field outside the allowlist is REFUSED, never interpolated',
+    refused.includes('not allowed'), refused);
+  check('config flag: the refusal left the file untouched',
+    !/enabled2/.test(readFileSync(configPath, 'utf8')));
+}
+
 rmSync(root, { recursive: true, force: true });
 // The counter must be DERIVED here, not tracked incrementally: a local `failed`
 // variable inside one of the fixture blocks silently shadowed it, so this line threw

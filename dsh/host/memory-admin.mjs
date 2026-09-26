@@ -1607,6 +1607,49 @@ export function setMemoryBudget(root, tier, fallbackTemplate = '') {
   writeFileSync(configPath, updated, 'utf8');
 }
 
+/**
+ * Boolean flags in `.deepseek/config.md` that a UI is allowed to write.
+ *
+ * WHY an ALLOWLIST (2026-09-26): `field` reaches `setTopField`'s `new RegExp("^" + field + ":")`, so a
+ * metacharacter or an embedded newline could rewrite unrelated lines — the same hazard the
+ * capture-policy route guards against. Anything not listed here is refused loudly rather than
+ * interpolated.
+ */
+const MEMORY_CONFIG_FLAGS = new Set(["enabled", "autoArchive"]);
+
+/**
+ * Flip one boolean flag in `.deepseek/config.md`.
+ *
+ * WHY this exists (2026-09-26, docs/settings-surfaces-2026-09-26.md): `enabled` (the memory master
+ * switch) and `autoArchive` (may the audit move low-utility cards into the archive) had **no UI at
+ * all** — the settings page could only write capture policy, sessionCapture and budget, so the two
+ * switches a user actually reaches for required hand-editing the file.
+ *
+ * Reads back after writing: "写完就当成功" is trap 44, and a flag that silently did not stick is
+ * exactly the class of bug this repo has paid for before.
+ */
+export function setMemoryConfigFlag(root, field, on, fallbackTemplate = "") {
+  if (!MEMORY_CONFIG_FLAGS.has(field)) throw new Error(`config flag not allowed: ${field}`);
+  const configPath = join(root, MEMORY_DIR, "config.md");
+  let text;
+  if (existsSync(configPath)) {
+    text = readFileSync(configPath, "utf8");
+  } else {
+    text = fallbackTemplate;
+    if (text === "") throw new Error("config template missing");
+  }
+  const span = frontmatterSpan(text);
+  if (span === null) throw new Error("config.md 没有 frontmatter");
+  const value = on ? "true" : "false";
+  const updated = replaceFrontmatter(text, setTopField(span.text, field, value));
+  if (updated === null) throw new Error("config.md 没有 frontmatter");
+  writeFileSync(configPath, updated, "utf8");
+  if (!new RegExp(`^\\s*${field}:\\s*${value}\\s*$`, "m").test(readFileSync(configPath, "utf8"))) {
+    throw new Error(`config flag did not stick: ${field}`);
+  }
+  return { ok: true, field, value };
+}
+
 /** Read whether session capture is enabled (missing config → default off). */
 export function readSessionCaptureEnabled(root) {
   const configPath = join(root, MEMORY_DIR, 'config.md');
