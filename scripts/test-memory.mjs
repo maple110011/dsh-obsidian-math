@@ -3358,6 +3358,35 @@ check('archive: a real memory card is still archived',
     !pairs.some((pair) => pair.a === 'e.md' || pair.b === 'e.md'), JSON.stringify(pairs));
 }
 
+{
+  // P5-A wiring (2026-09-26): the detector must actually reach the audit. Fresh mini-vault so the
+  // cards are contradictory from the start (the main fixture is shared with dozens of assertions).
+  const conflictRoot = mkdtempSync(join(tmpdir(), 'dsh-memory-conflict-'));
+  const conflictRecords = join(conflictRoot, '.deepseek', 'memory', 'records');
+  mkdirSync(conflictRecords, { recursive: true });
+  const cardText = (title) => [
+    '---', `title: ${title}`, 'type: fact', 'status: active', 'hook:',
+    '  pattern: l hopital rule for limits', '  verified: single-source', '---', '', `# ${title}`
+  ].join('\n') + '\n';
+  writeFileSync(join(conflictRecords, 'c-a.md'), cardText('不要用 洛必达 处理不定式'));
+  writeFileSync(join(conflictRecords, 'c-b.md'), cardText('洛必达 可以直接处理不定式'));
+  writeFileSync(join(conflictRecords, 'index.md'),
+    '# 索引\n\n- [[c-a|不要用 洛必达 处理不定式]]\n- [[c-b|洛必达 可以直接处理不定式]]\n', 'utf8');
+  // ⚠️ The audit parses hooks through an INJECTED helper (math-memory.mjs: `helpers.parseHookFrontmatter`),
+  // so a bare `{}` leaves every card's `hook` null and hook-derived sections (including this one) come
+  // back empty — which is exactly how this test failed the first time. Pass the real parser.
+  const { parseHookFrontmatter } = await import('../dsh/preset/hook-frontmatter.mjs');
+  const conflictReport = buildAuditReport(conflictRoot, { parseHookFrontmatter });
+  const pairsReported = conflictReport.sections?.conflicting ?? [];
+  check('audit: a contradictory pair reaches sections.conflicting (只报不改)',
+    pairsReported.length === 1
+    && pairsReported[0].a.rel.endsWith('c-a.md') && pairsReported[0].b.rel.endsWith('c-b.md'),
+    JSON.stringify(pairsReported.map((pair) => [pair.a.rel, pair.b.rel])));
+  check('audit: the checklist says contradictions are YOUR call, not a rewrite',
+    conflictReport.checklist.includes('互相矛盾') && conflictReport.checklist.includes('只报不改'));
+  rmSync(conflictRoot, { recursive: true, force: true });
+}
+
 rmSync(root, { recursive: true, force: true });
 // The counter must be DERIVED here, not tracked incrementally: a local `failed`
 // variable inside one of the fixture blocks silently shadowed it, so this line threw

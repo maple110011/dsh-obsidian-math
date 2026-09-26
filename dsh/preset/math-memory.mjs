@@ -2980,6 +2980,13 @@ export function buildAuditReport(root, helpers) {
       jaccard,
       hub: isHub(a) ? hubName(a) : (isHub(b) ? hubName(b) : "")
     })),
+    // P5-A (2026-09-26): cards whose one-line conclusions contradict each other. REPORT ONLY — this
+    // section never rewrites or re-ranks anything (the "single-source ageing" half of P5 would move
+    // retrieval order and has to clear the engine-probe thresholds first; that is a separate call).
+    conflicting: findContradictions(cards.filter(live)).slice(0, 10).map((pair) => {
+      const of = (rel) => cards.find((card) => card.rel === rel) ?? { rel, title: rel };
+      return { a: cardRef(of(pair.a)), b: cardRef(of(pair.b)), signature: pair.signature };
+    }),
     // Cards other cards hang off. Reported so a merge/rewrite of the shared
     // premise is a deliberate decision instead of an accident.
     hubs: hubCards.filter(live).map((card) => ({
@@ -3205,6 +3212,13 @@ export function buildAuditReport(root, helpers) {
     // improvements. Trap 81: proving this needs a fixture that CROSSES the threshold.
     if (sections.unverified.length > 0) checklistLines.push(`- unverified: ${listOf(sections.unverified)}`);
     if (sections.pendingReview.length > 0) checklistLines.push(`- 待重审: ${listOf(sections.pendingReview)}`);
+    // Same family as unverified / 待重审: it is about not mis-believing what is injected, not about
+    // polishing a card — so it sits up here with them, before every improvement list.
+    if (sections.conflicting.length > 0) {
+      const pairs = sections.conflicting.slice(0, 3)
+        .map((pair) => `[[${pair.a.rel.replace(/\.md$/, "")}]] ↔ [[${pair.b.rel.replace(/\.md$/, "")}]]`);
+      checklistLines.push(`- 互相矛盾（只报不改，需你判断信哪条）: ${pairs.join("、")}`);
+    }
     // The ledger line states a FACT, never an instruction: a carried-over item is
     // not a new problem. Without this split, a card flagged for eleven days reads
     // exactly like a card flagged today.
