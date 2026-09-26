@@ -145,6 +145,32 @@ const proxyAnchors = [
   ['README.zh.md', /侧栏反代回归（(\d+) 项）/],
 ];
 
+// The host-version REQUIREMENT in the READMEs is prose, and it drifted silently: the READMEs still
+// said "verified against 0.1.5-rc.1" long after the 0.1.7 adaptation (found by the 2026-09-26 doc-drift
+// audit). Anchor it on the package's OWN peer requirement rather than a literal, so the next host bump
+// cannot leave the first-read path lying.
+const dshRequirement = (() => {
+  try {
+    const pkg = JSON.parse(read('package.json'));
+    const range = pkg?.peerDependencies?.['@deepseek-ai/dsh'] ?? pkg?.dsh?.engines?.dsh ?? '';
+    const match = /(\d+\.\d+\.\d+(?:-[\w.]+)?)/.exec(String(range));
+    return match === null ? '' : match[1];
+  } catch { return ''; }
+})();
+if (dshRequirement === '') {
+  fail('package.json no longer declares an @deepseek-ai/dsh version requirement — the README anchor has nothing to compare against');
+} else {
+  for (const [rel, re] of [
+    ['README.md', /`@deepseek-ai\/dsh`, \*\*requires ≥ ([\w.-]+)\*\*/],
+    ['README.zh.md', /`@deepseek-ai\/dsh`，\*\*要求 ≥ ([\w.-]+)\*\*/]
+  ]) {
+    const m = re.exec(read(rel));
+    if (m === null) fail(`${rel}: host-version requirement line missing (expected "≥ ${dshRequirement}")`);
+    else if (m[1] !== dshRequirement) fail(`${rel}: claims host ≥ ${m[1]}, package.json requires ${dshRequirement}`);
+    else console.log(`OK    ${rel}: host requirement ${m[1]} matches package.json`);
+  }
+}
+
 compareAnchors(anchors, actual, { what: '' });
 compareAnchors(routeAnchors, actualRoutes, { label: 'route anchor', what: 'route checks' });
 compareAnchors(authAnchors, actualAuth, { label: 'auth anchor', what: 'auth checks' });
