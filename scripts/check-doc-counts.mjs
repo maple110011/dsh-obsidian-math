@@ -77,6 +77,18 @@ if (traps.length === 0) {
   for (let i = 1; i <= max; i += 1) if (!seen.has(i)) missing.push(i);
   if (duplicates.length > 0) fail(`docs/handoff.md §4 repeats trap number(s): ${duplicates.join(", ")}`);
   if (missing.length > 0) fail(`docs/handoff.md §4 skips trap number(s): ${missing.join(", ")}`);
+  // ORDER, not just the set (2026-09-26). The header above has always claimed "1..N with no repeats
+  // and no gaps", but only the SET was checked — so the list could read 71, 73, 72, 74 and stay green,
+  // while every "see trap 73" reference in the repo points at a reader's wrong expectation of where it
+  // is. That was the real state (72 and 73 swapped). A number that is merely unique is not a number a
+  // reader can navigate by.
+  const outOfOrder = [];
+  for (let i = 0; i < traps.length; i += 1) {
+    if (traps[i] !== i + 1) outOfOrder.push(`position ${i + 1} holds ${traps[i]}`);
+  }
+  if (outOfOrder.length > 0) {
+    fail(`docs/handoff.md §4 traps are not in ascending order: ${outOfOrder.slice(0, 6).join("; ")}${outOfOrder.length > 6 ? ` (+${outOfOrder.length - 6} more)` : ""}`);
+  }
 }
 
 const declared = section === null ? null : /^> 陷阱条数：(\d+)$/m.exec(section);
