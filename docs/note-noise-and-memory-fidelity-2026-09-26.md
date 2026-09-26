@@ -384,6 +384,7 @@ node --input-type=module -e "const nt=await import('file:///E:/software/ss/Deeps
 - 三处**实测**都是**合成夹具**（§1.3、附录 A 与注入长度），**没有碰你的 vault**，也**没有跑任何 dsh 命令**。
 - 附录 A 的排序结论只在**我构造的那个 14 篇文档语料**上验证过；真实 vault 的 IDF、passage 长度、CJK 覆盖率都会改变具体分数。**结论的方向（verified 的 20% 权重可能被 uses 的 15% 项盖过）是公式的直接推论，但"反转是否在你的库里真实发生过"未验证。**
 - `auditMaintainLedger` 名存实亡、`autoArchive` 两侧默认不一致两条是**只读代码推断**，未做运行时验证。
+  - **✅ 两条都已查证（2026-09-26）**：① `auditMaintainLedger` **确实是死的**（清单会打印"台账已关闭"，但没有任何配置能触发——审计读的是只有测试注入的 `helpers.maintainLedger`）⇒ **已修**（P3b：按旁边 `auditMaintainHookStats` 的同形接线，config → helpers），变异 **M31**。② `autoArchive` 的"两侧不一致"**不是缺陷**：`dsh/templates/config.md` 是**权威**（`true`，2026-09-18 起，附了理由与退出口），代码里的 `false` 只作用于"**这个 vault 还没有 `config.md`**"的那种情形（保守：没有配置就不自动归档）。而且面板那份字面量早已在 2026-09-26 的 A3 里改成与模板一致，并新增第 49 条门禁 `check-config-scaffold.mjs` 逐字段比对（变异 M9/M10）⇒ **这一条我原先的建议（"把模板文字对齐代码"）作废**：模板才是权威，代码那侧是另一个层级（无配置）的默认。
 
 ---
 
