@@ -43,13 +43,17 @@ export const PRESET_ID = 'notes-assistant';
  * patch layer. `preset.yml` / `agent.cordis.yml` are NOT copied: their content is
  * compiled into the generated declaration, so a stale copy could only mislead.
  *
- * THIS LIST IS THE SINGLE SOURCE OF TRUTH for "which files the preset body
- * needs". `dsh/install.mjs` derives its uninstall manifest from it, and
- * `scripts/check-preset-body-lists.mjs` asserts it equals the relative-import
- * closure of `dsh/preset/math-memory.mjs` and that every other list agrees — the
- * 2026-09-26 `--direct` break was one of those copies missing two names.
+ * THIS LIST IS NOW A RE-EXPORT (2026-09-26, B2): the single source of truth moved to
+ * `dsh/preset/profile-contract.mjs`, so the CLI installer, the Obsidian bootstrap and the gates can
+ * all point at ONE statement instead of three copies. The name is kept so the four existing import
+ * sites stay untouched; `scripts/check-profile-contract.mjs` asserts this stays identical to the
+ * contract, and `scripts/check-preset-body-lists.mjs` still asserts the contract equals the
+ * relative-import closure of `dsh/preset/math-memory.mjs` — the 2026-09-26 `--direct` break was one
+ * of those copies missing two names.
  */
-export const PRESET_BODY_FILES = ['math-memory.mjs', 'note-tools.mjs', 'hook-frontmatter.mjs', 'engine-shared.mjs'];
+import { PRESET_BODY_FILES } from './profile-contract.mjs';
+
+export { PRESET_BODY_FILES };
 
 /** `$DSH_HOME/profiles/<profile>` for an absolute `$DSH_HOME`. */
 export function profileRootOf(home, profile = PRESET_ID) {

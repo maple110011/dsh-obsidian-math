@@ -95,6 +95,38 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · B2 契约化：`profile-contract.mjs` 成为"往 profile 里放什么"的唯一陈述
+
+**为什么**：解耦评估 §3.7 把 46 起跨边界事故归簇，其中 **10 起**是"契约/枚举未同步"——一侧改了形状，
+另一侧的清单没跟上。而"哪些文件要铺进 profile、插哪些行、服务哪些路由"这件事原本**手写在四处**
+（仓库 deployer、CLI 安装器、Obsidian 引导、面板路由链），且实测本机出过"其中一处少两个名字 ⇒
+`--direct` 装出来的 profile 每轮会话都失败"。
+
+**新增**：`dsh/preset/profile-contract.mjs`——`PRESET_BODY_FILES` / `PROFILE_SCAFFOLD_FILES` /
+`OVERLAY_ROWS` / `OWN_ROW_ID_PATTERN` / `PANEL_ROUTES`。**刻意放在 `dsh/preset/` 下**并登记进
+`EMBEDDED_SOURCES`：它会被内嵌进 `main.js`、在 profile 里物化成平铺的 `./profile-contract.mjs`，所以
+消费者必须用平铺名 import（放进子目录会让内嵌后的相对路径失效）。
+
+**谁真的读它（READ）**：`preset-deploy.mjs` re-export `PRESET_BODY_FILES`（4 处既有 import 不动）、
+`install.mjs` 的 `DIRECT_PROFILE_BASE` = `PROFILE_SCAFFOLD_FILES`。**谁还只能被钉住（PINNED）**：
+Obsidian 引导里那份手写 staging 清单、面板里的 `if (pathname === …)` 路由链——门禁从源码提取事实与
+契约比对，并在输出里**逐条标明哪条是读、哪条是钉**（否则"契约化"会退化成多一份文档）。
+
+**新门禁** `check: profile contract is the single source`（第 51 条）：1 条 READ + 6 条 PINNED。
+它第一次实跑就抓到一个**我漏登记的自家行 id `math-memory`**（preset 引擎那一行，出现在包内 patch 与
+profile 层里）——正是它要抓的那类漂移。
+
+**变异验证（4 次）**：① 契约删一个 body 文件 ⇒ PINNED-5 与**既有的闭包门禁**同时红（契约不是唯一防线）；
+② 契约加一个仓库里不存在的文件名 ⇒ PINNED-2 红；③ 偷偷往 overlay 加一个 `math-memory-probe` 行 ⇒
+PINNED-3b 红；④ 只改模板清单 ⇒ PINNED-5 红。还原后 `profile-contract: ok`。
+
+**一处实测踩到的坑**：把 `profile-contract.mjs` 自己也列进 scaffold 清单后，安装器**一声不响地跳过了它**
+（它的 name→source 映射只认自己知道的名字）⇒ 平铺 profile 少一个文件而安装照旧"成功"。PINNED-2/2b 就是
+为这一类加的；契约因此**不自列**（平铺通道里没有任何模块 import 它——只有不铺的 `preset-deploy.mjs` 与 CLI 用）。
+
+**仍未做（本方案剩余）**：契约里还没有 `env` 字段（`check-env-vars.mjs` 的提取逻辑要先能复用）；引导与
+面板仍是"钉住"而非"读契约"（把路由表化属于 A′ 范围）。`node scripts/run-gates.mjs` = **51/51**。
+
 ## 2026-09-26 · B3：preset 声明搬出"每次启动都被重写"的 overlay
 
 **为什么**：解耦评估把"分发层"列为最危险的一类，并点名这条：声明住在

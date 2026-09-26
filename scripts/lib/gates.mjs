@@ -67,6 +67,10 @@ export const GATES = [
   // 闭包**，并钉住两个通道各自的 name 形态（bundle 走包内 specifier、overlay 走 `./`）——
   // 后者是首次冷启动能不能建出会话的分界线。变异验证：清单漏一项 → 红（已跑）。
   { name: 'check: preset body lists agree', args: ['scripts/check-preset-body-lists.mjs'] },
+  // The upstream of every other list (2026-09-26, B2): `dsh/preset/profile-contract.mjs` is the ONE
+  // statement of what gets staged / which rows exist / which routes are served. It says explicitly
+  // which assertions READ the contract and which only PIN a hand-written list.
+  { name: 'check: profile contract is the single source', args: ['scripts/check-profile-contract.mjs'] },
   // 声明块是生成的，两个通道两种形态。生成器自己的 `--check` 就是漂移守卫——
   // 此前 build-preset-declaration.mjs 与 lib/preset-declaration.mjs 的注释都引用了一个
   // **不存在**的 `check-preset-declaration.mjs`，于是漂移只被 test-agent-preset 顺带看到。

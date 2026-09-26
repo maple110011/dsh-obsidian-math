@@ -34,6 +34,9 @@ const EMBEDDED_SOURCES = {
   "hook-frontmatter.mjs": "dsh/preset/hook-frontmatter.mjs",
   "engine-shared.mjs": "dsh/preset/engine-shared.mjs",
   "preset-deploy.mjs": "dsh/preset/preset-deploy.mjs",
+  // The profile contract (2026-09-26, B2). Embedded because the modules that consume it are embedded
+  // too: it is materialized flat beside them as `./profile-contract.mjs` and imported by that name.
+  "profile-contract.mjs": "dsh/preset/profile-contract.mjs",
   "profile-package.json": "dsh/profile/package.json",
   "profile-cordis.yml": "dsh/profile/cordis.yml",
   "profile-cordis.patch.yml": "dsh/profile/cordis.patch.yml",

@@ -45,7 +45,8 @@
 | 安装进 vault 的模板 | `dsh/templates/*.md` **+** `dsh/templates-manifest.json` | 跑 build（有完整性门禁） |
 | 安装器（三条安装路径 / 卸载 / 归属标记） | `dsh/install.mjs` | `node scripts/test-installer.mjs` |
 | **preset 体文件清单**（哪几个文件、铺到哪里） | `dsh/preset/preset-deploy.mjs` 的 `PRESET_BODY_FILES` —— **唯一**的权威 | `node scripts/check-preset-body-lists.mjs`（含"清单 == preset 入口的相对 import 闭包"） |
-| preset **声明**（两个通道的 name 形态不同） | **生成物**：`node scripts/build-preset-declaration.mjs` 从 `dsh/preset/agent.cordis.yml` + `preset.yml` 生成进 `dsh/cordis.patch.yml`（包内 specifier）与 `dsh/profile/notes-assistant.patch.yml`（`./`） | 同一提交里跑 `--check` + `check-preset-body-lists.mjs`；**不要手改生成块** |
+| preset **声明**（两个通道的 name 形态不同） | **生成物**：`node scripts/build-preset-declaration.mjs` 从 `dsh/preset/agent.cordis.yml` + `preset.yml` 生成进 `dsh/cordis.patch.yml`（包内 specifier）与 **`dsh/profile/cordis.patch.yml`（`./`，profile 自己那层）** | 同一提交里跑 `--check` + `check-preset-body-lists.mjs`；**不要手改生成块**。⚠️ **不要放回 `notes-assistant.patch.yml`**：那份 overlay 由插件**每次起服务**重写（2026-09-26 B3 实测：插件比 profile 旧就把声明擦掉，所有会话报 `agent-preset/not-found`）。存量 profile 由 `ensurePresetDeclaration()` / `ensureProfileDeclaration()` **只增不改**地补上 |
+| **"往 profile 里放什么"的机器可读契约** | `dsh/preset/profile-contract.mjs` —— **唯一**陈述（body 文件 / scaffold 文件 / 三层的行 id / 面板路由）。必须保持**平铺可用**（内嵌后在 profile 里物化成 `./profile-contract.mjs`） | `node scripts/check-profile-contract.mjs`（它逐条标明哪些是**读契约**、哪些只是**钉住手写清单**） |
 | 记忆面板的**客户端半个**（安装时生成的包） | `dsh/client-panel/install-into-profile.mjs`（复制**相对 import 闭包**，别改成手写清单） | `node scripts/check-client-package-layout.mjs`（真的 `import()` 一次产物，两个宿主半分支各一次） |
 
 ## 3. 改代码的五条铁律
@@ -62,7 +63,7 @@
 
 ## 4. 验证：什么才算"通过"
 
-**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 **50** 条门禁；**这个数字由 `scripts/lib/gates.mjs` 派生、由 `check-doc-counts.mjs` 守住**——它曾手写成「34/34」而在门禁增长到 41 条后仍在原地）。⚠️ 但"绿"要读三态：`ok` / `SKIP` / `FAIL`。**SKIP 只表示那条门禁在本机没比任何东西**（缺 dsh、缺已部署的 profile、沙箱不允许子进程写自身状态），汇总会**单独列出被跳过的门禁名与原因**；它**不是**通过。历史上 `test: deployed profile accepts a session` 曾长期 `0/0 断言 + exit 0`，而"45/45 全绿"把这件事盖住了（坑 69 的同族，2026-09-26 已改为三态汇总，详见坑 98）。见到 `SKIP` 就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
+**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 **51** 条门禁；**这个数字由 `scripts/lib/gates.mjs` 派生、由 `check-doc-counts.mjs` 守住**——它曾手写成「34/34」而在门禁增长到 41 条后仍在原地）。⚠️ 但"绿"要读三态：`ok` / `SKIP` / `FAIL`。**SKIP 只表示那条门禁在本机没比任何东西**（缺 dsh、缺已部署的 profile、沙箱不允许子进程写自身状态），汇总会**单独列出被跳过的门禁名与原因**；它**不是**通过。历史上 `test: deployed profile accepts a session` 曾长期 `0/0 断言 + exit 0`，而"45/45 全绿"把这件事盖住了（坑 69 的同族，2026-09-26 已改为三态汇总，详见坑 98）。见到 `SKIP` 就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
 
 ```bash
 node scripts/run-gates.mjs               # 全部门禁（= npm test）

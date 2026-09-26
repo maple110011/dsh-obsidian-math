@@ -64,6 +64,9 @@ import {
   deployPresetBody,
   presetReaderFromDir
 } from "./preset/preset-deploy.mjs";
+// 2026-09-26 (B2): the profile contract is the ONE statement of what gets staged. `preset-deploy.mjs`
+// re-exports its `PRESET_BODY_FILES`; the scaffold half is read straight from here.
+import { PROFILE_SCAFFOLD_FILES } from "./preset/profile-contract.mjs";
 // The marker FILENAMES come from the module that owns their semantics — a second
 // literal here is how the two anchors could drift apart silently.
 import {
@@ -90,17 +93,10 @@ const PURGE_DATA_CONFIRM = "DELETE MY MATH MEMORY";
 const NATIVE_BUNDLES = ["dsh-math-memory"];
 // Files the --direct (legacy flat) install writes into the profile dir; the
 // install manifest records them so uninstall can remove them symmetrically.
-const DIRECT_PROFILE_BASE = [
-  "package.json",
-  "cordis.yml",
-  "cordis.patch.yml",
-  "pnpm-workspace.yaml",
-  "math-memory-workspace.mjs",
-  "notes-assistant.patch.yml",
-  "memory-admin.mjs",
-  "math-memory-panel.mjs",
-  "hook-frontmatter.mjs"
-];
+// 2026-09-26 (B2): the scaffold half of this list now comes from the profile contract, so this file is
+// no longer a fourth hand-written copy of "what a profile needs". The preset body half already came
+// from `preset-deploy.mjs`, which re-exports that same contract.
+const DIRECT_PROFILE_BASE = [...PROFILE_SCAFFOLD_FILES];
 // dsh >= 0.1.7: the agent preset's own modules must live IN THE PROFILE
 // DIRECTORY (the registry resolves a relative row `name:` against it). They come
 // from preset-deploy.mjs's ONE list rather than a fourth hand-written copy —
