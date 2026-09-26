@@ -451,6 +451,8 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **拖拽：文件夹与编辑器选中文字的载荷未实测** | `scripts/qa/drag-payload-probe.mjs` 只测出了**文件树里拖一篇笔记**的载荷（`obsidian://open?vault=…&file=…`）。**文件夹**（要先把文件夹展开 + 真实鼠标动作）与**编辑器里选中文字**两种没测出来；实现按"解不出 `file=` 就忽略"处理，**不猜**。要支持它们，先补探针再改解析器 | 中 |
 | **卸载会留下客户端半个的包目录** | `dsh/install.mjs` 的 `--direct` 分支现在会把 `@dsh-math-memory/client-ui-memory-panel` 装进 profile 的 `node_modules/`（拖拽引用与记忆面板的客户端半个）。`uninstall` 按 marker 删的是 `cordis.patch.yml` 等**文件**，**不删**这个包目录 ⇒ 卸载后残留一个不再被 patch 引用的目录（无害但不对称）。修法：给 `node_modules/@dsh-math-memory/**` 也写进 owner marker 的删除清单 | 低 |
 | **`CHANGELOG.md:230` 与当前安装的前端版本不符** | 该行称「dsh 前端已内置 loopback 链接站内跳转」并据此删掉了 `patchDshFrontendLinks`；而在本机安装的 `@deepseek-ai/dsh-web-frontend/dist/assets/index-DuF6ti6g.js` 里 grep `127.0.0.1\|localhost\|loopback` **命中 0 处**。对本轮的记忆引用缺陷**无影响**（无论有没有 loopback 特判，`.deepseek/` 都打不开），但该说法需要单独核实并修正文档 | 低 |
+| **P5-B：单源老化降权（未做，待拍板）** | P5-A（卡级矛盾检测，只报不改）✅ 已落地（2026-09-26，提交 `9c242f1`/`afde8e1`/`f5d4ac5`，变异 M39/M40/M41）。**剩下的一半**会给 `hookPrior` 加"未核实且陈旧 ⇒ 在既有 [0,1] 钳制内只降不升"，从而把 §1.3 实测的反转（单源高频卡 0.9363 压过用户确认卡 0.9173）真正拉回来。**它移动既有排序**，必须先过 `docs/memory/retrieval-v3.md §7.5` 的门槛（Direct 数不降 **且** 排名均值不升），可能需调参 ⇒ 属用户拍板项，方案与代价见 `docs/note-noise-and-memory-fidelity-2026-09-26.md` §4 P5 与 §6。 | 中（待拍板） |
+| **还有 4 个记忆开关只能手改 `.deepseek/config.md`** | `enabled` 与 `autoArchive` 已在 2026-09-26 做进插件设置页（提交 `feb6768`）；剩下 `dialogueIndex` / `reminders` / `audit` / `captureSubagents` 仍只在文件里（模板带逐项说明）。**要不要也做 UI 属用户拍板项**（我的建议：不做——它们属于"装好就不动"的档位，做了会让设置页变成开关墙）。背景见 `docs/settings-surfaces-2026-09-26.md` §3。 | 低（待拍板） |
 
 ## 8. 与用户协作约定
 
