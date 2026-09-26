@@ -3,6 +3,66 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · 新增门禁：**插件的"从零重建"能力此前从未被执行过**（结构性空洞）
+
+**缘起**：用户说 `$DSH_HOME`（`.dsh`）**被清空过四次**，想知道插件在这种情况下会不会有恶性 bug。查下去发现
+一个结构性空洞 —— 而不是某个具体缺陷。
+
+**空洞是什么**：插件号称"每次服务启动都会从内嵌副本重建 profile"，靠的是 `bootstrapDshConfig()`
+（`main.template.js`，在服务启动路径上调用，`ensureFile` 幂等）。**但在本轮之前，没有任何门禁执行过这个函数**：
+
+| 看起来覆盖了它的门禁 | 实际执行的是什么 |
+|---|---|
+| `check-embedded-writers.mjs` | 内嵌的 **`memory-admin.mjs`** 里的写入器（`applyFeedback` 等）—— 与 bootstrap 无关 |
+| `check: profile contract is the single source` | 断言**写入清单是派生的**（不是手写第二份），**不验真的写** |
+| `test: self-provisioned profile accepts a session` | 它**自己**铺 profile（`materializeLocalBundle`），**绕过**插件引导 |
+
+所以"清空之后能自愈"一直是个**假设**。这正是坑 69 那类形态（套件自报"全绿"，而被测代码从没被跑到）。
+
+**新增 `scripts/check-bundle-recovery.mjs`（19 条断言，已注册为门禁，总数 52 → 53）**。它把**出厂
+`main.js` 里真正的 `bootstrapDshConfig`** 抽出来执行（抽取用 **acorn 真解析器**，不是手数括号 —— 见下），
+在四种现场上验：
+
+1. **整个 `$DSH_HOME` 不存在**（真删掉，不是空目录）⇒ 不抛异常；契约里**每个**文件都真的出现；
+   manifest 记 `owner: direct`；**manifest 声称的文件没有一个是缺的**（不让 manifest 说谎）；
+   每个 `postureDigests` 都与磁盘内容一致。
+2. **半清空**：manifest 还在、正文被删、另有一个人手改过的代码文件 ⇒ 全部重建；
+   **手改的代码文件被还原成出厂内容**（它用 `overwrite=true`）；**清除后的基线描述的是清空后的磁盘状态**。
+3. **幂等**：第二次 bootstrap **不动**用 `overwrite=false` 写的用户文件（实测用户在
+   `cordis.patch.yml` 里的编辑原样保留），同时照常报告它刷新的代码文件。
+4. **归属守卫**：`owner: npm` 的 profile 被**拒绝**接管（错误信息里带 `npm`）；`force=true`
+   （设置页那个按钮）**真的**接管 —— 连"提示里承诺的强制手段确实有效"也一起钉住。
+
+**变异验证（三条，都在独立路径上）**：
+| 变异 | 结果 |
+|---|---|
+| 少刷新一个 body 文件（`math-memory.mjs`） | 4 条红，报 `planned but never written: math-memory.mjs` |
+| 少刷新 `engine-shared.mjs`（同样是"清单说写了、其实没写"） | 4 条红，报同一个后置条件 |
+| 把 `postureDigests` 记成 `{}` | 红（基线不再描述磁盘） |
+
+**过程中我自己的三个错（都是"写的时候以为对"）**：
+1. **用手数括号来抽函数** ⇒ `ensureProfileDeclaration` 被切成 411 行（实际 41 行），拼出来的脚本报
+   `Unexpected token ')'`。**改用 acorn 解析器的 node 偏移**，五个函数全部切对（并把拼接结果也解析一遍验证）。
+   这正是坑 82 的教训：**不要手写解析器**。
+2. **用一个模板字符串包住被抽出的源码** ⇒ 那几段代码自带 **12 与 44+2 个反引号/`${`**，直接把模板串提前
+   结束（`missing ) after argument list`）。改成**字符串拼接**。
+3. **一条断言写反了**：我最初断言"清空后的 digest 基线必须**不同于**清空前的记录"，它红了 ——
+   而且**它红了才对**：bootstrap 还原的是**出厂字节**，digest 理应回到原值。已改成三条有意义的断言
+   （基线描述当前磁盘、清空前的损坏确实消失、还原是逐字节的）。
+
+**顺带查实的两件事（都不是缺陷，但都是"你以为会发生"的反面）**：
+- **插件不可能删掉用户的 vault 数据**：全仓只有**一处**破坏性调用 —— `math-memory.mjs` 里对**内部临时文件**
+  的 `try { rmSync(temp, { force: true }) } catch {}`。归档走 `renameSync`（移动），不是删除。
+- **上次四次清空没有污染侧栏**：`$DSH_HOME/storages/workspace.json` 里**只有 2 条**（`default-workspace`
+  与仓库本身），**stray = 0** —— 与 2026-09-25 那次累计 38 条垃圾工作区不同。
+
+**证据边界（重要）**：这条门禁证明的是"插件能从零**写出**一个完整自洽的 profile（含诚实的 manifest）"。
+它**不启动 dsh**，所以"写出来的 profile 能被 dsh 冷启动"仍由
+`test: self-provisioned profile accepts a session` 负责（那条本轮实测 10/10）。两者互补，不要互相替代。
+另外它**刻意桩掉**了 `skinCenterMountable` / `buildSkinFallbackBlock`（可选的第三方皮肤中心，且在被清空的
+home 上真值就是 `false` / `''`）—— 桩在代码里有说明，若哪天重建开始依赖它们，这些断言就不再充分。
+
+
 ## 2026-09-26 · A′ S2：**物化出的包真的能冷启动真 dsh**（离线、不碰 pnpm）—— 这是 A′ 的生死题
 
 **为什么这一步最重要**：A′ 的整个方向建立在"离线通道也能物化出一个**真包**"这个前提上。如果物化包冷启动

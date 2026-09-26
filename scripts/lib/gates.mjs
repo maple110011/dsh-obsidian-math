@@ -75,6 +75,13 @@ export const GATES = [
   // statement of what gets staged / which rows exist / which routes are served. It says explicitly
   // which assertions READ the contract and which only PIN a hand-written list.
   { name: 'check: profile contract is the single source', args: ['scripts/check-profile-contract.mjs'] },
+  // 用户现场发生过四次 `$DSH_HOME` 被清空（陷阱 56/59）。插件号称每次启动都会从内嵌副本重建 profile，
+  // 但在 2026-09-26 之前**没有任何门禁执行过那个函数**：`check-embedded-writers` 跑的是内嵌的
+  // memory-admin，`check-profile-contract` 只验清单是派生的（不验真的写），自带的 real-profile 门禁又是
+  // 自己铺 profile、绕过插件引导。这条门禁把 `bootstrapDshConfig` 从生成的 main.js 里抽出来真跑一遍
+  // （抽取用 acorn 真解析器，不是手数括号），在"整个 home 不存在""manifest 在但正文没了""第二次启动"
+  // 与"别的通道拥有"四种现场上验恢复。
+  { name: 'check: plugin rebuilds a wiped $DSH_HOME', args: ['scripts/check-bundle-recovery.mjs'] },
   // 声明块是生成的，两个通道两种形态。生成器自己的 `--check` 就是漂移守卫——
   // 此前 build-preset-declaration.mjs 与 lib/preset-declaration.mjs 的注释都引用了一个
   // **不存在**的 `check-preset-declaration.mjs`，于是漂移只被 test-agent-preset 顺带看到。
