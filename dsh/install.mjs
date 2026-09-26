@@ -75,6 +75,14 @@ import {
   OWNER_MARKER,
   readChannelOwner
 } from "./host/channel-owner.mjs";
+// The generated declaration's BEGIN/END markers come from the generator that emits them. A second
+// literal here is not a harmless duplication: this file carried a TRUNCATED copy of the END marker
+// (`…declaration` without the trailing ` <<<`), so `stripPresetDeclaration` sliced the block one
+// ` <<<` short and wrote the remainder back as a bare root-level YAML token. Measured 2026-09-26:
+// a second `install --direct` turned the END marker into `…declaration` plus an orphaned `<<<` line,
+// and `scripts/test-installer.mjs`'s byte-identity assertion failed on `cordis.patch.yml`. Import
+// them, never re-type them.
+import { DECLARATION_BEGIN, DECLARATION_END } from "../scripts/lib/preset-declaration.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PRESET_DIR = join(PACKAGE_ROOT, "dsh", "preset");
@@ -266,8 +274,8 @@ export function ensurePresetDeclaration(profileRoot) {
   const scaffold = join(PROFILE_DIR, "cordis.patch.yml");
   if (!existsSync(target) || !existsSync(scaffold)) return false;
   const source = readFileSync(scaffold, "utf8");
-  const begin = "# >>> GENERATED agent-preset declaration";
-  const end = "# <<< END GENERATED agent-preset declaration";
+  const begin = DECLARATION_BEGIN;
+  const end = DECLARATION_END;
   const start = source.indexOf(begin);
   const stop = source.indexOf(end);
   if (start < 0 || stop <= start) return false;
@@ -284,6 +292,40 @@ export function ensurePresetDeclaration(profileRoot) {
   // arranged it deliberately, and guessing would be worse than the gate reporting a stale declaration.
   if (/- id:\s*["']?preset-notes-assistant["']?\s*$/m.test(current)) return false;
   writeFileSync(target, current.replace(/\s*$/, "\n") + "\n" + block + "\n", "utf8");
+  return true;
+}
+
+const DECL_BEGIN = DECLARATION_BEGIN;
+const DECL_END = DECLARATION_END;
+
+/** One place for the block's bounds, so the two channel repairs cannot drift apart. */
+function declarationBounds(source) {
+  const from = source.indexOf(DECL_BEGIN);
+  const to = source.indexOf(DECL_END);
+  return from >= 0 && to > from ? { from, to: to + DECL_END.length } : null;
+}
+
+/**
+ * Repair for the BUNDLE channel (2026-09-26): a profile whose bundle layer already declares
+ * `preset-notes-assistant` must NOT also carry the flat declaration in its own patch layer — two rows
+ * with one id break the composition. Measured on the native path:
+ *
+ *   broken: "math-memory (./math-memory.mjs): never started"
+ *
+ * The native installer copies `dsh/profile/cordis.patch.yml` as the profile's posture, and B3 moved the
+ * declaration INTO that file, so the duplicate appeared exactly there. This removes the generated block
+ * (and nothing else, so a user's own rows survive) and repairs profiles an earlier build wrote that way.
+ *
+ * @returns true when the file changed.
+ */
+export function stripPresetDeclaration(profileRoot) {
+  const target = join(profileRoot, "cordis.patch.yml");
+  if (!existsSync(target)) return false;
+  const current = readFileSync(target, "utf8");
+  const bounds = declarationBounds(current);
+  if (bounds === null) return false;
+  const stripped = (current.slice(0, bounds.from) + current.slice(bounds.to)).replace(/\n{3,}/g, "\n\n");
+  writeFileSync(target, stripped, "utf8");
   return true;
 }
 
@@ -309,7 +351,7 @@ export function ensurePresetDeclaration(profileRoot) {
  *
  * @returns true when the file was repaired.
  */
-export function repairProfileManifest(profileRoot) {
+export function repairProfileManifest(profileRoot, options = undefined) {
   const manifestPath = join(profileRoot, "package.json");
   let parsed = null;
   try {
@@ -321,6 +363,11 @@ export function repairProfileManifest(profileRoot) {
   const missingName = typeof parsed.name !== "string" || parsed.name.length === 0;
   const missingVersion = typeof parsed.version !== "string" || parsed.version.length === 0;
   if (!missingVersion && !missingName) return false;
+  // `--dry-run` promises "print planned writes without touching the filesystem" (see --help). This
+  // function used to write unconditionally, so `install --dry-run` silently rewrote an EXISTING
+  // profile's package.json — the one file a user may have edited by hand. Every other writer in this
+  // file honours the flag; this one did not (found 2026-09-26).
+  if (options !== undefined && options.dryRun) return false;
   const next = { ...parsed };
   if (missingVersion) next.version = "0.0.0";
   if (missingName) next.name = `dsh-profile-${basename(profileRoot) || "profile"}`;
@@ -343,7 +390,7 @@ function assertChannelOwnership(options, { profileDir, home, presetId }, channel
   return `owned by "${owner.owner}" (${owner.source}, v${owner.version ?? "?"}) — pass --force to take over as "${channel}"`;
 }
 
-function writeManifest(options, profileRoot, channel, postureFiles, vaults) {
+export function writeManifest(options, profileRoot, channel, postureFiles, vaults) {
   const manifestPath = join(profileRoot, CHANNEL_MANIFEST);
   const payload = {
     owner: channel,
@@ -428,7 +475,8 @@ function nativeInstall(options, dshHome) {
   // A profile manifest that names itself but declares no `version` makes dsh's
   // default-on plugin-inventory request extension throw during EVERY request
   // preparation (see repairProfileManifest) — repair both fresh and existing ones.
-  if (repairProfileManifest(profileRoot)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
+  if (repairProfileManifest(profileRoot, options)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
+  else if (options.dryRun) log(options, `[dry-run] 会补上缺失的 name/version：${join(profileRoot, "package.json")}`);
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
   copyFile(options, join(PROFILE_DIR, "pnpm-workspace.yaml"), join(profileRoot, "pnpm-workspace.yaml"), firstRun);
 
@@ -452,13 +500,26 @@ function nativeInstall(options, dshHome) {
     return false;
   }
 
-  // Anchor ownership IN THE PROFILE (every channel writes this file; `dsh/host/index.mjs` reads it
-  // to decide whether to activate the host half). Without it the read side fell back to the
-  // home-level retired marker — which is keyed by PRESET, so a profile that never had a direct
-  // install (e.g. `web`) was misread as "direct" and silently skipped bundle activation. Measured
-  // 2026-09-26: the memory panel in 3080 answered 404 with an empty body, and the client showed it
-  // as `SyntaxError: Unexpected end of JSON input`. `write()` honours --dry-run.
+  // Anchor ownership IN THE PROFILE BEFORE anything reads it (every channel writes this file;
+  // `dsh/host/index.mjs` reads it to decide whether to activate the host half, and
+  // `installClientIntoProfile` below REQUIRES the profile's own `cordis.patch.yml` to exist).
+  // Without it the read side fell back to the home-level retired marker — which is keyed by PRESET,
+  // so a profile that never had a direct install (e.g. `web`) was misread as "direct" and silently
+  // skipped bundle activation. Measured 2026-09-26: the memory panel in 3080 answered 404 with an
+  // empty body, and the client showed it as `SyntaxError: Unexpected end of JSON input`.
+  // `write()` honours --dry-run.
+  //
+  // ORDER MATTERS (fixed 2026-09-26, second pass): this used to run in `commandInstall` AFTER
+  // `nativeInstall` had already tried to stage the client half. A COLD native install therefore had no
+  // `cordis.patch.yml` yet, `installClientIntoProfile` returned early (`没有 cordis.patch.yml`), and
+  // the panel's client half was silently never installed — the command still printed `Done (native)`
+  // and exited 0, and only a SECOND install fixed it. Creating the anchor first removes the
+  // prerequisite instead of documenting it.
   writeManifest(options, profileRoot, "npm", ["cordis.patch.yml"], []);
+  if (!options.dryRun) {
+    copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), join(profileRoot, "cordis.patch.yml"),
+      !existsSync(join(profileRoot, "cordis.patch.yml")) || options.force);
+  }
 
   // The bundle delivers the ENGINE + the panel's HOST routes, but the panel's CLIENT half is
   // a separate locally staged package — and this path used to skip it entirely, which is why
@@ -496,14 +557,27 @@ async function directInstallProfile(options, dshHome) {
   // profile manifest that names itself but declares no `version` makes dsh's
   // default-on plugin-inventory request extension throw during EVERY request
   // preparation (see repairProfileManifest).
-  if (repairProfileManifest(profileRoot)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
-  // B3 (2026-09-26): the preset declaration moved OUT of the rewritten overlay and INTO this
-  // profile's own `cordis.patch.yml`. That file is user-editable and deliberately not clobbered, so
-  // an existing profile needs the append-only repair (see ensurePresetDeclaration).
-  if (ensurePresetDeclaration(profileRoot)) log(options, `[preset] 已把 preset 声明补进 profile 自己的 patch 层：${join(profileRoot, "cordis.patch.yml")}`);
+  if (repairProfileManifest(profileRoot, options)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
+  else if (options.dryRun) log(options, `[dry-run] 会补上缺失的 name/version：${join(profileRoot, "package.json")}`);
+  // The BUNDLE channel declares the preset from the package's own patch (sub-path form), so this
+  // profile's layer must stay declaration-free: two rows with one id break the composition (measured
+  // 2026-09-26). Repair profiles an earlier build wrote the other way round — and never write anything
+  // under `--dry-run` (bug audit F5: the repair used to ignore the flag).
+  if (!options.dryRun && stripPresetDeclaration(profileRoot)) {
+    log(options, `[preset] 已从 profile 的 patch 层撤掉扁平声明（bundle 层已经在声明同一个 id）：${join(profileRoot, "cordis.patch.yml")}`);
+  }
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
   const postureExists = existsSync(join(profileRoot, "cordis.patch.yml"));
   copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), join(profileRoot, "cordis.patch.yml"), !postureExists || options.force);
+  // This is the channel that DOES need the flat declaration: there is no bundle layer here, the preset
+  // body is staged flat, and `copyFile` above skips an existing posture file — so a profile whose
+  // posture predates B3 would otherwise be left with no declaration at all and every reply would fail
+  // with `agent-preset/not-found`. (B3 wired this repair into the NATIVE path by mistake, which is the
+  // opposite channel: there the bundle layer already declares the id, so the repair actively created a
+  // duplicate row and broke the composition.) Audit F5: honour --dry-run.
+  if (!options.dryRun && ensurePresetDeclaration(profileRoot)) {
+    log(options, `[preset] 已把 preset 声明补进 profile 自己的 patch 层：${join(profileRoot, "cordis.patch.yml")}`);
+  }
   copyFile(options, join(PROFILE_DIR, "pnpm-workspace.yaml"), join(profileRoot, "pnpm-workspace.yaml"), firstRun);
   copyFile(options, join(PROFILE_DIR, "math-memory-workspace.mjs"), join(profileRoot, "math-memory-workspace.mjs"), true);
   copyFile(options, join(PROFILE_DIR, "notes-assistant.patch.yml"), join(profileRoot, "notes-assistant.patch.yml"), true);
@@ -535,9 +609,16 @@ async function directInstallProfile(options, dshHome) {
   // 但没被装上（2026-09-21 发现）。这一步让安装路径自己负责，而不是靠手工跑另一个脚本。
   try {
     const { installClientIntoProfile } = await import("./client-panel/install-into-profile.mjs");
-    const res = installClientIntoProfile(profileRoot, { quiet: true });
-    if (!res.ok) log(options, `[client] 客户端半个安装失败：${res.error ?? "unknown"}`);
-    else log(options, `[client] 客户端半个已装（${res.inserted ? "新插入 patch" : "patch 已包含"}）`);
+    // `--dry-run` must not stage the client package either: it copies into `node_modules/`, writes the
+    // `.dsh-client-panel/` staging dir, adds a `dependencies` entry and may insert a patch row. It has
+    // no dry-run mode of its own, so the only correct thing to do under the flag is not to call it.
+    if (options.dryRun) {
+      log(options, `[dry-run] 会安装客户端半个到 ${profileRoot}`);
+    } else {
+      const res = installClientIntoProfile(profileRoot, { quiet: true });
+      if (!res.ok) log(options, `[client] 客户端半个安装失败：${res.error ?? "unknown"}`);
+      else log(options, `[client] 客户端半个已装（${res.inserted ? "新插入 patch" : "patch 已包含"}）`);
+    }
   } catch (error) {
     log(options, `[client] 客户端半个安装异常：${String(error)}`);
   }
@@ -569,6 +650,11 @@ function writePosture(options, dshHome) {
   }
   const posturePath = join(profileRoot, "cordis.patch.yml");
   copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), posturePath, !existsSync(posturePath) || options.force);
+  // Same rule applied to the file just written: on this channel the BUNDLE layer is the only declarer
+  // (the copied scaffold carries the flat declaration, which belongs to the `--direct`/Obsidian
+  // channel). Without this the native install produced two rows with one id and the preset came out
+  // `broken` (measured 2026-09-26). `copyFile` already honoured --dry-run; so must this.
+  if (!options.dryRun) stripPresetDeclaration(profileRoot);
   writeManifest(options, profileRoot, "npm", ["cordis.patch.yml"], []);
   return true;
 }
@@ -735,11 +821,26 @@ function commandUninstall(options) {
 
   // 3. posture files we wrote (manifest-owned). `manifest` here is the PROFILE's
   //    manifest — the same file `readChannelOwner` just used as the anchor.
+  //
+  //    ⚠️ DELETE ONLY WHAT STILL MATCHES OUR RECORD (2026-09-26). `posture` is not a list of
+  //    "ours, safe to delete": for a native install it is exactly `cordis.patch.yml`, which on a
+  //    `web` profile is the USER'S OWN dsh patch layer — their settings (providers, default model,
+  //    etc.) live there, and dsh's config editor writes it too. Deleting it wholesale on uninstall
+  //    silently destroys configuration we never wrote. `verifyPostureDigests` exists for precisely
+  //    this ("a profile whose files no longer match the manifest that claims to have written them
+  //    has been hand-edited"), so consult it: a drifted file is left in place with a reason.
   const manifest = readMarker(join(profileRoot, CHANNEL_MANIFEST));
   if (manifest !== null && Array.isArray(manifest.posture)) {
+    const digestCheck = verifyPostureDigests(profileRoot, manifest);
+    const drifted = new Set(digestCheck.drifted);
     for (const rel of manifest.posture) {
       const path = join(profileRoot, rel);
-      if (existsSync(path)) remove(options, path);
+      if (!existsSync(path)) continue;
+      if (drifted.has(rel)) {
+        log(options, `[keep] ${path} 已被手工或 dsh 自己改过（与安装时的记录不一致）——不删。确认不需要时请手动删除。`);
+        continue;
+      }
+      remove(options, path);
     }
     remove(options, join(profileRoot, CHANNEL_MANIFEST));
   }

@@ -2,11 +2,18 @@ import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { verifyPostureDigests, ensurePresetDeclaration } from '../dsh/install.mjs';
+// Aliased: this file already has a local `writeManifest` helper (a fixture that writes an owner marker).
+import { verifyPostureDigests, ensurePresetDeclaration, stripPresetDeclaration, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
 // The contract is the source for "what a profile needs" — assertions below derive from it instead of
 // hardcoding counts that rot the moment a file is added (2026-09-26).
 import { PROFILE_SCAFFOLD_FILES, PRESET_BODY_FILES } from '../dsh/preset/profile-contract.mjs';
+// The declaration markers come from the generator that emits them. The fixture below used to hardcode
+// a TRUNCATED END copy, which silently made `staleBlock` one ` <<<` shorter than the real block — so
+// once `install.mjs` stopped truncating, this fixture reported a false failure ("returned false").
+// Import them: a marker literal in a test can drift exactly like one in production code.
+import { DECLARATION_BEGIN, DECLARATION_END } from './lib/preset-declaration.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const home = mkdtempSync(join(tmpdir(), 'dsh-home-test-'));
@@ -102,6 +109,47 @@ check('the retired .agent-presets directory is NOT created by --direct', !exists
   check('the repair keeps the existing bundles and dependencies', JSON.stringify(repaired.dsh) === JSON.stringify(installed.dsh)
     && JSON.stringify(repaired.dependencies) === JSON.stringify(installed.dependencies));
 }
+
+// `--dry-run` promises "print planned writes without touching the filesystem" (its own --help text).
+//
+// It did NOT, twice over (found 2026-09-26):
+//   · `repairProfileManifest()` wrote unconditionally, so on a profile whose manifest had been hand-edited
+//     (no `version`) a DRY RUN rewrote `package.json` — the one file a user is most likely to have edited;
+//   · the direct channel called `installClientIntoProfile()` for real, which stages the client package into
+//     `node_modules/`, writes `.dsh-client-panel/` and adds a `dependencies` entry.
+// Assert on the whole tree's bytes, not on one file: the defect was exactly "something else changed".
+{
+  const snapshot = (dir) => {
+    const out = new Map();
+    const walk = (d) => {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else out.set(full, createHash('sha256').update(readFileSync(full)).digest('hex'));
+      }
+    };
+    walk(dir);
+    return out;
+  };
+  // Give the dry run something it WOULD have repaired, so a no-op cannot pass vacuously.
+  const manifestPath = join(profileRoot, 'package.json');
+  const before = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const { version: _v, ...withoutVersion } = before;
+  writeFileSync(manifestPath, JSON.stringify(withoutVersion, null, 2) + '\n', 'utf8');
+  const preDryRun = snapshot(profileRoot);
+  const dry = run([...installArgs, '--dry-run']);
+  const postDryRun = snapshot(profileRoot);
+  const changed = [...postDryRun.keys()].filter((k) => preDryRun.get(k) !== postDryRun.get(k));
+  const added = [...postDryRun.keys()].filter((k) => !preDryRun.has(k));
+  check('--dry-run on an existing profile exits 0', dry.status === 0, `exit=${dry.status}`);
+  check('--dry-run changes no file and creates none (it must not even repair the manifest)',
+    changed.length === 0 && added.length === 0,
+    `changed=${changed.length} added=${added.length}${changed.length ? ' first=' + changed[0] : ''}${added.length ? ' firstAdded=' + added[0] : ''}`);
+  check('and the manifest it would have repaired is still version-less (proof the fixture could fail)',
+    JSON.parse(readFileSync(manifestPath, 'utf8')).version === undefined);
+  // Restore for the assertions below, which expect a healthy profile.
+  writeFileSync(manifestPath, JSON.stringify(before, null, 2) + '\n', 'utf8');
+}
 const files = [
   join(profileRoot, 'package.json'),
   join(profileRoot, 'cordis.yml'),
@@ -150,6 +198,14 @@ check('manifest posture covers the preset body (so uninstall removes it)',
 // authoritative overlay (`notes-assistant.patch.yml`) the installer does not append to ANY patch
 // file, so every shipped profile file must install byte-identically. The exception this comment
 // used to document ("repo content is a prefix") is exactly what hid the 2026-09-21 failure.
+//
+// ⚠️ THE `cordis.patch.yml` PAIR WAS RED ON 2026-09-26 AND THAT WAS A REAL DEFECT, not fixture noise:
+// the second `--direct` install below strips and re-adds the generated preset declaration, and
+// `dsh/install.mjs` hardcoded a TRUNCATED END marker (`…declaration`, missing the trailing ` <<<`),
+// so the strip cut the block one ` <<<` short and wrote the remainder back as a bare root-level YAML
+// token (`…declaration` followed by an orphaned `<<<` line). Both sides now import
+// `DECLARATION_BEGIN`/`DECLARATION_END` from `scripts/lib/preset-declaration.mjs`. Tempting-but-wrong
+// fix to remember: "relax the assertion to a prefix match" would re-hide exactly this class.
 const driftPairs = [
   // The deployed body is what dsh actually imports for this channel.
   [join(profileRoot, 'math-memory.mjs'), join(repo, 'dsh', 'preset', 'math-memory.mjs')],
@@ -242,6 +298,40 @@ check('uninstall dry-run exit 0', r.status === 0);
 check('dry-run keeps the deployed preset body', existsSync(join(profileRoot, 'math-memory.mjs')));
 check('dry-run keeps the retired directory it found', existsSync(legacyMarkerPath));
 
+// 5b. uninstall must NOT delete a posture file the user (or dsh itself) has since edited.
+//
+// `manifest.posture` is not "ours, safe to delete": a native install records exactly
+// `cordis.patch.yml`, and on a `web` profile that file is the user's OWN dsh patch layer — their
+// providers and default model live in it, and dsh's config editor rewrites it too. Before the
+// 2026-09-26 fix, every path listed there was deleted unconditionally, so uninstalling our plugin
+// could silently destroy unrelated dsh configuration. `verifyPostureDigests` already existed to
+// detect exactly this drift and was simply never consulted.
+{
+  const editedHome = mkdtempSync(join(tmpdir(), 'dsh-home-edited-'));
+  const editedProfile = join(editedHome, 'profiles', 'notes-assistant');
+  mkdirSync(editedProfile, { recursive: true });
+  const posture = 'cordis.patch.yml';
+  const originalPosture = '- insert:\n    - id: ours\n      name: ./ours.mjs\n';
+  writeFileSync(join(editedProfile, posture), originalPosture, 'utf8');
+  // Record the digest of what we "wrote", exactly as an install would.
+  writeInstallManifest({ dryRun: false, quiet: true }, editedProfile, 'npm', [posture], []);
+  check('fixture: the install manifest records a digest for the posture file',
+    typeof JSON.parse(readFileSync(join(editedProfile, '.install-manifest.json'), 'utf8')).postureDigests?.[posture] === 'string');
+  // Now the user edits it (this is the dsh-config-editor shape).
+  const userEdited = originalPosture + '\n# my own dsh settings\n- insert:\n    - id: user-llm\n      name: ./my-llm.mjs\n';
+  writeFileSync(join(editedProfile, posture), userEdited, 'utf8');
+  const beforeUninstall = verifyPostureDigests(editedProfile, JSON.parse(readFileSync(join(editedProfile, '.install-manifest.json'), 'utf8')));
+  check('fixture: the edit is detected as drift (so the assertion below can fail)',
+    beforeUninstall.drifted.includes(posture), JSON.stringify(beforeUninstall.drifted));
+
+  const editedRun = run(['uninstall', '--yes', '--force', '--dsh-home', editedHome]);
+  const survived = existsSync(join(editedProfile, posture));
+  check('uninstall KEEPS a hand-edited posture file instead of deleting the user\'s settings',
+    survived && readFileSync(join(editedProfile, posture), 'utf8').includes('user-llm'),
+    `exit=${editedRun.status} survived=${survived}`);
+  rmSync(editedHome, { recursive: true, force: true });
+}
+
 // 6. full uninstall
 // The cache directory only exists once the plugin or the capture path has run,
 // and the installer never creates it — so the "vault cache removed" check below
@@ -273,8 +363,8 @@ rmSync(vault, { recursive: true, force: true });
   const refreshProfile = join(refreshHome, 'profiles', 'notes-assistant');
   mkdirSync(refreshProfile, { recursive: true });
   const scaffold = readFileSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), 'utf8');
-  const begin = '# >>> GENERATED agent-preset declaration';
-  const end = '# <<< END GENERATED agent-preset declaration';
+  const begin = DECLARATION_BEGIN;
+  const end = DECLARATION_END;
   const currentBlock = scaffold.slice(scaffold.indexOf(begin), scaffold.indexOf(end) + end.length);
   const staleBlock = currentBlock.replace(/description: [^\n]+/, 'description: STALE-DESCRIPTION');
   writeFileSync(join(refreshProfile, 'cordis.patch.yml'),
@@ -288,6 +378,32 @@ rmSync(vault, { recursive: true, force: true });
     after.includes('id: user-thing'));
   check('declaration: a second run is a no-op (idempotent)', ensurePresetDeclaration(refreshProfile) === false);
   rmSync(refreshHome, { recursive: true, force: true });
+}
+
+// Two channels, two shapes for the SAME generated block — the 2026-09-26 install audit measured what
+// happens when they are confused: the native (bundle) path copied the flat declaration into a profile
+// whose bundle layer already declared the same id, and the preset came out
+// `broken: "math-memory (./math-memory.mjs): never started"`. The scaffold in the repo is the FLAT
+// channel's source, so it must carry the block; the bundle channel must strip it.
+{
+  const channelHome = mkdtempSync(join(tmpdir(), 'dsh-decl-channel-'));
+  const channelProfile = join(channelHome, 'profiles', 'notes-assistant');
+  mkdirSync(channelProfile, { recursive: true });
+  const scaffold = readFileSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), 'utf8');
+  const begin = DECLARATION_BEGIN;
+  check('channels: the repo scaffold carries the flat declaration (the --direct/Obsidian source)',
+    scaffold.includes(begin) && scaffold.includes('- id: preset-notes-assistant'));
+  // A native-style profile: the scaffold as copied, plus a row of the user's own.
+  const target = join(channelProfile, 'cordis.patch.yml');
+  writeFileSync(target, `- insert:\n    - id: user-thing\n      name: ./user.mjs\n\n${scaffold}\n`, 'utf8');
+  const stripped = stripPresetDeclaration(channelProfile);
+  const after = readFileSync(target, 'utf8');
+  check('channels: the bundle-channel repair removes the flat declaration',
+    stripped === true && !after.includes(begin) && !after.includes('- id: preset-notes-assistant'),
+    stripped ? 'stripped' : 'returned false');
+  check("channels: that repair keeps the user's own rows", after.includes('id: user-thing'));
+  check('channels: and a second run is a no-op', stripPresetDeclaration(channelProfile) === false);
+  rmSync(channelHome, { recursive: true, force: true });
 }
 
 console.log(failed === 0 ? 'installer: all checks passed' : `installer: ${failed} check(s) failed`);

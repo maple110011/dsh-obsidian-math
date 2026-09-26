@@ -248,7 +248,13 @@ function ensureProfileDeclaration(profileRoot) {
   }
   const source = EMBEDDED_PRESET['profile-cordis.patch.yml'] ?? '';
   const begin = '# >>> GENERATED agent-preset declaration';
-  const end = '# <<< END GENERATED agent-preset declaration';
+  // MUST equal DECLARATION_BEGIN / DECLARATION_END in scripts/lib/preset-declaration.mjs — the
+  // template cannot import them (it is evaluated inside the plugin bundle), so they are copied.
+  // Line 251 was previously a TRUNCATED END copy (`…declaration`, no trailing ` <<<`), which sliced
+  // the block one ` <<<` short and left a bare root-level `<<<` line in the profile's
+  // cordis.patch.yml on the plugin's own refresh path — the same YAML-corrupting shape the short copy
+  // caused in `dsh/install.mjs` (measured 2026-09-26). Change these two lines together.
+  const end = '# <<< END GENERATED agent-preset declaration <<<';
   const start = source.indexOf(begin);
   const stop = source.indexOf(end);
   if (start < 0 || stop <= start) return false;
