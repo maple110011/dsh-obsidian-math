@@ -170,6 +170,7 @@ export const CONFIG_FALLBACK = [
   "autoArchive: true",
   "sessionCapture: false",
   "captureSubagents: false",
+  "budget: standard",
   "---",
   "",
   "# 记忆系统设置（本工作区）",
