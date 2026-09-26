@@ -77,9 +77,13 @@ function provisionProfile() {
   const profileDir = join(home, 'profiles', PROFILE);
   mkdirSync(profileDir, { recursive: true });
   writeFileSync(join(profileDir, 'cordis.yml'), '# composed from patches\n[]\n', 'utf8');
-  // The posture both channels install (sandbox / approval / permission table /
-  // default agent preset). Copied from the repo so the gate tests what ships.
-  cpSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), join(profileDir, 'cordis.patch.yml'));
+  // ⚠️ NOT the repo's flat posture file. Since 2026-09-26 that file ALSO carries the FLAT channel's
+  // generated preset declaration (`name: ./math-memory.mjs`), and this probe builds the BUNDLE shape:
+  // nothing stages those flat modules here, so inheriting the declaration makes the composition fail
+  // with `math-memory (./math-memory.mjs): never started`. The bundle's own patch declares the preset
+  // with package subpaths. The flat posture itself is covered by `check: shipped yaml parses` and
+  // `test: installer e2e`; what THIS gate must prove is the bundle launch shape.
+  writeFileSync(join(profileDir, 'cordis.patch.yml'), '# bundle-shape probe: the package declares the preset\n[]\n', 'utf8');
   writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
     name: `dsh-profile-${PROFILE}`,
     private: true,

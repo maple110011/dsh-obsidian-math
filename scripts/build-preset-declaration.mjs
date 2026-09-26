@@ -51,8 +51,27 @@ const LOCAL_PREFIX = `${PACKAGE_NAME}/dsh/preset`;
 
 const TARGETS = [
   { rel: 'dsh/cordis.patch.yml', localPrefix: LOCAL_PREFIX },
-  { rel: 'dsh/profile/notes-assistant.patch.yml', localPrefix: null }
+  // The flat/offline channel's declaration belongs in the PROFILE'S OWN layer, NOT in the overlay
+  // the plugin rewrites on every service start. Before 2026-09-26 it lived in
+  // `dsh/profile/notes-assistant.patch.yml`, which `buildNotesAssistantPatch()` overwrites from the
+  // plugin's embedded copy at every service start — so a plugin older than the profile erased the
+  // declaration and EVERY reply failed (`agent-preset/not-found`, then the request-extension
+  // outage). `cordis.patch.yml` is the profile's own layer: the installers write it only when it is
+  // absent (the bootstrap likewise), and nothing rewrites it afterwards.
+  //
+  // The row names stay in `./` form either way: dsh resolves a preset's row names against the
+  // PROFILE DIRECTORY, and this layer is applied from the profile directory too.
+  { rel: 'dsh/profile/cordis.patch.yml', localPrefix: null }
 ];
+
+/**
+ * Homes a declaration must NOT linger in.
+ *
+ * Moving a declaration is not a copy: the SAME preset id declared in two applied layers is a hard
+ * failure (`duplicate loader entry id`), so the old home has to be cleaned in the same pass — which
+ * is also why this move cannot be split across two commits.
+ */
+const RETIRED_TARGETS = ['dsh/profile/notes-assistant.patch.yml'];
 
 function readSources() {
   return {
@@ -79,6 +98,20 @@ function withDeclarationBlock(text, block) {
   return { text: `${base}\n\n${wrapped}`, changed: true };
 }
 
+/**
+ * Remove a marker-delimited declaration block, if present (idempotent).
+ */
+function withoutDeclarationBlock(text) {
+  const normalized = text.replace(/\r\n/g, '\n');
+  const start = normalized.indexOf(BEGIN_MARKER);
+  const end = normalized.indexOf(END_MARKER);
+  if (start < 0 || end <= start) return { text: normalized, changed: false };
+  const kept = (normalized.slice(0, start) + normalized.slice(end + END_MARKER.length + 1))
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s*$/, '\n');
+  return { text: kept, changed: kept !== normalized };
+}
+
 const checkOnly = process.argv.includes('--check');
 const sources = readSources();
 
@@ -103,5 +136,22 @@ for (const { rel, localPrefix } of TARGETS) {
   }
 }
 
+for (const rel of RETIRED_TARGETS) {
+  const path = join(root, rel);
+  const before = readFileSync(path, 'utf8');
+  const { text, changed } = withoutDeclarationBlock(before);
+  if (!changed) {
+    console.log(`preset-declaration: ${rel} carries no declaration (its home is the profile layer now)`);
+    continue;
+  }
+  drifted += 1;
+  if (checkOnly) {
+    console.error(`preset-declaration: ${rel} still carries a declaration block — its home is dsh/profile/cordis.patch.yml now (two copies of one preset id is a hard failure)`);
+  } else {
+    writeFileSync(path, text, 'utf8');
+    console.log(`preset-declaration: removed the retired declaration block from ${rel}`);
+  }
+}
+
 if (checkOnly && drifted > 0) process.exit(1);
-if (checkOnly) console.log('preset-declaration: ok (both channels carry the current declaration form)');
+if (checkOnly) console.log('preset-declaration: ok (each channel declares the preset exactly once, in its own layer)');

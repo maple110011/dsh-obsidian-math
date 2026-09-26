@@ -133,16 +133,26 @@ if (bundleBlock !== null) {
   check('every relative name inside the bundle block is a known body file', stray.length === 0, stray.join(', '));
 }
 
-const overlayBlock = blockOf('dsh/profile/notes-assistant.patch.yml');
-check('dsh/profile/notes-assistant.patch.yml still carries a generated declaration block', overlayBlock !== null);
-if (overlayBlock !== null) {
-  const relative = [...overlayBlock.matchAll(/^\s*name:\s*\.\/(\S+)\s*$/gm)].map((m) => m[1]);
+// ── 4b. the flat channel's declaration home (moved 2026-09-26, B3) ─────────
+//
+// It used to sit in `notes-assistant.patch.yml` — the overlay the plugin REWRITES from its embedded
+// copy at every service start — so a plugin older than the profile erased it and every reply failed.
+// It now lives in the profile's own `cordis.patch.yml`, which nothing rewrites. TWO assertions, and
+// both matter: the new home must carry it, and the old home must NOT (the same preset id in two
+// applied layers is a hard failure: `duplicate loader entry id`).
+const profileLayerBlock = blockOf('dsh/profile/cordis.patch.yml');
+check("dsh/profile/cordis.patch.yml carries the generated declaration block (the profile's own layer)",
+  profileLayerBlock !== null);
+check('dsh/profile/notes-assistant.patch.yml carries NO declaration any more (its home moved)',
+  blockOf('dsh/profile/notes-assistant.patch.yml') === null);
+if (profileLayerBlock !== null) {
+  const relative = [...profileLayerBlock.matchAll(/^\s*name:\s*\.\/(\S+)\s*$/gm)].map((m) => m[1]);
   const stray = relative.filter((name) => !PRESET_BODY_FILES.includes(name));
-  check('overlay channel keeps the RELATIVE form for the preset entry',
+  check('the flat channel keeps the RELATIVE form for the preset entry',
     relative.includes('math-memory.mjs'), relative.join(', '));
-  check('every relative name inside the overlay block is a known body file', stray.length === 0, stray.join(', '));
-  check('overlay channel does NOT reference the installed package for the preset body',
-    !overlayBlock.includes(`${specifierPrefix}/`));
+  check('every relative name inside the profile-layer block is a known body file', stray.length === 0, stray.join(', '));
+  check('the flat channel does NOT reference the installed package for the preset body',
+    !profileLayerBlock.includes(`${specifierPrefix}/`));
 }
 
 // ── 5. the composition's own relative rows are body files ──────────────────

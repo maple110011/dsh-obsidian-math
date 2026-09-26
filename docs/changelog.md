@@ -95,6 +95,38 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · B3：preset 声明搬出"每次启动都被重写"的 overlay
+
+**为什么**：解耦评估把"分发层"列为最危险的一类，并点名这条：声明住在
+`dsh/profile/notes-assistant.patch.yml`，而插件**每次起服务**都用内嵌副本重写那份 overlay
+（`buildNotesAssistantPatch`）⇒ **插件比 profile 旧一点，声明就被无声擦掉**，症状是"新建会话报
+agent-preset/not-found"或"每一轮回复都失败而日志一行不说"——今天已经真实发生过一次（今晚第一个故障）。
+
+**搬去哪**：`<profile>/cordis.patch.yml` —— profile **自己**的 patch 层。它由安装器/引导**只在缺失时**写、
+此后**没有任何人会重写**，所以声明与插件版本解耦。行名形态不变（仍是 `./math-memory.mjs`：dsh 解析
+preset 行名时锚在 **profile 目录**，这一层也是从 profile 目录生效的）。
+
+**改了四处**：
+1. `scripts/build-preset-declaration.mjs` 的 `TARGETS` 改成 `dsh/profile/cordis.patch.yml`，并新增
+   `RETIRED_TARGETS` + `withoutDeclarationBlock()` **在同一趟里删掉旧家的块**——搬不是拷：同一个 preset id
+   出现在两个生效层是**硬失败**（`duplicate loader entry id`），所以这一步**不能拆成两个提交**。
+2. `dsh/install.mjs` 新增并导出 `ensurePresetDeclaration()`，`directInstallProfile()` 调用：存量 profile 的
+   `cordis.patch.yml` 是旧的（没有声明），而 `copyFile` 刻意不覆盖用户可编辑文件 ⇒ 只能**只增不改**地补
+   （已声明则一字不动）。
+3. `obsidian/main.template.js` 加同款 `ensureProfileDeclaration()`（从内嵌脚手架里取块）⇒ Obsidian
+   单独引导的 profile 也能自愈。
+4. 门禁与探针：`check-preset-body-lists` 与 `test-agent-preset` 的断言从"overlay 带着声明"改成
+   "**profile 层带着** + **overlay 里不许有**"；`test-real-profile-accept`（bundle 形态探针）不再拷扁平
+   posture——它现在带着扁平声明，会让 bundle profile 以 `math-memory (./math-memory.mjs): never started`
+   起不来（**这条是门禁 50 抓出来的**，说明那条门禁真的在验装配）。
+
+**变异 M32**：把声明塞回 overlay ⇒ `carries NO declaration any more` 与 `overlay 不再带声明` 两条同时红；
+跑一次生成器即还原（生成器负责清除旧家 ✓）。
+
+**实机**：真实 profile 已自愈（安装器打印 `[preset] 已把 preset 声明补进 profile 自己的 patch 层`），
+真 dsh 门禁的部署态断言通过（profile 层有声明、overlay 干净）；`main.js` 重建（741,157 B）并部署。
+`node scripts/run-gates.mjs` = 50/50。
+
 ## 2026-09-26 · P2 剩余（段级声明）+ P3（体检清单前置 + 台账开关成真）
 
 **① 段级声明**（P2 的第 3 项）：`profile.md` / `notation.md` / `topics/index.md` 是**整段注入**，没法像索引行

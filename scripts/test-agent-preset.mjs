@@ -57,18 +57,22 @@ check('persona 不再用旧字段 `text:`（旧写法会让 preset 挂载失败�
 // **生成**并写进两个通道的 patch 文件；这里断言生成物没有漂移，并断言它真的
 // 出现在 profile 的 patch 层里（声明缺失 = 会话直接建不起来）。
 const presetYmlText = readFileSync(join('dsh', 'preset', 'preset.yml'), 'utf8');
+const profileLayerPatch = readFileSync(join('dsh', 'profile', 'cordis.patch.yml'), 'utf8');
 const overlayPatch = readFileSync(join('dsh', 'profile', 'notes-assistant.patch.yml'), 'utf8');
 const bundlePatch = readFileSync(join('dsh', 'cordis.patch.yml'), 'utf8');
 const packageName = JSON.parse(readFileSync('package.json', 'utf8')).name;
 
 // ONE composition, TWO name forms (scripts/lib/preset-declaration.mjs):
-//   · the overlay is copied into the profile dir and the body is staged there
-//     before dsh starts  ⇒ `./math-memory.mjs`
-//   · a bundle row cannot stage anything in time on a cold first boot, so it
-//     names the module as a subpath of the INSTALLED PACKAGE
-// `check-preset-body-lists.mjs` pins both; these two assertions keep the
-// "declaration is generated from the composition" property visible here too.
-const overlayDeclaration = buildPresetDeclarationBlock({
+//   · the flat channel's declaration lives in the PROFILE'S OWN layer (`cordis.patch.yml`,
+//     generated from `dsh/profile/cordis.patch.yml`) and names the body as `./math-memory.mjs`,
+//     because dsh resolves those names against the profile directory;
+//   · a bundle row cannot stage anything in time on a cold first boot, so it names the module as a
+//     subpath of the INSTALLED PACKAGE.
+// `check-preset-body-lists.mjs` pins both; these assertions keep the "generated from the
+// composition" property visible here too — and pin the 2026-09-26 MOVE: the overlay the plugin
+// rewrites at every service start must NOT carry the declaration any more (two copies of one preset
+// id in two applied layers is a hard failure).
+const profileLayerDeclaration = buildPresetDeclarationBlock({
   id: 'notes-assistant',
   compositionText: presetYml,
   presetYmlText
@@ -79,9 +83,12 @@ const bundleDeclaration = buildPresetDeclarationBlock({
   presetYmlText,
   localPrefix: `${packageName}/dsh/preset`
 });
-check('overlay 通道带相对形态的声明（Obsidian / --direct）',
-  overlayPatch.includes(overlayDeclaration.trim()) && overlayPatch.includes('./math-memory.mjs'),
+check('profile 层带相对形态的声明（Obsidian / --direct；启动真正读的是这一层）',
+  profileLayerPatch.includes(profileLayerDeclaration.trim()) && profileLayerPatch.includes('./math-memory.mjs'),
   'run: node scripts/build-preset-declaration.mjs');
+check('overlay 不再带声明（它每次起服务都被重写；两处同 id 会让 profile 起不来）',
+  !overlayPatch.includes('preset-notes-assistant'),
+  'the declaration must live in the profile layer, not in the rewritten overlay');
 check('bundle 通道带包内 specifier 形态的声明（npm 安装路径）',
   bundlePatch.includes(bundleDeclaration.trim()) && bundlePatch.includes(`${packageName}/dsh/preset/math-memory.mjs`),
   `${packageName}/dsh/preset`);
@@ -211,39 +218,44 @@ const patch = join(dshHome, 'profiles', 'notes-assistant', 'notes-assistant.patc
 // Stage what dsh 0.1.7 actually needs, into the PROFILE directory: the preset
 // body files (the registry resolves `./math-memory.mjs` against the profile
 // baseUrl — see dsh/preset/preset-deploy.mjs) and the generated declaration in
-// the profile's own patch layer. Doing it here keeps this gate independent of
-// which channel deployed the real profile, and it is exactly the shape both
-// channels must produce.
+// the profile's OWN patch layer (`cordis.patch.yml`). Doing it here keeps this gate independent of
+// which channel deployed the real profile, and it is exactly the shape both channels must produce.
 //
-// The declaration goes into BOTH overlay files on purpose, because both are live
-// in the Obsidian launch (`cordis.patch.yml` is read by the profile, and
-// `notes-assistant.patch.yml` is passed as `--patch`). That mirrors production,
-// which is how the 2026-09-25 real-machine acceptance caught a stale deployed
-// copy: the row was in one file but not the other, so the preset was still
-// "not found" while `--dump-config` looked healthy.
+// ONLY the profile layer gets the declaration (2026-09-26, B3): the overlay is rewritten by the
+// plugin at every service start, so a declaration living there is erased by any stale plugin — and
+// staging it in BOTH files would rely on dsh tolerating the same preset id twice.
 const isolatedProfile = join(dshHome, 'profiles', 'notes-assistant');
 for (const name of ['math-memory.mjs', 'note-tools.mjs', 'hook-frontmatter.mjs']) {
   copyFileSync(join('dsh', 'preset', name), join(isolatedProfile, name));
 }
-for (const overlay of ['cordis.patch.yml', 'notes-assistant.patch.yml']) {
-  const overlayPath = join(isolatedProfile, overlay);
-  const current = readFileSync(overlayPath, 'utf8');
-  if (!current.includes(overlayDeclaration.trim())) {
-    writeFileSync(overlayPath, current.replace(/\s*$/, '') + '\n\n' + overlayDeclaration, 'utf8');
+{
+  const layerPath = join(isolatedProfile, 'cordis.patch.yml');
+  const current = readFileSync(layerPath, 'utf8');
+  if (!current.includes(profileLayerDeclaration.trim())) {
+    writeFileSync(layerPath, current.replace(/\s*$/, '') + '\n\n' + profileLayerDeclaration, 'utf8');
   }
 }
 check('探针 home 的 profile 里已铺 preset 体文件（0.1.7 的解析锚点）',
   ['math-memory.mjs', 'note-tools.mjs', 'hook-frontmatter.mjs'].every((n) => existsSync(join(isolatedProfile, n))));
-check('两个 overlay 都带着相对形态的声明（两处都是 Obsidian 启动路径的一部分）',
-  ['cordis.patch.yml', 'notes-assistant.patch.yml'].every((o) => readFileSync(join(isolatedProfile, o), 'utf8').includes(overlayDeclaration.trim())));
+check('探针 home 的 profile 层带着相对形态的声明（这是启动真正读的那一层）',
+  readFileSync(join(isolatedProfile, 'cordis.patch.yml'), 'utf8').includes(profileLayerDeclaration.trim()));
+check('探针 home 的 overlay 里没有声明（两处同 id 会让整个 profile 起不来）',
+  !readFileSync(join(isolatedProfile, 'notes-assistant.patch.yml'), 'utf8').includes('preset-notes-assistant'));
 
 // What the machine actually has. The preset body is no longer part of this
 // check: the bundle channel does not stage it at all (it names the modules as
 // package subpaths), and the offline channels stage it before boot.
-const deployedOverlay = readFileSync(realPatch, 'utf8');
-check('已部署的 overlay 带着相对形态的 preset 声明（侧栏启动读的就是它）',
-  deployedOverlay.includes(overlayDeclaration.trim()),
-  'overlay 没有声明 ⇒ 侧栏会报 agent-preset/not-found');
+//
+// 2026-09-26 (B3): the declaration's home is the DEPLOYED profile's own `cordis.patch.yml`. The
+// deployed overlay is NOT the anchor any more — it is rewritten from the plugin's embedded copy at
+// every service start, which is exactly how a stale plugin erased the declaration before.
+const deployedLayer = join(realProfileDir, 'cordis.patch.yml');
+check('已部署 profile 的 patch 层带着相对形态的 preset 声明（启动真正读的就是它）',
+  readFileSync(deployedLayer, 'utf8').includes(profileLayerDeclaration.trim()),
+  'profile 层没有声明 ⇒ 侧栏会报 agent-preset/not-found');
+check('已部署的 overlay 里没有声明（有的话就是两份同 id，会让 profile 起不来）',
+  !readFileSync(realPatch, 'utf8').includes('preset-notes-assistant'),
+  'overlay 是每次起服务都被重写的那份，声明不该住在那里');
 
 // ── ② 动态：真的建一个会话 ──────────────────────────────────────────────────
 //

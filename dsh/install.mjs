@@ -248,6 +248,37 @@ function describePresetBody(profileRoot) {
 }
 
 /**
+ * Ensure the profile's OWN patch layer carries the generated preset declaration.
+ *
+ * WHY (2026-09-26, B3): the declaration used to live in the overlay the plugin rewrites from its
+ * embedded copy at every service start, so a plugin older than the profile erased it and every
+ * reply failed. It now lives in `<profile>/cordis.patch.yml`, which nothing rewrites — but that
+ * file is a USER-EDITABLE posture file the installers deliberately do not clobber, so an existing
+ * profile would be left with NO declaration at all (the new overlay no longer carries one either).
+ * Hence this append-only repair: if the preset id is absent, add the generated block; if it is
+ * present, touch nothing.
+ *
+ * @returns true when the file was repaired.
+ */
+export function ensurePresetDeclaration(profileRoot) {
+  const target = join(profileRoot, "cordis.patch.yml");
+  const scaffold = join(PROFILE_DIR, "cordis.patch.yml");
+  if (!existsSync(target) || !existsSync(scaffold)) return false;
+  const current = readFileSync(target, "utf8");
+  // Already declared (however it got there) ⇒ hands off, so a user's own arrangement survives.
+  if (/- id:\s*["']?preset-notes-assistant["']?\s*$/m.test(current)) return false;
+  const source = readFileSync(scaffold, "utf8");
+  const begin = "# >>> GENERATED agent-preset declaration";
+  const end = "# <<< END GENERATED agent-preset declaration";
+  const start = source.indexOf(begin);
+  const stop = source.indexOf(end);
+  if (start < 0 || stop <= start) return false;
+  const block = source.slice(start, stop + end.length);
+  writeFileSync(target, current.replace(/\s*$/, "\n") + "\n" + block + "\n", "utf8");
+  return true;
+}
+
+/**
  * Ensure a profile manifest declares non-empty `name` AND `version`.
  *
  * WHY (2026-09-26, real-machine failure). dsh's default-on request extension
@@ -457,6 +488,10 @@ async function directInstallProfile(options, dshHome) {
   // default-on plugin-inventory request extension throw during EVERY request
   // preparation (see repairProfileManifest).
   if (repairProfileManifest(profileRoot)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
+  // B3 (2026-09-26): the preset declaration moved OUT of the rewritten overlay and INTO this
+  // profile's own `cordis.patch.yml`. That file is user-editable and deliberately not clobbered, so
+  // an existing profile needs the append-only repair (see ensurePresetDeclaration).
+  if (ensurePresetDeclaration(profileRoot)) log(options, `[preset] 已把 preset 声明补进 profile 自己的 patch 层：${join(profileRoot, "cordis.patch.yml")}`);
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
   const postureExists = existsSync(join(profileRoot, "cordis.patch.yml"));
   copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), join(profileRoot, "cordis.patch.yml"), !postureExists || options.force);

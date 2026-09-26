@@ -227,6 +227,42 @@ function postureDigestsOf(profileRoot, files) {
 }
 
 /**
+ * Ensure the profile's OWN patch layer carries the generated preset declaration.
+ *
+ * WHY (2026-09-26, B3): the declaration used to sit in the overlay this plugin REWRITES at every
+ * service start, so a plugin older than the profile silently erased it — the first real-machine
+ * failure of the day (`agent-preset/not-found`, then the request-extension outage). It now lives in
+ * `cordis.patch.yml`; `ensureFile` keeps that file when it exists, so an existing profile needs this
+ * append-only repair. If the preset id is already declared (anywhere in the file), do nothing.
+ *
+ * @returns true when the file was repaired.
+ */
+function ensureProfileDeclaration(profileRoot) {
+  const target = join(profileRoot, 'cordis.patch.yml');
+  if (!existsSync(target)) return false;
+  let current = '';
+  try {
+    current = readFileSync(target, 'utf8');
+  } catch {
+    return false;
+  }
+  if (/- id:\s*['"]?preset-notes-assistant['"]?\s*$/m.test(current)) return false;
+  const source = EMBEDDED_PRESET['profile-cordis.patch.yml'] ?? '';
+  const begin = '# >>> GENERATED agent-preset declaration';
+  const end = '# <<< END GENERATED agent-preset declaration';
+  const start = source.indexOf(begin);
+  const stop = source.indexOf(end);
+  if (start < 0 || stop <= start) return false;
+  const block = source.slice(start, stop + end.length);
+  try {
+    writeFileSync(target, current.replace(/\s*$/, '\n') + '\n' + block + '\n', 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Give a profile manifest a non-empty `name` and `version` when it lacks either.
  *
  * WHY: dsh's default-on request extension `plugin-package-inventory-deepseek` resolves
@@ -1926,6 +1962,12 @@ function bootstrapDshConfig(plugin, force = false) {
   if (repairProfileManifestFile(join(profileRoot, 'package.json'))) written.push('profile/package.json (补齐 name/version)');
   if (ensureFile(join(profileRoot, 'cordis.yml'), EMBEDDED_PRESET['profile-cordis.yml'], true)) written.push('profile/cordis.yml');
   if (ensureFile(join(profileRoot, 'cordis.patch.yml'), EMBEDDED_PRESET['profile-cordis.patch.yml'], force)) written.push('profile/cordis.patch.yml');
+  // B3 (2026-09-26): the generated preset declaration now lives in the profile's OWN layer
+  // (`cordis.patch.yml`), NOT in the overlay below — the overlay is rewritten from our embedded copy
+  // at every service start, so a plugin older than the profile erased the declaration and EVERY reply
+  // failed. An EXISTING `cordis.patch.yml` is not refreshed above (`ensureFile` keeps user files), so
+  // hand it the declaration when it is missing; never touch it otherwise (it also holds the posture).
+  if (ensureProfileDeclaration(profileRoot)) written.push('profile/cordis.patch.yml (补上 preset 声明)');
   if (ensureFile(join(profileRoot, 'pnpm-workspace.yaml'), EMBEDDED_PRESET['profile-pnpm-workspace.yaml'], force)) written.push('profile/pnpm-workspace.yaml');
   if (ensureFile(join(profileRoot, 'math-memory-workspace.mjs'), EMBEDDED_PRESET['profile-math-memory-workspace.mjs'], true)) written.push('profile/math-memory-workspace.mjs');
   writeNotesAssistantPatch(plugin, home);
