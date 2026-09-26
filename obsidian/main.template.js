@@ -1994,6 +1994,20 @@ function bootstrapDshConfig(plugin, force = false) {
   // profile-root file, so only the two new names are added here.
   if (ensureFile(join(profileRoot, 'math-memory.mjs'), EMBEDDED_PRESET['math-memory.mjs'], true)) written.push('profile/math-memory.mjs');
   if (ensureFile(join(profileRoot, 'note-tools.mjs'), EMBEDDED_PRESET['note-tools.mjs'], true)) written.push('profile/note-tools.mjs');
+  // The contract itself: the ONE file staged by name, because everything else derives from it.
+  if (ensureFile(join(profileRoot, 'profile-contract.mjs'), EMBEDDED_PRESET['profile-contract.mjs'], true)) written.push('profile/profile-contract.mjs');
+  // Postcondition: every file the manifest below is about to claim must exist on disk.
+  //
+  // WHY (2026-09-26): `DIRECT_PROFILE_FILES` derives from the profile contract, but the writes above
+  // are explicit `ensureFile` calls — so a name added to the contract and not to this list was
+  // recorded in the manifest while never being written. The CLI installer had the identical hole; a
+  // profile whose own manifest lies is worse than a loud failure, because every later check trusts it.
+  {
+    const neverWritten = DIRECT_PROFILE_FILES.filter((name) => !existsSync(join(profileRoot, name)));
+    if (neverWritten.length > 0) {
+      throw new Error(`profile bootstrap: planned but never written: ${neverWritten.join(', ')} — refusing to write a manifest that claims missing files`);
+    }
+  }
 
   // Record ownership so the npm bundle / CLI installer can detect this direct
   // install and skip (or be skipped by) it instead of silently clobbering. This

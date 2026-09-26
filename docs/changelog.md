@@ -95,6 +95,41 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · A′ 第二刀：堵死"列了不写"的静默失败 + 契约真的被写进盘
+
+**这一刀是被 B2 的实验逼出来的**。B2 我把 `profile-contract.mjs` 列进 scaffold 清单后，安装器**照旧报
+`Done (direct)`，而盘上没有那个文件**。追下去发现根因比"少写一行"更值得记：
+
+> **两个写入方都只把 `DIRECT_PROFILE_FILES` 喂给 manifest，真正写文件的是一行行手写的
+> `copyFile` / `ensureFile` 调用。** 于是"契约里加了名字、写入调用没跟上"会产出一个**自己的 manifest
+> 在说谎**的 profile —— 而这比直接失败更糟：之后每一个检查都拿 manifest 当事实。
+
+**修法**：
+1. **契约文件真的被铺**（`install.mjs` 的 `copyFile` + 引导的 `ensureFile`）。它是唯一一个必须按名字铺的
+   文件（其他一切从它派生），所以它也在契约的 scaffold 集合里、也在 manifest 里。
+2. **两个写入方都加后置条件**：铺完之后逐个核对 `DIRECT_PROFILE_FILES` 是否真在盘上，缺一个就**抛错**、
+   拒绝写 manifest。实测：把安装器那一行 `copyFile` 拿掉 ⇒ `Error: direct install: planned but never
+   written: profile-contract.mjs — the manifest would claim files that do not exist`。
+3. **门禁补 `PINNED-6`**：契约里每个文件都必须在两个写入方的源码里有一条写入路径（`copyFile` /
+   `ensureFile` / 明确登记的生成函数）。这条在 PR 阶段就能拦住同一类问题，不必等到真装一次。
+   它当场又抓到一个真实情况：`notes-assistant.patch.yml` 是 `writeNotesAssistantPatch()` **生成**的，
+   不是逐字拷贝 ⇒ 显式登记该机制（顺带钉住那个调用本身）。
+
+**变异 M36**：删掉安装器里契约的 `copyFile` ⇒ 门禁 `PINNED-6`（installer 缺它）与**运行时后置条件**
+同时报错；还原后 ok。
+
+**顺带修掉一处"锚在会腐烂的数字上"**：`test-installer.mjs` 原来断言 `manifest.posture.length === 12`，
+契约一加文件就红（正是坑 81 那类）。改为**从契约派生**："manifest 列出的正是契约说一个 profile 需要的
+文件"。
+
+**没做，以及为什么**：原计划这一刀还要把**面板路由链**表化，让 `PANEL_ROUTES` 从"钉住"变成"读"。查证后
+发现它在当前布局下做不到：面板是**内嵌并平铺**进 profile 的，而契约在 `dsh/preset/` 下——平铺后
+`./profile-contract.mjs` 能找到，包内布局则要 `../preset/…`，两种布局的 import 名冲突。要让它成立必须
+动"三份来源的布局"本身（方案 B/D 的范畴，评估文档 §5 方案 D）。所以这一项**如实留在 PINNED**，而不是
+造一个在某一侧必然失败的 import。
+
+`node scripts/run-gates.mjs` = **51/51**；`main.js` 重建（747,790 B）。
+
 ## 2026-09-26 · A′ 第一刀：引导的 staging 清单改为**构建期注入契约**（B2 的 PINNED-5 → READ-2）
 
 **为什么**：B2 落地时，把"往 profile 里放什么"收敛成契约后还剩**三处只能被钉住**的地方，其中一处是

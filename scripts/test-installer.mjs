@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { verifyPostureDigests } from '../dsh/install.mjs';
+// The contract is the source for "what a profile needs" — assertions below derive from it instead of
+// hardcoding counts that rot the moment a file is added (2026-09-26).
+import { PROFILE_SCAFFOLD_FILES, PRESET_BODY_FILES } from '../dsh/preset/profile-contract.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const home = mkdtempSync(join(tmpdir(), 'dsh-home-test-'));
@@ -130,7 +133,12 @@ for (const path of files) check('exists ' + path, existsSync(path));
 const manifest = JSON.parse(readFileSync(join(profileRoot, '.install-manifest.json'), 'utf8'));
 check('manifest owner=direct', manifest.owner === 'direct');
 check('no legacy .owner.json is written any more', !existsSync(join(presetRoot, '.owner.json')));
-check('manifest posture=12 files', Array.isArray(manifest.posture) && manifest.posture.length === 12,
+// Derived, not hardcoded: this assertion used to say `=== 12` and went red the moment the profile
+// contract grew a file. The property worth asserting is "the manifest lists exactly what the contract
+// says a profile needs" — anchor on that, not on a number that rots (AGENTS.md §6).
+const expectedPosture = [...new Set([...PROFILE_SCAFFOLD_FILES, ...PRESET_BODY_FILES])];
+check('manifest posture = every file the contract says a profile needs',
+  Array.isArray(manifest.posture) && expectedPosture.every((name) => manifest.posture.includes(name)),
   Array.isArray(manifest.posture) ? String(manifest.posture.length) : 'not an array');
 check('manifest posture covers the preset body (so uninstall removes it)',
   ['math-memory.mjs', 'note-tools.mjs'].every((n) => manifest.posture.includes(n)),

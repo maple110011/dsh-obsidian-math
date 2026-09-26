@@ -497,6 +497,11 @@ async function directInstallProfile(options, dshHome) {
   copyFile(options, join(HOST_DIR, "memory-admin.mjs"), join(profileRoot, "memory-admin.mjs"), true);
   copyFile(options, join(HOST_DIR, "math-memory-panel.mjs"), join(profileRoot, "math-memory-panel.mjs"), true);
   copyFile(options, join(PRESET_DIR, "hook-frontmatter.mjs"), join(profileRoot, "hook-frontmatter.mjs"), true);
+  // The profile contract itself. It is listed in the contract's own scaffold set, and the postcondition
+  // below makes sure a listed-but-unwritten file can never pass silently again (2026-09-26: this
+  // installer once reported success while `profile-contract.mjs` was missing from disk, because the
+  // scaffold list only fed the MANIFEST while the writes were hand-written `copyFile` calls).
+  copyFile(options, join(PRESET_DIR, "profile-contract.mjs"), join(profileRoot, "profile-contract.mjs"), true);
   // The agent preset's OWN modules, through the one list in preset-deploy.mjs.
   // Without this the profile declares `name: ./math-memory.mjs` and has no such
   // file: dsh prints nothing at boot, and `session/create` answers
@@ -522,6 +527,19 @@ async function directInstallProfile(options, dshHome) {
     else log(options, `[client] 客户端半个已装（${res.inserted ? "新插入 patch" : "patch 已包含"}）`);
   } catch (error) {
     log(options, `[client] 客户端半个安装异常：${String(error)}`);
+  }
+  // Postcondition: everything the manifest is about to claim must exist on disk.
+  //
+  // WHY (2026-09-26, B2 experiment): this installer reported `Done (direct)` while
+  // `profile-contract.mjs` — listed in the contract, and therefore in the manifest it wrote — was
+  // never written, because the scaffold half of `DIRECT_PROFILE_FILES` only fed the MANIFEST while
+  // the writes above were hand-written `copyFile` calls. A profile whose own manifest lies is worse
+  // than a loud failure: the drift is invisible to every later check.
+  if (!options.dryRun) {
+    const neverWritten = DIRECT_PROFILE_FILES.filter((name) => !existsSync(join(profileRoot, name)));
+    if (neverWritten.length > 0) {
+      throw new Error(`direct install: planned but never written: ${neverWritten.join(", ")} — the manifest would claim files that do not exist`);
+    }
   }
   writeManifest(options, profileRoot, "direct", DIRECT_PROFILE_FILES, []);
   return true;

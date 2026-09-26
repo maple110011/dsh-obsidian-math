@@ -25,6 +25,10 @@ export const PRESET_BODY_FILES = ['math-memory.mjs', 'note-tools.mjs', 'hook-fro
  * 与 `PRESET_BODY_FILES` 合起来就是"一个能启动的 profile 需要哪些文件"的全集。
  */
 export const PROFILE_SCAFFOLD_FILES = [
+  // This file itself. It is the ONE name that has to be staged by hand (everything else derives from
+  // it), and it must be listed here so the manifest and the gates agree with what is written — the
+  // 2026-09-26 experiment showed a listed-but-unwritten file passing silently in BOTH writers.
+  'profile-contract.mjs',
   'package.json',
   'cordis.yml',
   'cordis.patch.yml',
