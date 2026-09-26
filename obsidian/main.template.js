@@ -246,7 +246,6 @@ function ensureProfileDeclaration(profileRoot) {
   } catch {
     return false;
   }
-  if (/- id:\s*['"]?preset-notes-assistant['"]?\s*$/m.test(current)) return false;
   const source = EMBEDDED_PRESET['profile-cordis.patch.yml'] ?? '';
   const begin = '# >>> GENERATED agent-preset declaration';
   const end = '# <<< END GENERATED agent-preset declaration';
@@ -255,6 +254,18 @@ function ensureProfileDeclaration(profileRoot) {
   if (start < 0 || stop <= start) return false;
   const block = source.slice(start, stop + end.length);
   try {
+    // A STALE block must be refreshed, not ignored: `preset.yml`'s description is part of the block,
+    // so append-only meant an upgraded install kept the old description forever (found 2026-09-26
+    // while shortening it for release). Replace only the marker-delimited block, so rows the user
+    // added around it survive.
+    const from = current.indexOf(begin);
+    const to = current.indexOf(end);
+    if (from >= 0 && to > from) {
+      if (current.slice(from, to + end.length).trim() === block.trim()) return false;
+      writeFileSync(target, current.slice(0, from) + block + current.slice(to + end.length), 'utf8');
+      return true;
+    }
+    if (/- id:\s*['"]?preset-notes-assistant['"]?\s*$/m.test(current)) return false;
     writeFileSync(target, current.replace(/\s*$/, '\n') + '\n' + block + '\n', 'utf8');
     return true;
   } catch {

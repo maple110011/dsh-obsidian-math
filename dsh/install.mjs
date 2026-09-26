@@ -244,25 +244,27 @@ function describePresetBody(profileRoot) {
 }
 
 /**
- * Ensure the profile's OWN patch layer carries the generated preset declaration.
+ * Make the profile's OWN patch layer carry the CURRENT generated preset declaration.
  *
- * WHY (2026-09-26, B3): the declaration used to live in the overlay the plugin rewrites from its
- * embedded copy at every service start, so a plugin older than the profile erased it and every
- * reply failed. It now lives in `<profile>/cordis.patch.yml`, which nothing rewrites — but that
- * file is a USER-EDITABLE posture file the installers deliberately do not clobber, so an existing
- * profile would be left with NO declaration at all (the new overlay no longer carries one either).
- * Hence this append-only repair: if the preset id is absent, add the generated block; if it is
- * present, touch nothing.
+ * WHY (2026-09-26, B3): the declaration used to live in the overlay the plugin rewrites at every
+ * service start, so a plugin older than the profile erased it and every reply failed. It lives in
+ * `<profile>/cordis.patch.yml` now — a USER-EDITABLE posture file the installers deliberately do not
+ * clobber — so an existing profile would otherwise be left with no declaration at all (the new overlay
+ * carries none either). Two repairs, both surgical:
+ *   · declaration missing ⇒ append the generated block;
+ *   · declaration STALE ⇒ replace only the marker-delimited block, so anything the user added around
+ *     it survives.
  *
- * @returns true when the file was repaired.
+ * That second case was found while preparing the 2026-09-26 release: `preset.yml`'s description is
+ * part of the block, so an append-only repair meant an upgraded install kept the OLD description
+ * forever (and `test: agent preset mounts` says so at deploy time).
+ *
+ * @returns true when the file changed.
  */
 export function ensurePresetDeclaration(profileRoot) {
   const target = join(profileRoot, "cordis.patch.yml");
   const scaffold = join(PROFILE_DIR, "cordis.patch.yml");
   if (!existsSync(target) || !existsSync(scaffold)) return false;
-  const current = readFileSync(target, "utf8");
-  // Already declared (however it got there) ⇒ hands off, so a user's own arrangement survives.
-  if (/- id:\s*["']?preset-notes-assistant["']?\s*$/m.test(current)) return false;
   const source = readFileSync(scaffold, "utf8");
   const begin = "# >>> GENERATED agent-preset declaration";
   const end = "# <<< END GENERATED agent-preset declaration";
@@ -270,6 +272,17 @@ export function ensurePresetDeclaration(profileRoot) {
   const stop = source.indexOf(end);
   if (start < 0 || stop <= start) return false;
   const block = source.slice(start, stop + end.length);
+  const current = readFileSync(target, "utf8");
+  const from = current.indexOf(begin);
+  const to = current.indexOf(end);
+  if (from >= 0 && to > from) {
+    if (current.slice(from, to + end.length).trim() === block.trim()) return false;
+    writeFileSync(target, current.slice(0, from) + block + current.slice(to + end.length), "utf8");
+    return true;
+  }
+  // No block at all. If the id is declared some other way by hand, leave that alone — the user may have
+  // arranged it deliberately, and guessing would be worse than the gate reporting a stale declaration.
+  if (/- id:\s*["']?preset-notes-assistant["']?\s*$/m.test(current)) return false;
   writeFileSync(target, current.replace(/\s*$/, "\n") + "\n" + block + "\n", "utf8");
   return true;
 }

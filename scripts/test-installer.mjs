@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { verifyPostureDigests } from '../dsh/install.mjs';
+import { verifyPostureDigests, ensurePresetDeclaration } from '../dsh/install.mjs';
 // The contract is the source for "what a profile needs" — assertions below derive from it instead of
 // hardcoding counts that rot the moment a file is added (2026-09-26).
 import { PROFILE_SCAFFOLD_FILES, PRESET_BODY_FILES } from '../dsh/preset/profile-contract.mjs';
@@ -262,5 +262,33 @@ check('vault cache removed', !existsSync(join(vault, '.deepseek', 'cache')));
 
 rmSync(home, { recursive: true, force: true });
 rmSync(vault, { recursive: true, force: true });
+// The declaration must be REFRESHED when stale, not merely appended into place.
+//
+// Found 2026-09-26 while shortening `preset.yml`'s description for release: that description is part of
+// the GENERATED block, and B3's repair was append-only — so an upgraded install kept the OLD
+// description forever (and `test: agent preset mounts` failed at deploy time). The fix replaces only
+// the marker-delimited block, which is what these assertions pin.
+{
+  const refreshHome = mkdtempSync(join(tmpdir(), 'dsh-decl-refresh-'));
+  const refreshProfile = join(refreshHome, 'profiles', 'notes-assistant');
+  mkdirSync(refreshProfile, { recursive: true });
+  const scaffold = readFileSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), 'utf8');
+  const begin = '# >>> GENERATED agent-preset declaration';
+  const end = '# <<< END GENERATED agent-preset declaration';
+  const currentBlock = scaffold.slice(scaffold.indexOf(begin), scaffold.indexOf(end) + end.length);
+  const staleBlock = currentBlock.replace(/description: [^\n]+/, 'description: STALE-DESCRIPTION');
+  writeFileSync(join(refreshProfile, 'cordis.patch.yml'),
+    `# a row of the user's own\n- insert:\n    - id: user-thing\n      name: ./user.mjs\n\n${staleBlock}\n`, 'utf8');
+  const refreshed = ensurePresetDeclaration(refreshProfile);
+  const after = readFileSync(join(refreshProfile, 'cordis.patch.yml'), 'utf8');
+  check('declaration: a STALE generated block is refreshed (append-only would keep the old text forever)',
+    refreshed === true && !after.includes('STALE-DESCRIPTION') && after.includes('面向数学类笔记的最小 agent'),
+    refreshed ? 'refreshed' : 'returned false');
+  check("declaration: the user's own rows outside the block survive the refresh",
+    after.includes('id: user-thing'));
+  check('declaration: a second run is a no-op (idempotent)', ensurePresetDeclaration(refreshProfile) === false);
+  rmSync(refreshHome, { recursive: true, force: true });
+}
+
 console.log(failed === 0 ? 'installer: all checks passed' : `installer: ${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -39,7 +39,7 @@
     config:
       id: notes-assistant
       name: "数学笔记助手"
-      description: "面向数学类笔记的最小 agent（试做型 0.7.x）：文件读写与搜索、专用笔记工具（note_recall 统一检索——笔记与记忆一次 BM25 排序、按 tag 枚举 / note_strategy 方法卡 / note_create 拒绝覆盖 / note_links 反链查询）、跨会话分层记忆、每日记忆体检（ISM 式确定性维护）、笔记工作流、关键想法捕获与备忘录提醒。记忆架构尚未经长期测试，会持续演进。"
+      description: "面向数学类笔记的最小 agent：专用笔记工具（note_recall 统一检索）+ 跨会话分层记忆 + 每日记忆体检。试做型，记忆架构仍在演进。"
       order: 1
       plugins:
       - id: persona
