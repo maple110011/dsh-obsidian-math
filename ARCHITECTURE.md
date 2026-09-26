@@ -93,7 +93,7 @@
 ## 4. 常用命令
 
 ```bash
-npm test                        # 语法 + 426 项回归 + 53 项路由回归 + 8 项认证 + 32 项反代回归 + 安装器 e2e（含漂移检测）+ 通道归属锚点回归 + preset 体文件清单/声明/客户端包布局/插件卡片素材。汇总为三态（ok / SKIP / FAIL）并列出被跳过的门禁——SKIP 不等于通过
+npm test                        # 语法 + 426 项回归 + 59 项路由回归 + 8 项认证 + 32 项反代回归 + 安装器 e2e（含漂移检测）+ 通道归属锚点回归 + preset 体文件清单/声明/客户端包布局/插件卡片素材。汇总为三态（ok / SKIP / FAIL）并列出被跳过的门禁——SKIP 不等于通过
 npm run qa                      # 引擎探针（零 token，12 组召回断言 + 可达性分层/池化 A/B）
 npm run qa:e2e                  # 引擎探针 + 真实会话端到端（烧真实 tokens，含 API 级计量）
 node scripts/build-obsidian.mjs # 重建 main.js（改 dsh/ 或模板后必跑）
