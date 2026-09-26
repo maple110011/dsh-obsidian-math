@@ -257,6 +257,12 @@ node --input-type=module -e "const nt=await import('file:///E:/software/ss/Deeps
 
 ### P5【中改】冲突与过期不再静默并列：卡级矛盾检测 + 单源老化降权
 
+> **状态（2026-09-26）**：**① 卡级矛盾检测 ✅ 已实现**（判据 = 同一 `hook` signature + 结论极性相反 +
+> **≥3 个共享 2-gram**；进 `sections.conflicting` 与清单，并**在注入的两行上都标** `⚠️与[[另一张]]矛盾`；
+> 只报不改、零排序风险；变异 M39/M40/M41）。**② 单源老化降权 ⏸ 未做**——它要动 `hookPrior`、会移动既有排序，
+> 必须先过 `retrieval-v3 §7.5` 的"Direct 数不降且排名均值不升"门槛，属**待你拍板**的独立决定。
+> 实测修正一处：`topic` 不是卡片字段（那是 memo 的）⇒ 判据锚在 signature 上，比原方案更窄。
+
 - **改什么**：
   1. 卡级矛盾检测（当前**不存在**）：同一 `topic` + 同一 `hook.pattern`（或 `depends_on` 指向的卡）下，两条卡的结论行互相否定时进 `sections.conflicting`——**只报不改**，并在注入的 records 段里对这两行标 `⚠️ 与 [[另一张]] 互相矛盾`。
   2. 单源老化降权：`hookPrior`（`note-tools.mjs:551`）引入"未核实惩罚"项：`verified === "single-source" 且 age > AUDIT_UNVERIFIED_DAYS` ⇒ 在现有 `[0,1]` 钳制内下压（**只降不升**，量纲不变，既有排序在阈值内不移动——照 `:520-527` 那条纪律的写法）。

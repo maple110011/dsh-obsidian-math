@@ -3384,6 +3384,22 @@ check('archive: a real memory card is still archived',
     JSON.stringify(pairsReported.map((pair) => [pair.a.rel, pair.b.rel])));
   check('audit: the checklist says contradictions are YOUR call, not a rewrite',
     conflictReport.checklist.includes('互相矛盾') && conflictReport.checklist.includes('只报不改'));
+  // …and the INJECTED map must say it too. That is P5-A's whole point: the model is handed both
+  // cards, so the text itself has to say "these two disagree".
+  writeFileSync(join(conflictRecords, 'c-c.md'), cardText('先用 洛必达 化简再求极限'));
+  writeFileSync(join(conflictRecords, 'c-d.md'), cardText('洛必达 之前先化简再求极限'));
+  writeFileSync(join(conflictRecords, 'index.md'),
+    '# 索引\n\n- [[c-a|不要用 洛必达 处理不定式]]\n- [[c-b|洛必达 可以直接处理不定式]]\n- [[c-c|先用 洛必达 化简再求极限]]\n- [[c-d|洛必达 之前先化简再求极限]]\n', 'utf8');
+  const conflictSection = buildMemorySection(
+    { vaultRoot: conflictRoot, sessionsRoot: join(conflictRoot, 'no-sessions'), maxHistoryEntries: 1, maxHistoryChars: 1, cacheTtlMs: 0 },
+    'live-session', { sources: [], entries: [] }, undefined, '');
+  const lineOf = (stem) => conflictSection.split('\n').find((line) => line.includes(`[[${stem}|`)) ?? '';
+  check('injection: both sides of a contradiction carry "⚠️与[[另一张]]矛盾"',
+    lineOf('c-a').includes('⚠️与[[c-b]]矛盾') && lineOf('c-b').includes('⚠️与[[c-a]]矛盾'),
+    `${lineOf('c-a')} || ${lineOf('c-b')}`);
+  check('injection: cards that AGREE carry no contradiction mark (narrow rule, no crying wolf)',
+    lineOf('c-c') !== '' && !lineOf('c-c').includes('⚠️') && !lineOf('c-d').includes('⚠️'),
+    `${lineOf('c-c')} || ${lineOf('c-d')}`);
   rmSync(conflictRoot, { recursive: true, force: true });
 }
 

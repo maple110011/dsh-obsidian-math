@@ -1851,8 +1851,13 @@ function findCorroboration(card, candidates, links) {
  * WHY this narrow rule (docs/note-noise-and-memory-fidelity-2026-09-26.md §4 P5): a broader "the
  * texts disagree" heuristic cries wolf — this repo already refused exactly that for notation
  * conflicts — and the plugin must not call a model (`docs/memory/design.md` §10 red line). So:
- * same signature + exactly ONE side negated + at least one shared 2-gram, which stops unrelated
+ * same signature + exactly ONE side negated + at least THREE shared 2-grams, which stops unrelated
  * one-liners in the same signature group from pairing up.
+ *
+ * WHY three (2026-09-26, measured): a 3-character Chinese word yields exactly two bigrams, so "two
+ * shared bigrams" means "they share ONE word" — "不要用洛必达处理不定式" and "先用洛必达化简再求极限" share
+ * 洛必+必达 and are NOT a contradiction; requiring three makes it "two shared words or a longer shared
+ * phrase". The injection test fails on the looser bar, which is how this number was chosen.
  *
  * REPORT ONLY. Nothing here rewrites or re-ranks a card — which is why this ships WITHOUT the
  * "single-source ageing" half of P5: that one moves retrieval order, so it has to be validated
@@ -1863,6 +1868,7 @@ function findCorroboration(card, candidates, links) {
  */
 export function findContradictions(cards) {
   const NEGATED = /(?:不要|不用|别|避免|禁止|不能|不应|不得|并非|不是)/;
+  const MIN_SHARED_TOKENS = 3;
   const bigrams = (text) => {
     const source = String(text ?? "").toLowerCase();
     const out = new Set();
@@ -1888,7 +1894,8 @@ export function findContradictions(cards) {
       if (shared.length === 0) continue;
       if (NEGATED.test(String(a.title ?? "")) === NEGATED.test(String(b.title ?? ""))) continue;
       const bBigrams = bigrams(b.title);
-      if (![...bigrams(a.title)].some((token) => bBigrams.has(token))) continue;
+      const sharedTokens = [...bigrams(a.title)].filter((token) => bBigrams.has(token));
+      if (sharedTokens.length < MIN_SHARED_TOKENS) continue;
       pairs.push({ a: a.rel, b: b.rel, signature: shared[0] });
     }
   }
@@ -3713,34 +3720,49 @@ function cardFilesByStem(dir) {
 }
 
 /**
- * Evidence marker for one injected index line, read from the CARD that line points at.
+ * Card metadata for one injected index line: the evidence level (P2) plus what contradiction
+ * detection needs (P5-A) — the line's own one-liner and the card's hook signature.
  *
- * WHY (2026-09-26): the injected map listed cards with no evidence level at all, while the
- * panel already showed ✅/⚖️/❓. Measured consequence (docs/note-noise-and-memory-fidelity-2026-09-26.md
- * §1.3, synthetic fixture): a single-source AI-written card scored 0.9363 and **outranked** a
- * card the user had personally confirmed (0.9173) — and nothing in the injected text let the
- * model tell them apart. This is P2 of that document; P1 (the wording) ships with it, because
- * markers without wording are just decoration.
- *
- * FAIL-CLOSED: missing / unreadable / unrecognized frontmatter ⇒ ❓. The least evidenced item
- * must never look cleanest — the panel's own rule (`index.jsx` VERIFIED_BADGES fallback).
+ * WHY one reader for both (2026-09-26): the digest reads the card file once per line; paying for a
+ * second pass just to get `hook.pattern` would double the file reads for every injected line. The
+ * FAIL-CLOSED rule of P2 still lives in `evidenceMarkOf`: missing / unreadable / unrecognized
+ * `verified` ⇒ ❓, because the least evidenced item must never look cleanest.
  */
-function indexLineEvidenceMark(stemFiles, line) {
-  const hit = /\[\[([^\]|]+)/.exec(line);
-  if (hit === null) return "";
+function indexLineCardInfo(stemFiles, line) {
+  const hit = /\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/.exec(line);
+  if (hit === null) return null;
   const stem = hit[1].trim();
+  const title = (hit[2] ?? stem).trim();
   const file = stemFiles.get(stem) ?? stemFiles.get(stem.split("/").pop());
-  let level = null;
+  let verified = null;
+  let hook = { pattern: "", techniques: [] };
   if (file !== undefined) {
     try {
       const front = readFrontmatter(readFileSync(file, "utf8"));
-      const verified = /(?:^|\n)\s*verified:\s*["']?(user-confirmed|cross-referenced|single-source)["']?/.exec(front ?? "");
-      level = verified === null ? null : verified[1];
+      const found = /(?:^|\n)\s*verified:\s*["']?(user-confirmed|cross-referenced|single-source)["']?/.exec(front ?? "");
+      verified = found === null ? null : found[1];
+      // ⚠️ No `$` here without the `m` flag: `$` would then mean "end of the whole frontmatter", so a
+      // `pattern:` line in the middle silently matched nothing (caught by the injection test).
+      const pattern = /(?:^|\n)\s*pattern:\s*["']?([^"'\n]+?)["']?\s*(?:\n|$)/.exec(front ?? "");
+      // `techniques` is parsed inside its own block only, so a `related:`/`source:` bullet list cannot
+      // masquerade as a signature (a false signature would invent contradictions).
+      const block = /(?:^|\n)\s*techniques:\s*\n((?:[ \t]*-[ \t]*.+\n?)+)/.exec(front ?? "");
+      const techniques = block === null
+        ? []
+        : [...block[1].matchAll(/-\s*["']?([^"'\n]+?)["']?\s*$/gm)].map((m) => m[1].trim());
+      hook = { pattern: pattern === null ? "" : pattern[1].trim(), techniques };
     } catch {
-      level = null;
+      verified = null;
+      hook = { pattern: "", techniques: [] };
     }
   }
-  return " " + (INDEX_EVIDENCE_MARK[level] ?? "❓");
+  return { stem, title, verified, hook };
+}
+
+/** The panel's evidence vocabulary, fail-closed (see `indexLineCardInfo`). */
+function evidenceMarkOf(info) {
+  if (info === null) return "";
+  return " " + (INDEX_EVIDENCE_MARK[info.verified] ?? "❓");
 }
 
 /**
@@ -3770,17 +3792,40 @@ function appendOnlyIndexDigest(root, relativePath, maxChars, withEvidenceMarks =
     let used = 0;
     for (let i = items.length - 1; i >= 0; i -= 1) {
       const base = clip(items[i].trim(), maxChars);
+      const info = stemFiles === null ? null : indexLineCardInfo(stemFiles, base);
       // The marker is PART of the line's budget: it is injected text, not metadata.
-      const clean = base + (stemFiles === null ? "" : indexLineEvidenceMark(stemFiles, base));
+      const clean = base + evidenceMarkOf(info);
       if (used + clean.length > maxChars) break;
-      kept.push(clean);
+      kept.push({ clean, info });
       used += clean.length + 1;
     }
     if (kept.length === 0) {
       const last = clip(items[items.length - 1].trim(), maxChars);
-      return last + (stemFiles === null ? "" : indexLineEvidenceMark(stemFiles, last));
+      return last + evidenceMarkOf(stemFiles === null ? null : indexLineCardInfo(stemFiles, last));
     }
-    return kept.reverse().join("\n");
+    kept.reverse();
+    // P5-A: mark contradictions BETWEEN the kept lines, so the model is told "these two disagree"
+    // instead of being handed both as if both were true. The mark is added AFTER the budget walk,
+    // because a pair is only knowable once every kept line is — so a conflicting line may exceed its
+    // tier by ~15 characters. That is deliberate: the hard cap (MAX_TOTAL_MEMORY_CHARS) is nowhere near
+    // (measured 4088/18000), pairs are capped at 10, and trap 47 says boundary gating must SPEAK
+    // rather than drop something quietly.
+    if (stemFiles !== null && kept.length > 1) {
+      const cards = kept.filter((entry) => entry.info !== null).map((entry) => ({
+        rel: entry.info.stem,
+        title: entry.info.title,
+        status: "active",
+        hook: entry.info.hook
+      }));
+      for (const pair of findContradictions(cards)) {
+        for (const entry of kept) {
+          if (entry.info === null) continue;
+          if (entry.info.stem === pair.a) entry.clean += ` ⚠️与[[${pair.b}]]矛盾`;
+          else if (entry.info.stem === pair.b) entry.clean += ` ⚠️与[[${pair.a}]]矛盾`;
+        }
+      }
+    }
+    return kept.map((entry) => entry.clean).join("\n");
   } catch {
     return "";
   }
