@@ -201,6 +201,46 @@ try {
   rmSync(homeD, { recursive: true, force: true });
 }
 
+// ── branch 5: the panel's HTTP error reporting (2026-09-26) ─────────────────
+//
+// Every call site used `await res.json()`. When the route is not mounted — the client half
+// installed, the host half having skipped activation — dsh answers 404 with an EMPTY body and
+// the panel showed `加载失败：SyntaxError: Unexpected end of JSON input`, blaming the parser
+// instead of the missing route. `readJson` reports status + body; these cases drive it with
+// fakes so the failure mode is TESTED rather than eyeballed by whoever hits it next.
+{
+  const { readJson } = await import('../dsh/client-panel/src/http-json.mjs');
+  const fake = (status, body) => ({ ok: status >= 200 && status < 300, status, text: async () => body });
+  const message = async (status, body) => {
+    try { await readJson(fake(status, body), '测试'); return ''; } catch (error) { return String(error?.message ?? error); }
+  };
+
+  check('readJson: a 200 JSON body is returned as-is',
+    JSON.stringify(await readJson(fake(200, JSON.stringify({ ok: true, n: 1 })), '测试')) === JSON.stringify({ ok: true, n: 1 }));
+
+  const empty404 = await message(404, '');
+  check('readJson: an EMPTY 404 reports the STATUS and says the route may be missing (never "JSON input")',
+    empty404.includes('404') && empty404.includes('空响应') && !/JSON input/.test(empty404), empty404);
+
+  const json403 = await message(403, JSON.stringify({ ok: false, error: 'forbidden: bad or missing token' }));
+  check('readJson: a JSON error body surfaces the server\'s own message',
+    json403.includes('403') && json403.includes('bad or missing token'), json403);
+
+  const empty200 = await message(200, '');
+  check('readJson: an empty 200 is reported as non-JSON (another handler may own the path)',
+    empty200.includes('非 JSON'), empty200);
+
+  const html200 = await message(200, '<!doctype html><html></html>');
+  check('readJson: an HTML body is not silently parsed', html200.includes('非 JSON'), html200);
+
+  // The CALL SITES must use it: a bare `res.json()` would reintroduce the vague failure.
+  // (Source-shape, and deliberately so — the alternative is not testing the shipped wiring.)
+  const clientSource = readFileSync(new URL('../dsh/client-panel/src/index.jsx', import.meta.url), 'utf8');
+  const uses = (clientSource.match(/readJson\(/g) ?? []).length;
+  check('the panel has no bare `res.json()` left (every parsed response goes through readJson)',
+    !/res\.json\(\)/.test(clientSource) && uses >= 5, `readJson=${uses}`);
+}
+
 if (failed > 0) {
   console.log('\nThe client package is not loadable. The copy list comes from');
   console.log('collectDshImportClosure() in dsh/client-panel/install-into-profile.mjs —');

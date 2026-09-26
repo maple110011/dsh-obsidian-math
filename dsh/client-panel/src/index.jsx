@@ -7,6 +7,7 @@
 //     这是「三选项令人不明所以」的直接原因之一）。
 
 import { useEffect, useState } from "react";
+import { readJson } from "./http-json.mjs";
 import { installComposerDropMention } from "./drop-mention/composer-drop.mjs";
 import { installMentionInbox } from "./drop-mention/mention-inbox.mjs";
 
@@ -56,7 +57,7 @@ function useJson(url, body) {
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body)
         } : undefined);
-        const json = await res.json();
+        const json = await readJson(res, "记忆状态");
         if (alive) setData(json);
       } catch (err) {
         if (alive) setError(String(err));
@@ -123,7 +124,7 @@ function MemoryPanel() {
     (async () => {
       try {
         const res = await fetch("/memory-panel/workspaces");
-        const json = await res.json();
+        const json = await readJson(res, "工作区列表");
         if (json && json.ok && Array.isArray(json.workspaces)) setWorkspaces(json.workspaces);
       } catch { /* no workspaces endpoint yet */ }
     })();
@@ -133,7 +134,7 @@ function MemoryPanel() {
     if (root === "") { setCap(null); return; }
     try {
       const res = await fetch("/memory-panel/session-capture?root=" + encodeURIComponent(root));
-      const json = await res.json();
+      const json = await readJson(res, "会话捕获状态");
       if (json && json.ok) setCap(json);
     } catch { /* ignore */ }
   };
@@ -155,7 +156,7 @@ function MemoryPanel() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ root })
       });
-      const json = await res.json();
+      const json = await readJson(res, "保存本轮对话");
       // Report the outcome: this button used to leave the UI unchanged, so a
       // no-op and a successful capture looked identical.
       setReceipt(json?.ok ? `已保存本轮对话（本轮新增 ${json.captured ?? 0} 个会话）` : `保存失败：${json?.error ?? "unknown"}`);
@@ -188,7 +189,7 @@ function MemoryPanel() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(action === "archive" ? { root, rel } : { root, rel, action })
       });
-      const json = await res.json();
+      const json = await readJson(res, action === "archive" ? "归档" : "反馈");
       // The host already returns a plain-language receipt (`message`); showing it
       // is what turns "点了没反应" into a corrigible loop.
       if (json?.ok !== true) setReceipt(`失败：${json?.error ?? json?.message ?? "unknown"}`);
@@ -213,7 +214,7 @@ function MemoryPanel() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ root, field, mode: nextCaptureMode(policy[field]) })
       });
-      const json = await res.json();
+      const json = await readJson(res, "捕获策略");
       if (json?.ok !== true) setReceipt(`失败：${json?.error ?? "unknown"}`);
       else setReceipt(`捕获策略：${CAPTURE_FIELD_TEXT[field] ?? field} → ${CAPTURE_MODE_TEXT[nextCaptureMode(policy[field])]}`);
     } catch (err) {
