@@ -94,19 +94,15 @@ check('dsh/install.mjs DIRECT_PROFILE_FILES covers the body', missingFromInstall
   missingFromInstaller.length === 0 ? `${DIRECT_PROFILE_FILES.length} entries` : `missing ${missingFromInstaller.join(', ')}`);
 
 const template = read('obsidian/main.template.js');
-const templateListMatch = /const DIRECT_PROFILE_FILES = \[([\s\S]*?)\];/.exec(template);
-check('obsidian/main.template.js still declares DIRECT_PROFILE_FILES (the guard\'s anchor)',
-  templateListMatch !== null, 'reformatting the array means updating this guard, not losing it');
-if (templateListMatch !== null) {
-  // Strip `//` comments BEFORE pulling quoted strings: the array's own comment
-  // contains an apostrophe ("preset's modules live…"), which made a naive
-  // /'([^']+)'/ scan swallow the two entries after it and report them missing.
-  const body = templateListMatch[1].replace(/\/\/[^\n]*/g, '');
-  const templateList = [...body.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  const missing = PRESET_BODY_FILES.filter((name) => !templateList.includes(name));
-  check('obsidian/main.template.js DIRECT_PROFILE_FILES covers the body', missing.length === 0,
-    missing.length === 0 ? `${templateList.length} entries` : `missing ${missing.join(', ')}`);
-}
+// 2026-09-26 (A′): the template no longer holds a list at all — it derives it from the contract that
+// `scripts/build-obsidian.mjs` injects through `__PROFILE_CONTRACT_JSON__`. So this gate now proves the
+// DERIVATION exists (a hand-written list cannot come back without this going red); that the generated
+// bundle carries exactly the current contract, byte for byte, is proved by
+// `scripts/check-profile-contract.mjs` READ-2b.
+const derivesFromContract = /const DIRECT_PROFILE_FILES = \[\.\.\.PROFILE_CONTRACT\.presetBodyFiles/.test(template);
+check('obsidian/main.template.js derives DIRECT_PROFILE_FILES from the injected contract (no hand-written list)',
+  template.includes('JSON.parse("__PROFILE_CONTRACT_JSON__")') && derivesFromContract,
+  'reformatting the derivation means updating this guard, not losing it');
 const ensureNames = new Set([...template.matchAll(/ensureFile\(join\(profileRoot, '([^']+)'\)/g)].map((m) => m[1]));
 const notWritten = PRESET_BODY_FILES.filter((name) => !ensureNames.has(name));
 check('obsidian/main.template.js writes every body file into the profile dir', notWritten.length === 0,

@@ -6,6 +6,9 @@
  *   node scripts/build-obsidian.mjs
  */
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
+// The ONE statement of what goes into a profile. Injected into the template below so the Obsidian
+// bootstrap stops hand-writing its own copy (2026-09-26, A′/B2).
+import { PRESET_BODY_FILES, PROFILE_SCAFFOLD_FILES, OVERLAY_ROWS, PANEL_ROUTES } from "../dsh/preset/profile-contract.mjs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -133,7 +136,17 @@ export function buildMain() {
     // interpret as match-substitution patterns and corrupt the bundle.
     .replace('"__PRESET_JSON__"', () => JSON.stringify(JSON.stringify(preset)))
     .replace('"__TEMPLATE_JSON__"', () => JSON.stringify(JSON.stringify(templates)))
-    .replace('"__TEMPLATE_MANIFEST_JSON__"', () => JSON.stringify(JSON.stringify(templatesManifest)));
+    .replace('"__TEMPLATE_MANIFEST_JSON__"', () => JSON.stringify(JSON.stringify(templatesManifest)))
+    // The profile contract (2026-09-26, A′/B2): the Obsidian bootstrap must not hand-write the
+    // staging list any more. A hand-written copy is exactly how the 2026-09-26 `--direct` break
+    // happened, and the embedded loader cannot import the contract itself (the bootstrap has to know
+    // the file list BEFORE it stages anything), so the contract is injected here at build time.
+    .replace('"__PROFILE_CONTRACT_JSON__"', () => JSON.stringify(JSON.stringify({
+      presetBodyFiles: PRESET_BODY_FILES,
+      profileScaffoldFiles: PROFILE_SCAFFOLD_FILES,
+      overlayRows: OVERLAY_ROWS,
+      panelRoutes: PANEL_ROUTES
+    })));
 }
 
 // CLI: `node scripts/build-obsidian.mjs`.

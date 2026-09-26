@@ -97,23 +97,27 @@ check('PINNED-4 契约里的路由与面板实际服务的路径互为子集（�
   missingRoutes.length === 0 && undeclaredRoutes.length === 0,
   `missing=${missingRoutes.join(',') || '-'} undeclared=${undeclaredRoutes.join(',') || '-'}`);
 
-// ── PINNED-5: the Obsidian bootstrap's own staging list ─────────────────────
+// ── READ-2: the Obsidian bootstrap now READS the contract (build-time injection) ──────────────
 //
-// 引导那份清单是**手写**的（内嵌加载器取不到构建期信息，宏注入属于 A′ 范围），所以它只能被钉住。
+// Until 2026-09-26 this list was a hand-written literal inside the template — the fourth copy, and the
+// one that actually broke `--direct` by missing two names. The bootstrap cannot import the contract
+// (it must know the file list BEFORE it stages anything), so `scripts/build-obsidian.mjs` injects it
+// through the same placeholder mechanism the preset JSON uses.
 const template = read('obsidian/main.template.js');
-const templateList = /const DIRECT_PROFILE_FILES = \[([\s\S]*?)\];/.exec(template);
-const templateNames = templateList === null
-  ? []
-  // Strip line comments FIRST: the array carries `// dsh >= 0.1.7: the agent preset's modules …`, and
-  // a naive quote scan swallowed the following two names through the apostrophe in "preset's" (this
-  // gate caught exactly that on its first run).
-  : [...templateList[1].replace(/\/\/[^\n]*/g, '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
-check('PINNED-5 引导的 staging 清单 = 契约的 body ∪ scaffold（它是手写的，所以只能被钉住）',
-  templateNames.length > 0 && sameSet(templateNames, [...CONTRACT_BODY, ...PROFILE_SCAFFOLD_FILES]),
-  `template=${templateNames.length} contract=${CONTRACT_BODY.length + PROFILE_SCAFFOLD_FILES.length}`);
+check('READ-2 引导的 staging 清单来自构建期注入的契约（模板里不许再手写清单）',
+  template.includes('JSON.parse("__PROFILE_CONTRACT_JSON__")') && !/const DIRECT_PROFILE_FILES = \[\s*'/.test(template),
+  template.includes('JSON.parse("__PROFILE_CONTRACT_JSON__")') ? 'placeholder present' : 'placeholder MISSING');
+const injected = JSON.stringify({
+  presetBodyFiles: CONTRACT_BODY,
+  profileScaffoldFiles: PROFILE_SCAFFOLD_FILES,
+  overlayRows: OVERLAY_ROWS,
+  panelRoutes: PANEL_ROUTES
+});
+check('READ-2b 生成物 main.js 里注入的契约与当前契约逐字节一致（改了契约没重建 ⇒ 红）',
+  read('main.js').includes(JSON.stringify(injected)), `expects ${JSON.stringify(injected).length} chars`);
 
 if (failed > 0) {
   console.error(`\nprofile-contract: ${failed} failed`);
   process.exit(1);
 }
-console.log(`profile-contract: ok (1 read + 6 pinned assertions; contract = dsh/preset/profile-contract.mjs)`);
+console.log(`profile-contract: ok (3 read + 6 pinned assertions; contract = dsh/preset/profile-contract.mjs)`);

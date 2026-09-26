@@ -1919,13 +1919,16 @@ function ensureObsidianPatch(plugin, location) {
 const OWNER_MARKER = '.owner.json';
 const INSTALL_MANIFEST = '.install-manifest.json';
 const OWNER_CHANNEL = 'direct';
-const DIRECT_PROFILE_FILES = [
-  'package.json', 'cordis.yml', 'cordis.patch.yml', 'pnpm-workspace.yaml',
-  'math-memory-workspace.mjs', 'notes-assistant.patch.yml', 'memory-admin.mjs',
-  'math-memory-panel.mjs', 'hook-frontmatter.mjs', 'engine-shared.mjs',
-  // dsh >= 0.1.7: the agent preset's modules live in the profile directory.
-  'math-memory.mjs', 'note-tools.mjs'
-];
+// What a profile needs: the preset body files (dsh >= 0.1.7 resolves a relative row's `name:`
+// against the profile directory) plus the scaffold — BOTH from `dsh/preset/profile-contract.mjs`,
+// injected at build time by `scripts/build-obsidian.mjs` via the `__PROFILE_CONTRACT_JSON__`
+// placeholder. This used to be a hand-written literal here, which is exactly how the 2026-09-26
+// `--direct` break happened (one of the four copies was missing two names). Do NOT re-add a literal:
+// `scripts/check-profile-contract.mjs` asserts this placeholder is present and that the contract
+// never appears as a second hand-written list.
+const PROFILE_CONTRACT = JSON.parse("{\"presetBodyFiles\":[\"math-memory.mjs\",\"note-tools.mjs\",\"hook-frontmatter.mjs\",\"engine-shared.mjs\"],\"profileScaffoldFiles\":[\"package.json\",\"cordis.yml\",\"cordis.patch.yml\",\"pnpm-workspace.yaml\",\"math-memory-workspace.mjs\",\"notes-assistant.patch.yml\",\"memory-admin.mjs\",\"math-memory-panel.mjs\"],\"overlayRows\":[\"math-memory\",\"math-memory-host\",\"math-memory-workspace\",\"math-memory-panel\",\"math-memory-client-panel\",\"preset-notes-assistant\"],\"panelRoutes\":[\"/memory-panel/workspaces\",\"/memory-panel/state\",\"/memory-panel/feedback\",\"/memory-panel/archive\",\"/memory-panel/capture-policy\",\"/memory-panel/archive-episodes\",\"/memory-panel/session-capture\",\"/memory-panel/session-capture-toggle\"]}");
+const DIRECT_PROFILE_FILES = [...PROFILE_CONTRACT.presetBodyFiles, ...PROFILE_CONTRACT.profileScaffoldFiles]
+  .filter((name, index, all) => all.indexOf(name) === index);
 
 function readOwnerMarker(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
