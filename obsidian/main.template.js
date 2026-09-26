@@ -3490,8 +3490,8 @@ class DshObsidianSettingTab extends PluginSettingTab {
     containerEl.createEl('h2', { text: 'DSH数学笔记助手' });
     containerEl.createEl('p', { text: `版本 ${this.plugin.manifest?.version ?? ''}` });
     containerEl.createEl('p', { text: '在 Obsidian 右侧栏嵌入 DeepSeek Harness 数学记忆助手。插件会自动启动 dsh 服务，无需额外打开命令行窗口。' });
-    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '🔒 安全模式：助手只能写当前 vault 内的文件；权限升级审批默认关闭，不会弹出“是否提权”的窗口；工具集中没有删除类工具。' });
-    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: `🧭 适用范围：面向数学类知识（数学、统计学笔记与数学思维方式）设计，其他领域的知识可能需要不同的记忆架构。当前为试做型（${this.plugin.manifest?.version ?? '0.7.x'}），记忆架构尚未经过长期使用测试，后续会继续演进。` });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '🔒 安全模式：助手只能写当前 vault 内的文件；不提权、没有删除类工具。' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: `🧭 适用范围：面向数学类知识（数学 / 统计笔记与数学思维）。当前为试做型（${this.plugin.manifest?.version ?? '0.7.x'}），记忆架构仍在演进。` });
 
     new Setting(containerEl)
       .setName('端口')
@@ -3585,7 +3585,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('挂载皮肤中心 UI（高级 / 通常无需开启）')
-      .setDesc('在笔记 profile 里额外挂载皮肤中心（皮肤选择 + 背景透明度）与它的设置卡宿主。注意：(1) 自 dsh-web-all 0.3.20 起聚合包已自带皮肤中心，装了聚合包的机器上这个开关是冗余的（宿主半边只跑一次、浏览器半边按包名去重）；它只覆盖「有皮肤包、没有聚合包」的 web profile。(2) **侧栏与皮肤的关系已经改简单了**：插件过去用目录链接（junction）把 web profile 的 @linxin666 整片镜像过来，那是本机上唯一还在自动建链接的机制，已于 2026-09-26 退役。现在这两个包需要**真的装进笔记 profile**——点下面的按钮做一次（走 dsh plugin add，需要 pnpm / 网络），装好之前这个开关即使打开也不会挂载（挂一个解析不到的包会起不来）。(3) ⚠️ **那个按钮装完这个开关就不再管用了**：`dsh plugin add` 会把它登记成 profile 的 **bundle**，而这两个包自带 patch、自己就会插入挂载行，所以它们会**一直挂着**；插件不会再重复插一遍（同 id 插两次是错的），此开关只剩下「包在、但没登记成 bundle」这一种情形还有意义。(4) 皮肤**本体**不再依赖全局 cordis.patch.yml 插入（skin-center 0.4.x 已不再改写它）。改动需重启 dsh 服务后生效。')
+      .setDesc('在笔记 profile 里额外挂载皮肤中心（皮肤选择 + 背景透明度）。装了 dsh-web-all 聚合包时是冗余的；否则要点下面的按钮真装进本 profile（需 pnpm / 网络）。重启 dsh 后生效。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.enableSkinCenter).onChange(async (value) => {
         this.plugin.settings.enableSkinCenter = value;
         await this.plugin.saveSettings();
@@ -3641,7 +3641,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('侧栏性能模式（默认开启）')
-      .setDesc('去掉 dsh 侧栏这一份渲染里的高开销特效：皮肤在侧栏区域用的毛玻璃模糊（backdrop-filter）、无限循环的辉光/脉冲动画、以及装饰层的大面积模糊。iframe 内的毛玻璃会让合成器把 Obsidian 自己的内容也算进模糊背景，于是展开/收起侧栏、点按钮这类动画每帧都要重算一次模糊——这是侧栏卡顿的主要来源。颜色、排版、布局不变，只有毛玻璃与常驻动画消失。关闭后侧栏恢复皮肤原样（可能重新卡顿）。切换后面板会自动重新加载。')
+      .setDesc('去掉侧栏这份渲染里的毛玻璃与常驻动画——侧栏卡顿的主要来源。颜色、排版、布局不变；关闭后恢复皮肤原样（可能重新卡顿）。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.sidebarPerformanceMode !== false).onChange(async (value) => {
         this.plugin.settings.sidebarPerformanceMode = value;
         await this.plugin.saveSettings();
@@ -3651,7 +3651,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('侧栏加载皮肤动态装饰（hero 场景 / 状态角色）')
-      .setDesc('关闭后侧栏不再加载皮肤的客户端脚本（hooks.mjs，内部有约 14 个 subtree MutationObserver、一个约 5 次/秒改内联样式的角色循环，以及一个跟着侧栏动画每帧触发的 ResizeObserver）。实测：这是侧栏展开/收起卡顿的最大来源——脚本在跑时 6 次点击里有 3 帧超过 50ms（最差 84ms），停用后一帧都没有（最差 33ms）。代价是侧栏里不再有 hero 场景、状态角色与信号芯片（配色、字体、布局都来自样式表，不受影响）。皮肤更新后本开关语义不变。切换后面板会自动重新加载。')
+      .setDesc('关闭后侧栏不再加载皮肤的客户端脚本：hero 场景、状态角色、信号芯片随之消失（配色、字体、布局来自样式表，不受影响）。它也是侧栏卡顿的最大来源之一。')
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.sidebarSkinScripts !== false).onChange(async (value) => {
         this.plugin.settings.sidebarSkinScripts = value;
         await this.plugin.saveSettings();
@@ -3678,8 +3678,8 @@ class DshObsidianSettingTab extends PluginSettingTab {
     // 都只是转发到 MEMORY_ADMIN.*，与面板走同一份实现、同一个文件）。缺的不是代码，是**归属说明**：
     // 面板常驻在侧栏、和记忆内容在一起；设置页放连接与进程类，外加这几个最常用的开关。
     containerEl.createEl('h3', { text: '记忆相关' });
-    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '记忆的完整面板（看卡、✅ 确认 / ⚖️ 互证 / ❓ 未确认的反馈、归档、保存本轮）在侧栏的「记忆」里——它与 dsh 侧（3080）看到的是同一份代码。下面这几项只是最常用的开关，和面板改的是同一个文件、走同一份实现，改哪边都算数。' });
-    containerEl.createEl('p', { text: '其余档位（dialogueIndex 跨会话问答线索 / reminders 备忘录提醒 / audit 每日体检 / captureSubagents 是否也保存子代理会话）仍在 .deepseek/config.md 里，模板带逐项说明。' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '记忆的完整面板（看卡、反馈、归档、保存本轮）在侧栏的「记忆」里，与 dsh 侧（3080）是同一份代码。下面几项与面板同实现、同文件，改哪边都算数。' });
+    containerEl.createEl('p', { text: '其余档位（dialogueIndex / reminders / audit / captureSubagents）仍在 .deepseek/config.md 里，模板带逐项说明。' });
     // 两个最常用、以前只能手改文件的开关（2026-09-26）。放在这一段里而不是后面，是因为它们属于
     // "最常用"那一类；执行点与下面三项完全相同（同一个 MEMORY_ADMIN 函数、同一个文件）。
     const memoryFlags = (() => {
@@ -3703,7 +3703,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
     addFlagSetting('体检自动归档低效用卡（autoArchive）', '体检把「零使用 + 陈旧超过 90 天 + 不是你确认过的」卡移进 .deepseek/archive/（可找回）。', 'autoArchive');
 
     containerEl.createEl('h3', { text: '捕获策略' });
-    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制助手把新信息写入记忆的方式。选择结果直接写入 vault 内的 .deepseek/capture-policy.md（模型不得修改此文件；你的口头指令永远优先于策略）。' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制助手把新信息写入记忆的方式（写入 .deepseek/capture-policy.md；你的口头指令永远优先）。' });
     containerEl.createEl('p', { text: 'auto = 按三写协议直接写入（回复末尾注明）；ask = 先用提问征得同意再写；off = 不主动捕获（你明确要求除外）。' });
     const captureVault = this.plugin.app.vault.adapter.getBasePath();
     const captureMeta = (() => {
@@ -3745,7 +3745,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
     addCaptureSetting('structure', 'auto');
 
     containerEl.createEl('h3', { text: '自动保存对话' });
-    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '每场对话结束后，自动把整场对话（不含思考）保存到记忆证据层（.deepseek/memory/episodes/），不再只靠模型自觉三写。写入 .deepseek/config.md。' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '每场对话结束后，自动把整场对话（不含思考）保存到记忆证据层 .deepseek/memory/episodes/。' });
     const captureVaultRoot = this.plugin.app.vault.adapter.getBasePath();
     const sessionCaptureOn = (() => {
       try {
@@ -3771,7 +3771,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
         }));
 
     containerEl.createEl('h3', { text: '注入预算' });
-    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制每次开机往提示里注入多少「导航」（有哪些主题 / 记录 / 模板 / 事件索引）。它不限制正文：答案内容仍由 note_recall 按需检索，检索不受这个预算影响。写入 .deepseek/config.md 的 budget 字段。' });
+    containerEl.createEl('p', { cls: 'dsh-math-assistant-security-note', text: '控制每次开机往提示里注入多少「导航」（主题 / 记录 / 模板 / 事件索引）。它不限制正文：答案内容仍由 note_recall 按需检索。' });
     const budgetOn = (() => {
       try {
         const raw = readFileSync(join(captureVaultRoot, '.deepseek', 'config.md'), 'utf8');
