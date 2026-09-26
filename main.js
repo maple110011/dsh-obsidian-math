@@ -361,15 +361,13 @@ const setTopField = MEMORY_ADMIN.setTopField;
  * (host side, minimal frontmatter diff; also refreshes the updated date).
  * The settings page dropdowns call this so policy edits never need a text
  * editor; the model is still forbidden from touching the file.
+ *
+ * D2 (2026-09-26): the four IN-PROCESS write wrappers that used to sit here are gone. The settings
+ * page's writes now go through the same guarded HTTP routes the memory panel uses (`panelWrite` inside
+ * the settings tab below), so there is ONE write path and ONE trust boundary instead of two — the
+ * in-process path was the one without a token wall or an Origin check. Reads stay in-process.
  */
-const setCapturePolicyMode = (vault, field, mode) => MEMORY_ADMIN.setCapturePolicyMode(vault, field, mode, typeof EMBEDDED_TEMPLATES['capture-policy.md'] === 'string' ? EMBEDDED_TEMPLATES['capture-policy.md'] : '');
-const setSessionCaptureMode = (vault, enabled) => MEMORY_ADMIN.setSessionCapture(vault, enabled, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
-const setMemoryBudgetMode = (vault, tier) => MEMORY_ADMIN.setMemoryBudget(vault, tier, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
 const runSessionCapture = (vault, sessionsRoot) => MEMORY_ADMIN.runSessionCapture(vault, sessionsRoot, MEMORY_ADMIN.readCaptureState(vault));
-// Two flags that used to have NO UI at all (2026-09-26, docs/settings-surfaces-2026-09-26.md):
-// `enabled` (memory master switch) and `autoArchive` (may the audit archive low-utility cards). Same
-// execution point as the three above — one MEMORY_ADMIN function, one file (.deepseek/config.md).
-const setMemoryFlagMode = (vault, field, on) => MEMORY_ADMIN.setMemoryConfigFlag(vault, field, on, typeof EMBEDDED_TEMPLATES['config.md'] === 'string' ? EMBEDDED_TEMPLATES['config.md'] : '');
 const countUncapturedSessions = (vault, sessionsRoot) => MEMORY_ADMIN.countUncapturedSessions(vault, sessionsRoot);
 
 /** Apply one feedback action to a card file (in place, minimal diff). */
@@ -3690,14 +3688,52 @@ class DshObsidianSettingTab extends PluginSettingTab {
         return {};
       }
     })();
+    // D2 (2026-09-26): every memory WRITE from this tab now goes through the memory panel's guarded
+    // routes — loopback-only, Origin-checked, token-checked, and anchored to the SERVER's workspace
+    // root. That is the same boundary the panel already has; the in-process path had none of it.
+    // Reads stay in-process (the `readFileSync` calls above and below).
+    //
+    // The token is the one the sidebar proxy stamps for `/memory-panel/*` (`linkServer.token`), and the
+    // port is the dsh service this plugin started.
+    const panelWrite = async (path, body) => {
+      const port = String(this.plugin.settings.port ?? '').trim();
+      const token = this.plugin?.linkServer?.token ?? '';
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-dsh-token': token },
+        body: JSON.stringify(body)
+      });
+      let text = '';
+      try { text = await res.text(); } catch { text = ''; }
+      let json = null;
+      try { json = text === '' ? null : JSON.parse(text); } catch { json = null; }
+      if (!res.ok || json?.ok !== true) {
+        const detail = json?.error ?? (text === '' ? '空响应 —— 服务可能没起来' : text.slice(0, 160));
+        throw new Error(`${path} HTTP ${res.status}：${detail}`);
+      }
+      return json;
+    };
+    // Never pretend a write landed: on failure the user gets a Notice naming the route and the reason,
+    // and the file on disk stays the truth (reopening the tab shows the real value).
+    const writeOrNotice = async (path, body, okText) => {
+      try {
+        await panelWrite(path, body);
+        new Notice(okText, 3000);
+        return true;
+      } catch (error) {
+        new Notice(`dsh 笔记助手：改动没生效 —— ${String(error?.message ?? error)}`, 8000);
+        return false;
+      }
+    };
     const addFlagSetting = (name, desc, field) => new Setting(containerEl)
       .setName(name)
       .setDesc(desc)
       .addToggle((toggle) => toggle
         .setValue(memoryFlags[field] !== 'false')
         .onChange(async (value) => {
-          setMemoryFlagMode(this.plugin.app.vault.adapter.getBasePath(), field, value);
-          await this.plugin.saveSettings();
+          await writeOrNotice('/memory-panel/config-flag',
+            { root: this.plugin.app.vault.adapter.getBasePath(), field, enabled: value },
+            `记忆设置：${field} → ${value ? '开' : '关'}`);
         }));
     addFlagSetting('记忆总开关（enabled）', '关掉后不注入记忆、不体检、不扫对话索引；记忆文件与缓存原样保留，笔记工具照常可用。', 'enabled');
     addFlagSetting('体检自动归档低效用卡（autoArchive）', '体检把「零使用 + 陈旧超过 90 天 + 不是你确认过的」卡移进 .deepseek/archive/（可找回）。', 'autoArchive');
@@ -3731,7 +3767,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
           .setValue(['auto', 'ask', 'off'].includes(captureMeta[key]) ? captureMeta[key] : fallback)
           .onChange(async (value) => {
             try {
-              setCapturePolicyMode(this.plugin.app.vault.adapter.getBasePath(), key, value);
+              await panelWrite('/memory-panel/capture-policy', { root: this.plugin.app.vault.adapter.getBasePath(), field: key, mode: value });
               new Notice(`捕获策略已更新：${key} → ${value}`);
             } catch (error) {
               new Notice('更新捕获策略失败：' + String(error));
@@ -3763,7 +3799,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
         .setValue(sessionCaptureOn)
         .onChange(async (value) => {
           try {
-            setSessionCaptureMode(captureVaultRoot, value);
+            await panelWrite('/memory-panel/session-capture-toggle', { root: captureVaultRoot, enabled: value });
             new Notice(`自动保存对话已${value ? '开启' : '关闭'}`);
           } catch (error) {
             new Notice('更新自动保存对话失败：' + String(error));
@@ -3791,7 +3827,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
         .setValue(budgetOn)
         .onChange(async (value) => {
           try {
-            setMemoryBudgetMode(captureVaultRoot, value);
+            await panelWrite('/memory-panel/injection-budget', { root: captureVaultRoot, tier: value });
             new Notice(`注入预算已设为 ${value}（下次启动生效）`);
           } catch (error) {
             new Notice('更新注入预算失败：' + String(error));

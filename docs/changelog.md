@@ -95,6 +95,33 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · D2（第二步）：设置页的写操作改走 HTTP——一条写路径、一个信任边界
+
+**为什么**：第一步把服务端路由补齐后，设置页的五个记忆类写入**仍在进程内**直接调 `MEMORY_ADMIN.*`：
+同一个动作两条写路径、两个信任边界，而**进程内那条没有 token 墙、没有 Origin 检查**（面板那条有）。
+D2 折中案要的正是：设置页**只读留进程内**（读文件不产生副作用 ✓），**写全部走 HTTP**。
+
+**做法**（`obsidian/main.template.js`）：
+- 删掉模块级四个进程内写包装（`setCapturePolicyMode` / `setSessionCaptureMode` / `setMemoryBudgetMode` /
+  `setMemoryFlagMode` —— 查证后确认只有设置页在用）。
+- 设置页里新增 `panelWrite(path, body)`：POST `http://127.0.0.1:<settings.port><path>`，
+  带 `x-dsh-token: linkServer.token`（与侧栏反代为 `/memory-panel/*` 盖的是同一个 token）；非 2xx 或
+  `ok !== true` 一律**报错**，空响应明说"服务可能没起来"。另加 `writeOrNotice()`：成功给 Notice，
+  失败给一条**点名路由与原因**的 Notice ⇒ **绝不假装写入成功**（坑 44 的同族）。
+- 五处改走路由：`/config-flag`（记忆总开关、体检自动归档）、`/capture-policy`（四个策略档）、
+  `/session-capture-toggle`、`/injection-budget`。三处调用点原本就有 `try/catch` + Notice ⇒ 只换调用行。
+
+**守卫与变异**（`test-panel-routes.mjs` 59 → **62**，产物级断言，因为这段在生成的 `main.js` 里，测不了 import）：
+① 设置页确实走四条路由；② **插件里不许再有任何 `MEMORY_ADMIN.set*` 进程内写调用**；③ 写路径确实 POST 到
+loopback 且带 token。**变异 M43**：把 `/injection-budget` 那处改回 `MEMORY_ADMIN.setMemoryBudget(...)`
+⇒ ② 立刻红 ✓。
+
+**代价（诚实说）**：现在设置页改记忆设置**要求 dsh 服务在运行**（以前进程内写入在服务没起来时也能生效）。
+换来的是：一条写路径、同一个 token/Origin/root 锚定，且失败**会说出来**——服务没起来时你会看到
+"改动没生效 —— /memory-panel/config-flag HTTP 0：空响应 —— 服务可能没起来"，而不是改了却毫无效果。
+
+`node scripts/run-gates.mjs` = **51/51**；`main.js` 重建（761,115 B）。
+
 ## 2026-09-26 · D2（第一步）：写操作的服务端路由——`/config-flag` 与 `/injection-budget`
 
 **为什么**：D2 选的是折中案（设置页**只读留进程内**、**写操作全走 HTTP**）。现状是设置页的记忆类

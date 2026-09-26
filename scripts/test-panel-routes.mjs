@@ -422,6 +422,19 @@ try {
     && /isMemoryPanelPath\(req\.url\)/.test(built));
   check('artifact: the client half ships a dropdown branch fed by /memory-panel/workspaces',
     /workspaces\.length > 0 \?/.test(clientSource) && /"\/memory-panel\/workspaces"/.test(clientSource));
+  // D2 (2026-09-26): the settings tab's memory writes used to run IN PROCESS (`MEMORY_ADMIN.*`) — a
+  // second write path with no token wall and no Origin check. These assertions are at the artifact
+  // level because that block lives in the generated `main.js` and cannot be imported by a test.
+  check('artifact: the settings page writes through the guarded routes',
+    ["'/memory-panel/config-flag'", "'/memory-panel/capture-policy'", "'/memory-panel/session-capture-toggle'", "'/memory-panel/injection-budget'"]
+      .every((route) => built.includes(route)));
+  check('artifact: no in-process MEMORY_ADMIN write wrapper is left in the plugin',
+    !/MEMORY_ADMIN\.setCapturePolicyMode\(/.test(built)
+    && !/MEMORY_ADMIN\.setSessionCapture\(/.test(built)
+    && !/MEMORY_ADMIN\.setMemoryBudget\(/.test(built)
+    && !/MEMORY_ADMIN\.setMemoryConfigFlag\(/.test(built));
+  check('artifact: that write path posts to loopback with the panel token',
+    built.includes('http://127.0.0.1:${port}${path}') && built.includes("'x-dsh-token': token"));
 } finally {
   if (savedEnv.token === undefined) delete process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN; else process.env.DSH_OBSIDIAN_FEEDBACK_TOKEN = savedEnv.token;
   if (savedEnv.newToken === undefined) delete process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN; else process.env.DSH_MATH_MEMORY_FEEDBACK_TOKEN = savedEnv.newToken;
