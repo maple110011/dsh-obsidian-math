@@ -95,6 +95,29 @@
 其余仍绿；M22 塞一行指向不存在文件的相对行 ⇒ 那条红。还原后 19/19 绿。
 ⚠️ 这两条**不能**替代"真发一轮消息"的端到端验证（那要真 API、会花 token）。
 
+## 2026-09-26 · D2（第一步）：写操作的服务端路由——`/config-flag` 与 `/injection-budget`
+
+**为什么**：D2 选的是折中案（设置页**只读留进程内**、**写操作全走 HTTP**）。现状是设置页的记忆类
+写入**在进程内**直接调 `MEMORY_ADMIN.*`，于是同一个动作有两条写路径、两个信任边界，而只有一条被测过。
+第一步先把服务端补齐（第二步再改设置页，见下）。
+
+**新增两条路由**（照抄面板既有的守卫形状：loopback + Origin + token + **服务端锚定的 root**）：
+- `POST /memory-panel/config-flag`：`{ field, enabled }`，字段走**白名单**（`enabled` / `autoArchive`，
+  在 `setMemoryConfigFlag` 里判），越界字段是 **400**，绝不插值；
+- `POST /memory-panel/injection-budget`：`{ tier }`，只接受 `compact` / `standard` / `rich`。
+
+契约 `profile-contract.mjs` 的 `PANEL_ROUTES` 同步加这两条（门禁 PINNED-4 会比对契约与面板源码 ✓）。
+
+**测试**（`test-panel-routes.mjs` **53 → 59**）：允许字段能翻、越界字段 400、**调用方自带 root 无效**、
+已知档位能写、未知档位 400、**未配置 root 时拒绝**（AGENTS.md §6 明确要求"未配置"分支必须有测试）。
+
+**一个诚实的覆盖边界（M42 没红）**：我把新路由改成 `String(body.root ?? root)` 想让它红，结果仍 59/59 ——
+因为调用方给的 root 在**共享的上游门**（`resolveAllowedRoot` + `root === ''`）就被 403 拒了，路由根本没执行。
+**这正是想要的架构：锚定一处，而不是每个路由各锚一次**（per-route 锚定才是"漏一个就破防"的形状）。
+所以这条测试锁的是**性质**（外部 root 不产生任何写入），而"把锚定改坏"的变异由 §2 那组既有断言负责。
+
+`node scripts/run-gates.mjs` = **51/51**；`main.js` 重建（759,658 B）。
+
 ## 2026-09-26 · P5-A：卡级矛盾检测（只报不改）——先做判据与体检接线
 
 **为什么先做这一半**：`docs/note-noise-and-memory-fidelity-2026-09-26.md` 的 P5 有两半——① 卡级矛盾检测

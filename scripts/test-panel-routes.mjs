@@ -374,6 +374,38 @@ try {
   check('routes: /workspaces is behind the same token wall (so the proxy stamp is what makes the dropdown work)',
     wsListNoToken.status === 403);
 
+  // ── D2: the settings page's WRITES go through the same guarded routes ──────
+  //
+  // Until 2026-09-26 the Obsidian settings page wrote these IN PROCESS — two write paths, two trust
+  // boundaries, and only one of them had tests. They now go over HTTP like everything else the panel
+  // does, so the token wall, the Origin check and the SERVER-anchored root (AGENTS.md §6 trap 1) all
+  // apply, and the field allowlist is asserted here because that name reaches a RegExp inside
+  // `setTopField`.
+  const auth = { 'x-dsh-token': 's3cret-token' };
+  const configPath = join(vault, '.deepseek', 'config.md');
+  const flag = await call({ method: 'POST', path: '/memory-panel/config-flag', headers: auth, body: { field: 'enabled', enabled: false } });
+  check('routes: /config-flag flips an allowlisted flag',
+    flag.status === 200 && flag.json?.ok === true && /^enabled:\s*false$/m.test(readFileSync(configPath, 'utf8')),
+    JSON.stringify({ status: flag.status, body: flag.json }));
+  const flagBad = await call({ method: 'POST', path: '/memory-panel/config-flag', headers: auth, body: { field: 'enabled2: x\nfoo', enabled: true } });
+  check('routes: /config-flag REFUSES a field outside the allowlist (400, never interpolated)',
+    flagBad.status === 400);
+  const spoofRoot = await call({ method: 'POST', path: '/memory-panel/config-flag', headers: auth, body: { root: other, field: 'enabled', enabled: true } });
+  check('routes: /config-flag ignores a caller-chosen root (writes the CONFIGURED vault only)',
+    spoofRoot.status !== 500 && !existsSync(join(other, '.deepseek', 'config.md')),
+    JSON.stringify({ status: spoofRoot.status, spoofed: existsSync(join(other, '.deepseek', 'config.md')) }));
+  const tier = await call({ method: 'POST', path: '/memory-panel/injection-budget', headers: auth, body: { tier: 'compact' } });
+  check('routes: /injection-budget accepts a known tier',
+    tier.status === 200 && /^budget:\s*compact$/m.test(readFileSync(configPath, 'utf8')));
+  const tierBad = await call({ method: 'POST', path: '/memory-panel/injection-budget', headers: auth, body: { tier: 'huge' } });
+  check('routes: /injection-budget rejects an unknown tier', tierBad.status === 400);
+  // AGENTS.md §6: the "not configured" branch must have its own test — no root ⇒ refused, never guessed.
+  setEnv('s3cret-token', undefined);
+  const flagNoRoot = await call({ method: 'POST', path: '/memory-panel/config-flag', headers: auth, body: { field: 'enabled', enabled: true } });
+  check('routes: /config-flag with NO configured root is refused (no fallback to the caller)',
+    flagNoRoot.status === 400 || flagNoRoot.status === 403, JSON.stringify({ status: flagNoRoot.status }));
+  setEnv('s3cret-token', vault);
+
   // Whole-line `//` comments are dropped first: otherwise "comment out the injection"
   // (the most likely way this regresses) would still satisfy the regexes below — the
   // same trap `check-plugin-unload.mjs` had to fix on 2026-09-26.

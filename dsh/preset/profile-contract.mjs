@@ -72,5 +72,8 @@ export const PANEL_ROUTES = [
   '/memory-panel/capture-policy',
   '/memory-panel/archive-episodes',
   '/memory-panel/session-capture',
-  '/memory-panel/session-capture-toggle'
+  '/memory-panel/session-capture-toggle',
+  // D2 (2026-09-26): the Obsidian settings page's writes go through these two now.
+  '/memory-panel/config-flag',
+  '/memory-panel/injection-budget'
 ];

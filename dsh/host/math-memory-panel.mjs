@@ -8,7 +8,7 @@ import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { timingSafeEqual } from "node:crypto";
-import { pathInside, collectMemoryState, applyFeedback, archiveMemoryFile, setCapturePolicyMode, archiveOldEpisodes, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled } from "./memory-admin.mjs";
+import { pathInside, collectMemoryState, applyFeedback, archiveMemoryFile, setCapturePolicyMode, archiveOldEpisodes, runSessionCapture, countUncapturedSessions, readCaptureState, setSessionCapture, readSessionCaptureEnabled, setMemoryBudget, setMemoryConfigFlag } from "./memory-admin.mjs";
 import { parseHookFrontmatter } from "./hook-frontmatter.mjs";
 
 export const name = "math-memory-panel";
@@ -288,6 +288,27 @@ export function apply(ctx) {
         if (typeof body.enabled !== "boolean") return json(res, fail("enabled required"), 400);
         setSessionCapture(root, body.enabled, configScaffold());
         return json(res, ok({ enabled: body.enabled }));
+      }
+      // D2 (2026-09-26): the Obsidian settings page used to write these IN PROCESS. Writes now go
+      // through the same guarded routes the panel uses (loopback + Origin + token + the server-anchored
+      // `root` above), so there is one write path with one trust boundary instead of two.
+      //
+      // `field` is NOT interpolated and not trusted: `setMemoryConfigFlag` matches it against an
+      // allowlist before it can reach `setTopField`'s RegExp, and a refusal becomes a 400.
+      if (req.method === "POST" && pathname === "/memory-panel/config-flag") {
+        if (typeof body.field !== "string" || typeof body.enabled !== "boolean") return json(res, fail("field/enabled required"), 400);
+        try {
+          setMemoryConfigFlag(root, body.field, body.enabled, configScaffold());
+        } catch (error) {
+          return json(res, fail(String(error?.message ?? error)), 400);
+        }
+        return json(res, ok({ field: body.field, enabled: body.enabled }));
+      }
+      if (req.method === "POST" && pathname === "/memory-panel/injection-budget") {
+        if (typeof body.tier !== "string") return json(res, fail("tier required"), 400);
+        if (!["compact", "standard", "rich"].includes(body.tier)) return json(res, fail("invalid tier"), 400);
+        setMemoryBudget(root, body.tier, configScaffold());
+        return json(res, ok({ tier: body.tier }));
       }
       return json(res, fail("not found"), 404);
     } catch (error) {
