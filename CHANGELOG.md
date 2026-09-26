@@ -1,6 +1,7 @@
 # Changelog
 
 > 本文件是**发布级摘要**（每个版本「改了什么」，面向用户与发布）。记忆系统「为什么改、怎么改」的细账见 [docs/changelog.md](docs/changelog.md)；现状/坑/决策见 [docs/handoff.md](docs/handoff.md)。
+> **只想看"这次我能看到什么变化"**：见 [docs/user-visible-changes-2026-09-26.md](docs/user-visible-changes-2026-09-26.md)（含"什么时候生效"与代价）。
 
 ## [Unreleased]
 
