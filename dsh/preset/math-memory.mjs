@@ -1844,6 +1844,58 @@ function findCorroboration(card, candidates, links) {
 }
 
 /**
+ * Card-level contradictions (P5-A, 2026-09-26): two cards with the SAME signature — the same
+ * `hook.pattern` / `hook.techniques` `findCorroboration` already uses, ≥6 chars — whose one-line
+ * conclusions carry OPPOSITE polarity.
+ *
+ * WHY this narrow rule (docs/note-noise-and-memory-fidelity-2026-09-26.md §4 P5): a broader "the
+ * texts disagree" heuristic cries wolf — this repo already refused exactly that for notation
+ * conflicts — and the plugin must not call a model (`docs/memory/design.md` §10 red line). So:
+ * same signature + exactly ONE side negated + at least one shared 2-gram, which stops unrelated
+ * one-liners in the same signature group from pairing up.
+ *
+ * REPORT ONLY. Nothing here rewrites or re-ranks a card — which is why this ships WITHOUT the
+ * "single-source ageing" half of P5: that one moves retrieval order, so it has to be validated
+ * against the engine-probe thresholds first (retrieval-v3 §7.5), and it is a separate decision.
+ *
+ * NOTE: the P5 write-up said "same topic"; cards carry no `topic` field (that one is a memo field),
+ * so the signature is the anchor. Narrower is what this needs.
+ */
+export function findContradictions(cards) {
+  const NEGATED = /(?:不要|不用|别|避免|禁止|不能|不应|不得|并非|不是)/;
+  const bigrams = (text) => {
+    const source = String(text ?? "").toLowerCase();
+    const out = new Set();
+    for (const run of source.match(/[\p{Script=Han}]+/gu) ?? []) {
+      for (let i = 0; i + 2 <= run.length; i += 1) out.add(run.slice(i, i + 2));
+    }
+    for (const word of source.match(/[a-z0-9_]{3,}/g) ?? []) out.add(word);
+    return out;
+  };
+  const signaturesOf = (card) => [
+    String(card.hook?.pattern ?? ""),
+    ...(Array.isArray(card.hook?.techniques) ? card.hook.techniques : [])
+  ].map((value) => String(value).trim().toLowerCase()).filter((value) => value.length >= 6);
+
+  const live = cards.filter((card) => String(card.status ?? "active") !== "archived");
+  const pairs = [];
+  for (let i = 0; i < live.length; i += 1) {
+    for (let j = i + 1; j < live.length; j += 1) {
+      const a = live[i];
+      const b = live[j];
+      const aSignatures = signaturesOf(a);
+      const shared = aSignatures.filter((signature) => signaturesOf(b).includes(signature));
+      if (shared.length === 0) continue;
+      if (NEGATED.test(String(a.title ?? "")) === NEGATED.test(String(b.title ?? ""))) continue;
+      const bBigrams = bigrams(b.title);
+      if (![...bigrams(a.title)].some((token) => bBigrams.has(token))) continue;
+      pairs.push({ a: a.rel, b: b.rel, signature: shared[0] });
+    }
+  }
+  return pairs;
+}
+
+/**
  * Collect the notation a vault actually uses, from the DEFINITION SENTENCES in the
  * user's own notes. Returns `[{ symbol, name, note }]`, deduplicated.
  *

@@ -3335,6 +3335,29 @@ check('archive: a real memory card is still archived',
     !/enabled2/.test(readFileSync(configPath, 'utf8')));
 }
 
+{
+  // P5-A (2026-09-26): card-level contradiction detection. Pure function, so the fixture is built
+  // inline from the code's contract (never from a vault-shaped file): same signature + opposite
+  // polarity + a shared 2-gram.
+  const { findContradictions } = await import('../dsh/preset/math-memory.mjs');
+  const probeCard = (rel, title, pattern) => ({ rel, title, status: 'active', hook: { pattern } });
+  const pairs = findContradictions([
+    probeCard('a.md', '不要用 洛必达 处理不定式', 'l hopital rule for limits'),
+    probeCard('b.md', '洛必达 可以直接处理不定式', 'l hopital rule for limits'),
+    probeCard('c.md', '不要用 换元 处理不定式', 'substitution for limits'),
+    probeCard('d.md', '完全无关的另一条标题', 'l hopital rule for limits'),
+    probeCard('e.md', '不要在这里套用那个技巧', 'l hopital rule for limits')
+  ]);
+  check('contradictions: opposite polarity on a SHARED signature is reported',
+    pairs.length === 1 && pairs[0].a === 'a.md' && pairs[0].b === 'b.md', JSON.stringify(pairs));
+  check('contradictions: a negation on a DIFFERENT signature is not a pair',
+    !pairs.some((pair) => pair.a === 'c.md' || pair.b === 'c.md'), JSON.stringify(pairs));
+  check('contradictions: same signature but no shared words is not a pair',
+    !pairs.some((pair) => pair.a === 'd.md' || pair.b === 'd.md'), JSON.stringify(pairs));
+  check('contradictions: two cards that agree in polarity are not a pair',
+    !pairs.some((pair) => pair.a === 'e.md' || pair.b === 'e.md'), JSON.stringify(pairs));
+}
+
 rmSync(root, { recursive: true, force: true });
 // The counter must be DERIVED here, not tracked incrementally: a local `failed`
 // variable inside one of the fixture blocks silently shadowed it, so this line threw
