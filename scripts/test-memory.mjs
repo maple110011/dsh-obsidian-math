@@ -3333,6 +3333,22 @@ check('archive: a real memory card is still archived',
     refused.includes('not allowed'), refused);
   check('config flag: the refusal left the file untouched',
     !/enabled2/.test(readFileSync(configPath, 'utf8')));
+
+  // F1 (bug audit 2026-09-26, MEASURED): on a vault that has no `.deepseek/` yet, all four settings
+  // writers threw ENOENT and the routes answered 500 — a brand-new vault could not use any of the
+  // settings toggles. The writers now create the directory.
+  const freshRoot = mkdtempSync(join(tmpdir(), 'dsh-memory-fresh-'));
+  let freshError = '';
+  try {
+    const { setMemoryBudget } = await import('../dsh/host/memory-admin.mjs');
+    setMemoryConfigFlag(freshRoot, 'enabled', false, '---\nenabled: true\n---\n');
+    setMemoryBudget(freshRoot, 'compact', '---\nbudget: standard\n---\n');
+  } catch (error) {
+    freshError = String(error?.message ?? error);
+  }
+  check('config writers create `.deepseek/` on a vault that has none (used to be ENOENT → HTTP 500)',
+    freshError === '' && existsSync(join(freshRoot, '.deepseek', 'config.md')), freshError);
+  rmSync(freshRoot, { recursive: true, force: true });
 }
 
 {

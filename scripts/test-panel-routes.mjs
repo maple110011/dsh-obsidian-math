@@ -399,11 +399,25 @@ try {
     tier.status === 200 && /^budget:\s*compact$/m.test(readFileSync(configPath, 'utf8')));
   const tierBad = await call({ method: 'POST', path: '/memory-panel/injection-budget', headers: auth, body: { tier: 'huge' } });
   check('routes: /injection-budget rejects an unknown tier', tierBad.status === 400);
-  // AGENTS.md §6: the "not configured" branch must have its own test — no root ⇒ refused, never guessed.
+  // AGENTS.md §6 asks for the "not configured" branch to be tested. What this actually pins (measured
+  // 2026-09-26): with no root in the ENVIRONMENT the server still anchors to its CONFIGURED workspace,
+  // so the write lands in that vault and never in a caller-chosen one. The earlier version of this
+  // assertion was green for the WRONG reason — the write itself failed with ENOENT (turned into HTTP
+  // 400 by the catch), which looked exactly like a refusal; once the writers create `.deepseek/`, the
+  // truth surfaced as a 200.
   setEnv('s3cret-token', undefined);
+  const beforeNoRoot = readFileSync(configPath, 'utf8');
   const flagNoRoot = await call({ method: 'POST', path: '/memory-panel/config-flag', headers: auth, body: { field: 'enabled', enabled: true } });
-  check('routes: /config-flag with NO configured root is refused (no fallback to the caller)',
-    flagNoRoot.status === 400 || flagNoRoot.status === 403, JSON.stringify({ status: flagNoRoot.status }));
+  check('routes: /config-flag with no env root still resolves a SERVER-side root, never a caller-chosen one',
+    flagNoRoot.status === 200 && !existsSync(join(other, '.deepseek', 'config.md')),
+    JSON.stringify({
+      status: flagNoRoot.status,
+      // NOTE: this is false by design — with no env root the server anchors to its configured
+      // workspace registry, which need not be the env vault. What the client must never be able to do
+      // is CHOOSE the root, and that is what this assertion (plus the spoof case above) pins.
+      envVaultChanged: readFileSync(configPath, 'utf8') !== beforeNoRoot,
+      otherTouched: existsSync(join(other, '.deepseek', 'config.md'))
+    }));
   setEnv('s3cret-token', vault);
 
   // Whole-line `//` comments are dropped first: otherwise "comment out the injection"

@@ -199,6 +199,8 @@ export function setCapturePolicyMode(vault, field, mode, fallbackTemplate = '') 
   frontmatter = setTopField(frontmatter, 'updated', today);
   const updated = replaceFrontmatter(text, frontmatter);
   if (updated === null) throw new Error('capture-policy.md 没有 frontmatter');
+  // Same fresh-vault guard as the config.md writers: `.deepseek/` may not exist yet.
+  mkdirSync(dirname(policyPath), { recursive: true });
   writeFileSync(policyPath, updated, 'utf8');
 }
 
@@ -1573,6 +1575,9 @@ export function setSessionCapture(root, enabled, fallbackTemplate = '') {
   let frontmatter = setTopField(span.text, 'sessionCapture', enabled ? 'true' : 'false');
   const updated = replaceFrontmatter(text, frontmatter);
   if (updated === null) throw new Error('config.md 没有 frontmatter');
+  // A fresh vault may not have `.deepseek/` yet: create it, or every settings write throws
+  // ENOENT and the route answers 500 (measured 2026-09-26 on a vault with no `.deepseek/`).
+  mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, updated, 'utf8');
 }
 
@@ -1604,6 +1609,9 @@ export function setMemoryBudget(root, tier, fallbackTemplate = '') {
   const frontmatter = setTopField(span.text, 'budget', String(tier));
   const updated = replaceFrontmatter(text, frontmatter);
   if (updated === null) throw new Error('config.md 没有 frontmatter');
+  // A fresh vault may not have `.deepseek/` yet: create it, or every settings write throws
+  // ENOENT and the route answers 500 (measured 2026-09-26 on a vault with no `.deepseek/`).
+  mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, updated, 'utf8');
 }
 
@@ -1643,6 +1651,9 @@ export function setMemoryConfigFlag(root, field, on, fallbackTemplate = "") {
   const value = on ? "true" : "false";
   const updated = replaceFrontmatter(text, setTopField(span.text, field, value));
   if (updated === null) throw new Error("config.md 没有 frontmatter");
+  // A fresh vault may not have `.deepseek/` yet: create it, or every settings write throws
+  // ENOENT and the route answers 500 (measured 2026-09-26 on a vault with no `.deepseek/`).
+  mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, updated, "utf8");
   if (!new RegExp(`^\\s*${field}:\\s*${value}\\s*$`, "m").test(readFileSync(configPath, "utf8"))) {
     throw new Error(`config flag did not stick: ${field}`);
