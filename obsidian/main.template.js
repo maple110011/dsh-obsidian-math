@@ -234,6 +234,11 @@ const DEFAULT_SETTINGS = {
   showRibbon: true,
   keepAliveOnUnload: false,
   enableSkinCenter: false,
+  // 安装 dsh 配置时，是否先尝试把本插件装成一个真正的包（这样它才会出现在 dsh 的「插件」页）。
+  //
+  // 默认 true：包化是更好的形态；装不成会自动回落到"平铺"（旧形态）并把原因说出来，所以默认开着
+  // 不会让谁装不上。关掉它 = 强制平铺，等价于 CLI 的 `--flat`。
+  bundleInstall: true,
   // 侧栏性能模式：由代理把皮肤的高开销特效（毛玻璃 / 无限动画 / 装饰模糊）从
   // 侧栏这一份 HTML 里去掉，并把皮肤客户端 hooks 模块的两处热循环减速。
   // 见 DshWebProxy.perfMode 与 docs/memory/sidebar-performance.md。
@@ -3851,6 +3856,19 @@ class DshObsidianSettingTab extends PluginSettingTab {
         } catch (error) {
           new Notice('更新皮肤中心配置失败：' + String(error));
         }
+        this.display();
+      }));
+
+    // 离线通道的"机会式包化"开关。默认开；关掉 = 强制平铺（等价于 CLI 的 --flat）。
+    new Setting(containerEl)
+      .setName('安装时优先把本插件装成 dsh 的包')
+      .setDesc('开启后，安装 / 重装 dsh 配置时会先在本地把本插件造成一个真正的包再装（不联网），这样它才会出现在 dsh 的「插件」页里、可以启用 / 禁用 / 移除。装不成（缺 dsh 或 pnpm）会自动回落到"平铺"形态并告诉你原因 —— 平铺形态功能照旧，只是那一页里看不到它。两条通道互不冲突。')
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.bundleInstall !== false).onChange(async (value) => {
+        this.plugin.settings.bundleInstall = value;
+        await this.plugin.saveSettings();
+        new Notice(value
+          ? '已开启：下次安装 / 重装 dsh 配置时会优先装成包（dsh「插件」页可见）。'
+          : '已关闭：将使用"平铺"形态（dsh「插件」页不可见，功能不受影响）。');
         this.display();
       }));
 

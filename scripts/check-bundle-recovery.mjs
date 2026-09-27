@@ -269,6 +269,17 @@ check('the extracted write list matches the injected contract (the single source
   DIRECT_PROFILE_FILES.length === new Set(DIRECT_PROFILE_FILES).size && DIRECT_PROFILE_FILES.length > 8,
   `${DIRECT_PROFILE_FILES.length} names`);
 
+// The opt-out is a DOCUMENTED user-facing feature (both CHANGELOG.md and
+// docs/user-visible-changes-2026-09-26.md tell the user to turn it off in the settings). A setting that
+// is READ but never DECLARED has no default and no UI: it silently does nothing and the documentation
+// quietly becomes false — which is exactly the state this assertion was written to catch (2026-09-26,
+// the toggle was documented before it existed). No other gate touches the settings surface.
+check('the bundle opt-out is declared in DEFAULT_SETTINGS (so it has a default and persists)',
+  /^\s*bundleInstall:\s*(?:true|false),/mu.test(main), 'bundleInstall missing from DEFAULT_SETTINGS');
+check('...and a settings toggle actually writes it (the documented way to reach it)',
+  /settings\.bundleInstall\s*!==\s*false\)\.onChange/u.test(main) && /settings\.bundleInstall\s*=\s*value/u.test(main),
+  'no settings toggle writes settings.bundleInstall');
+
 /**
  * A plugin stand-in.
  *
