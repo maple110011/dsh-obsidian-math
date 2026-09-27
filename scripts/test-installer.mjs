@@ -309,6 +309,108 @@ const check = (label, cond, detail = '') => {
   }
 }
 
+// 0f. A′ S5 (2026-09-26): migration and mid-crash recovery.
+//
+// The plan's acceptance for S5 is "an already-installed user (owner=direct + flat files) ends up with
+// owner / bundles / overlay pairwise consistent", plus "an interruption BETWEEN `dsh plugin add` and
+// the manifest write heals on the next start". The second one is the interesting one, because the write
+// ORDER in `tryBundleInstall` is what makes it work: ownership is flipped LAST, so an interrupted run
+// leaves `owner: direct` with the package registered — and the next run simply completes the flip.
+{
+  const s5Manifest = (h) => {
+    try { return JSON.parse(readFileSync(join(h, 'profiles', 'notes-assistant', '.install-manifest.json'), 'utf8')); } catch { return null; }
+  };
+  const s5Bundles = (h) => {
+    try { return JSON.parse(readFileSync(join(h, 'profiles', 'notes-assistant', 'package.json'), 'utf8')).dsh?.profile?.bundles ?? []; } catch { return []; }
+  };
+  const s5Overlay = (h) => readFileSync(join(h, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml'), 'utf8');
+
+  const probePnpm = spawnSync('pnpm', ['--version'], { encoding: 'utf8', shell: process.platform === 'win32' });
+  const haveToolchain = !probePnpm.error && probePnpm.status === 0;
+
+  // (a) an EXISTING flat install (the pre-A′ shape) can be upgraded in place.
+  {
+    const upHome = mkdtempSync(join(tmpdir(), 'dsh-s5-upgrade-'));
+    try {
+      const runIt = (extra = [], env = {}) => spawnSync(process.execPath,
+        [installer, 'install', '--direct', '--dsh-home', upHome, ...extra],
+        { encoding: 'utf8', env: { ...process.env, ...env } });
+
+      const flat = runIt(['--flat']);
+      check('S5 upgrade fixture: the flat install itself succeeds', flat.status === 0, `status=${flat.status}`);
+      check('S5 upgrade fixture: it starts as the direct channel',
+        s5Manifest(upHome)?.owner === 'direct', String(s5Manifest(upHome)?.owner));
+
+      if (!haveToolchain) {
+        check('S5 upgrade: skipped (no pnpm — the fallback path keeps it on direct, already covered)', true);
+      } else {
+        const up = runIt();
+        const manifest = s5Manifest(upHome);
+        const bundles = s5Bundles(upHome);
+        const overlay = s5Overlay(upHome);
+        check('S5 upgrade: exits 0', up.status === 0, `status=${up.status}`);
+        // THE invariant: the three records must agree with each other.
+        const ownerSaysBundle = manifest?.owner === 'npm' && manifest?.bundleSource === 'local';
+        const bundlesSayYes = bundles.includes('dsh-math-memory');
+        const overlaySaysNo = !overlay.includes('name: ./math-memory-panel.mjs');
+        check('S5 upgrade: owner / bundles / overlay are pairwise consistent',
+          ownerSaysBundle && bundlesSayYes && overlaySaysNo,
+          `owner=${manifest?.owner}/${manifest?.bundleSource} bundles=${bundlesSayYes} overlayStripped=${overlaySaysNo}`);
+        check('S5 upgrade: the pre-existing flat files are left in place (not deleted)',
+          existsSync(join(upHome, 'profiles', 'notes-assistant', 'math-memory.mjs')));
+      }
+    } finally {
+      rmSync(upHome, { recursive: true, force: true });
+    }
+  }
+
+  // (b) mid-crash recovery: force the run to stop at the moment the DECISION to bundle has been made but
+  // ownership has not been flipped. `DSH_TEST_UNREGISTER_BUNDLE=1` does exactly that — the package is
+  // really added, then verification is forced to fail, so the run falls back and leaves `direct`.
+  // Re-running WITHOUT the seam must then complete the migration (that is the self-healing property).
+  if (haveToolchain) {
+    const healHome = mkdtempSync(join(tmpdir(), 'dsh-s5-heal-'));
+    try {
+      const interrupted = spawnSync(process.execPath,
+        [installer, 'install', '--direct', '--dsh-home', healHome],
+        { encoding: 'utf8', env: { ...process.env, DSH_TEST_UNREGISTER_BUNDLE: '1' } });
+      check('S5 recovery: the interrupted run still exits 0', interrupted.status === 0, `status=${interrupted.status}`);
+      check('S5 recovery: it left the profile on the direct channel (ownership flipped last)',
+        s5Manifest(healHome)?.owner === 'direct', String(s5Manifest(healHome)?.owner));
+
+      const healed = spawnSync(process.execPath,
+        [installer, 'install', '--direct', '--dsh-home', healHome], { encoding: 'utf8' });
+      check('S5 recovery: the next run exits 0', healed.status === 0, `status=${healed.status}`);
+      check('S5 recovery: the next run COMPLETES the migration to the bundle channel',
+        s5Manifest(healHome)?.owner === 'npm' && s5Bundles(healHome).includes('dsh-math-memory'),
+        `owner=${s5Manifest(healHome)?.owner}`);
+      check('S5 recovery: the overlay ends up stripped as well (no half-migrated state)',
+        !s5Overlay(healHome).includes('name: ./math-memory-panel.mjs'));
+    } finally {
+      rmSync(healHome, { recursive: true, force: true });
+    }
+  }
+
+  // (c) the reverse direction: switching a LOCAL-bundle profile to the registry channel must not leave
+  // the staging copy behind (otherwise the same package exists twice in one profile).
+  if (haveToolchain) {
+    const flipHome = mkdtempSync(join(tmpdir(), 'dsh-s5-flip-'));
+    try {
+      spawnSync(process.execPath, [installer, 'install', '--direct', '--dsh-home', flipHome], { encoding: 'utf8' });
+      const staging = join(flipHome, 'profiles', 'notes-assistant', '.dsh-math-memory');
+      check('S5 flip fixture: the local staging exists before the switch', existsSync(staging));
+      // `install` without --direct is the native/registry channel; it must take over with --force.
+      const native = spawnSync(process.execPath, [installer, 'install', '--profile', 'notes-assistant', '--dsh-home', flipHome, '--force'],
+        { encoding: 'utf8' });
+      check('S5 flip: the native install exits 0', native.status === 0, `status=${native.status}`);
+      check('S5 flip: the local staging copy is removed (one package per profile)',
+        !existsSync(staging), existsSync(staging) ? 'staging still present' : '');
+    } finally {
+      rmSync(flipHome, { recursive: true, force: true });
+    }
+  }
+}
+
 // 1. install --direct --flat (fresh, FLAT channel)
 //
 // `--flat` is passed on purpose from here on: since A′ S4 the default `install --direct` first tries to
