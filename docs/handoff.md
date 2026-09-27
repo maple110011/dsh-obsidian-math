@@ -88,7 +88,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：101
+> 陷阱条数：102
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -360,6 +360,25 @@
       **移出**（备份，勿直接删）。本插件的扫描对读不了的目录是 `try/catch` 跳过，不会因此崩。
     - **本机实测（只读）**：`$DSH_HOME/sessions/` 只有 2 个项目目录、命名规范、含 `~FFFD~` 的 **0 个**
       ⇒ "编码分裂（正确 vs 乱码并存）"在本机**不存在**；写这条时不要照抄旧结论。
+
+102. **★ "重复注册 `/memory-panel` 前缀会让整个 profile 起不来"——在本机 dsh 上复现不出来，别当成既定事实**（2026-09-26）。
+    - **背景**：`dsh/client-panel/install-into-profile.mjs` 的注释与 `docs/bundle-channel-plan-2026-09-26.md` 的 S3
+      都把 `duplicate prefix route "/memory-panel"` 当作**硬失败**（"整个 profile 起不来"），并据此说"没有这条守卫
+      就不能合"。本轮为验证 S3 去真装配，**没能复现**这个硬失败。
+    - **实测怎么做的**：隔离 `$DSH_HOME` → 真物化 bundle 包放进 `node_modules` → 用 `--patch` 挂上**仍声明那两行**的
+      overlay → 先用 `--dump-config` 确认组合树里**同时**有包的行（`math-memory-host` / `math-memory`）与 overlay 的行
+      （`math-memory-workspace` / `math-memory-panel`）→ 再真启动。**结果：启动成功，0 条 duplicate 诊断。**
+    - **为什么第一次没测出来（值得记的坑）**：overlay 那两行是**相对名**，而 bundle 通道**只在 `node_modules` 里放包、
+      不在 profile 根铺平铺文件** ⇒ 它们以 `failed to import` 告终，**根本没挂载**，自然不撞车。把 `math-memory-panel.mjs`
+      的**完整依赖链**补到 profile 根（它需要同级的 `memory-admin.mjs` 与 `hook-frontmatter.mjs`，后者又需要
+      `engine-shared.mjs`）后，panel 行**确实 import 成功**，**仍然没有** duplicate 报错。
+    - **结论与纪律**：① **不要**再引用"重复注册该前缀 ⇒ dsh 硬失败"作为设计前提；`install-into-profile.mjs` 注释里那次
+      历史故障**想必另有条件**，要引用就得先复现。② 结论变了**不代表 S3 白做**：剥掉那两行仍然正确（组合树只声明一份、
+      不留死行），只是它是**正确性/整洁性**改进，**不是**阻断性风险。③ 探针**必须自证施加了变异**——我第一版把
+      "变异形态"与"S3 输出形态"的 overlay 文本**接反**了，静默测了正确形态并得出"无碰撞"；是靠 `--dump-config`
+      打印组合行才发现的（与陷阱 68 同族：**控制用例必须能把现象归因到它自己那一次运行**）。
+    - **另一条操作细节**：`dsh --patch` 必须排在 app 参数（`--no-open` / `--port`）**之前**，否则 dsh 已停止解析自己的
+      flag，报 `unknown option '--patch'`（仓库里 `test-agent-preset.mjs` 就是这么写的）。
 
 ## 5. 用户决策记录（不要推翻）
 
