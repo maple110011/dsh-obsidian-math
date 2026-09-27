@@ -88,7 +88,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：105
+> 陷阱条数：106
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -438,6 +438,31 @@
       附带发现：`run-gates.mjs` 失败时只打**尾 25 行**，而这条红排在约 470 条通过断言之前 ⇒ **报告失败却报不出是哪条**；
       连 CI 注解也救不了（截断发生在 run-gates 内部，`[FAIL]` 行从未到达 stdout）。已改为**先打印所有 `[FAIL]` 行**再打尾部；
       workflow 的 `::error::` 窗口也从 2500 字符放宽到 6000。**诊断信息不该把失败藏起来**。
+
+106. **★ `install --force` 也吃掉过 profile 的 `package.json`**——与陷阱 103 同源、同一天，且是**这一类的最后一处**（2026-09-27）。
+    - **症状**：一个自己加过东西的 profile，跑 `install --direct --flat --force` 之后，`dsh.profile.bundles` 里用户加的
+      `user-custom-bundle`、`dependencies` 里的 `some-user-plugin`、`scripts`、以及一个自定义顶层键**全部消失**
+      （实测 `371 → 304` 字符）；而且 `name` 变成脚手架里写死的 `dsh-profile-notes-assistant` —— 往 `web` 装也自称是
+      notes-assistant 那个 profile。
+    - **根因**：三处把 `firstRun || options.force` 当 `copyFile` 的 overwrite 标志传给
+      `PROFILE_DIR/package.json`（`nativeInstall` / `tryBundleInstall` / `directInstallProfile`）。
+      `--force` 的本职是**通道归属接管**，与这个文件无关 —— 与陷阱 103 一模一样的形状。
+    - **仓库其实早就知道这文件是用户的**：`repairProfileManifest` 的注释称它为 "the one file a user may have edited by
+      hand" 并为它守住了 `--dry-run`；卸载路径也守住"手改过的 posture 不删"。**三条路径守了两条，`--force` 这条没守。**
+    - **关键实测（修复的安全性依据）**：模板拷贝对**已有** profile 是**多余**的。在"今天本来就会跳过拷贝"的路径上
+      （已有 profile、不加 `--force`、走真 bundle 通道 + pnpm）实测：`dsh-math-memory` 照样被注册进
+      `bundles`，用户那条 `user-custom-bundle` 也还在。所以去掉 `|| options.force` 是**构造上安全**的。
+    - **修复**：新增 `ensureProfileManifest()`（与 `ensurePosture` 同形）——**缺失才铺脚手架，存在则保留并打 `[keep]`**；
+      三处调用点共用它，其返回值天然就是原来的 `firstRun`。顺带修掉写死的 name：新建时按
+      `dsh-profile-<profile 目录名>` 推导（与 `repairProfileManifest` 已有的规则一致；对默认 profile 结果不变）。
+    - **门禁**：`test-installer` 新增 11 条（真 CLI `--force` 后用户四项**全在** / 仍自称自己 / 安装器自己的依赖**仍被追加** /
+      出声 / 缺失时仍铺且 name 按目录推导 / `--dry-run` 不写 / **源码里不许再出现 `package.json` 与 `options.force` 同行** /
+      三个调用点都走 `ensureProfileManifest`）。**变异验证**：还原成原始形态（去掉 keep-guard + 标志位改回
+      `options.force`）⇒ **3 条红**（两条数据丢失 + 一条结构性）。注意：**只**去掉 keep-guard 是**测不出来**的
+      —— 真正防住的是 `copyFile(..., false)` 这个标志位（与陷阱 103 记的同一条教训）。
+    - **纪律**：给"可写配置"加 overwrite 参数之前，先问"这文件到底是我的还是用户的"；`--force` 只做归属。
+      `install.mjs` 里**仅存**的 `options.force` 文件写入就是这三处，其余（`assertChannelOwnership` / 卸载判定）
+      都不碰用户文件 —— 这一类到此为止。
 
 ## 5. 用户决策记录（不要推翻）
 

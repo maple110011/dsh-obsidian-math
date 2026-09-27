@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- **同一个 `--force` 也不再吃掉 profile 的 `package.json`**——那份清单里的 `dsh.profile.bundles` 正是你加 bundle 的地方，另外还有你的 `dependencies` / `scripts`。此前 `install --force` 会把它整份换成安装器的模板（实测你加的 bundle、依赖、`scripts` 与自定义字段全丢）。现在**只在不存在时创建**，已存在就原样保留并打一行 `[keep]`，安装器只**追加**自己那一条依赖。顺带修掉：新建 profile 时清单里的 `name` 此前写死成 `dsh-profile-notes-assistant`（装进 `web` 也自称是那个 profile），现按 profile 目录命名。
 - **安装器改写你的 `cordis.patch.yml` 时不再把行尾弄乱**——此前它按固定 `\n` 写回，遇到 Windows 的 CRLF 文件会写成**混用行尾**（实测一个文件从 9849 变成 9726 字符、79 处 CRLF + 123 处 LF）。现在按该文件自己的行尾写，LF 与 CRLF 都逐字节保持原样。
 - **安装插件不再吃掉你在 profile 里写的配置**——`install --force` 此前会整份覆盖 profile 自己的 patch 层（`<profile>/cordis.patch.yml`，也就是你放自定义模型/provider 的地方），而 `--force` 本该只管"接管另一个通道装的 profile"。实测丢过一次真实的模型配置。现在那一层**只在不存在时创建**，已存在就原样保留（并在安装日志里说一行 `[keep]`）；通道需要的声明增删仍照旧精确进行，不会碰你自己加的行。
 - **离线通道的两处收尾**：卸载不再留下整份插件副本（造包用的暂存目录此前不跟着卸载走），安装结束的提示也会说清**实际生效的通道**（包化 / 回落平铺 + 原因），不再固定打印 `Done (direct)`。

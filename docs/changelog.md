@@ -3,6 +3,41 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-27 · `--force` 不再覆写 profile 的 `package.json`：**已实现**（同类最后一处）
+
+**这是陷阱 103 那一类的第二处，也是最后一处**：`<profile>/package.json` 是 profile 的清单，
+`dsh.profile.bundles` 正是用户加 bundle 的地方，`repairProfileManifest` 的注释早就把它称作
+"the one file a user may have edited by hand" 并为它守住了 `--dry-run`，卸载路径也守住"手改过的文件不删"。
+但三处调用点（`nativeInstall` / `tryBundleInstall` / `directInstallProfile`）把
+`firstRun || options.force` 当 `copyFile` 的 overwrite 标志传给它 ⇒ **`install --force` 整份替换**。
+
+**实测**（构造一个用户改过的 profile，跑 `install --direct --flat --force`）：
+`dsh.profile.bundles` 里用户加的 `user-custom-bundle`、`dependencies` 的 `some-user-plugin`、`scripts`、
+一个自定义顶层键**全部消失**（`371 → 304` 字符）；`name` 还变成了脚手架里写死的
+`dsh-profile-notes-assistant`——往 `web` 装也自称是 notes-assistant 那个 profile。
+
+**关键实测（这是修复安全的依据，也值得记住方法）**：模板拷贝对**已有** profile 是**多余**的。
+在"今天本来就会跳过拷贝"的那条路径上（已有 profile、不加 `--force`、走**真** bundle 通道 + pnpm）实测：
+`dsh-math-memory` 照样被注册进 `dsh.profile.bundles`，用户那条 `user-custom-bundle` 也还在。
+⇒ 去掉 `|| options.force` 只是让 `--force` 与**已经正确**的路径行为一致。
+
+**做法**：新增 `ensureProfileManifest()`（与 `ensurePosture` 同形，导出供门禁直调）——**缺失才铺脚手架，
+存在则保留并打 `[keep]`**；三处调用点共用它，其返回值天然就是原来的 `firstRun`（`pnpm-workspace.yaml`
+等仍按"是否首次"来决定）。顺带修掉写死的 `name`：新建时按 `dsh-profile-<profile 目录名>` 推导，
+与 `repairProfileManifest` 已有的规则一致（默认 profile 结果不变，实测 `web` 由
+`dsh-profile-notes-assistant` 变为 `dsh-profile-web`）。`--help` 与文件头注释都写明 `--force` 不动这两个文件。
+
+**门禁**：`test-installer` 新增 11 条——真 CLI `--force` 后用户四项**全在** / 仍自称自己 /
+安装器自己的 client 依赖**仍被追加**（证明不是"什么都不写"）/ 出声 / 缺失时仍铺且 name 按目录推导 /
+`--dry-run` 不写 / **源码里不许再出现 `package.json` 与 `options.force` 同行** /
+三个调用点都走 `ensureProfileManifest`。
+**变异验证**：还原成原始形态（去掉 keep-guard **且**标志位改回 `options.force`）⇒ **3 条红**
+（两条数据丢失 + 一条结构性）。⚠️ **只**去掉 keep-guard 是**测不出来**的——真正防住的是
+`copyFile(..., false)` 这个标志位（与陷阱 103 记的同一条教训，这里第二次撞到）。
+
+**这一类到此为止**：`install.mjs` 里仅存的 `options.force` 文件写入就是这三处；其余
+（`assertChannelOwnership`、卸载判定）都不碰用户文件。
+
 ## 2026-09-27 · 只在 Windows 成立的测试缝 / 报不出失败的报告：**已实现**（Ubuntu 连续三轮一条红）
 
 **症状**：行尾那条修好之后，**Windows CI 转绿、Ubuntu 仍然红**，而且连续三轮都只有**一条**：

@@ -43,9 +43,10 @@
  * as "direct". Install refuses to overwrite a profile owned by the other channel
  * unless --force.
  *
- * `--force` is an OWNERSHIP flag only. `<profile>/cordis.patch.yml` is the profile's
- * own, user-editable dsh patch layer; this installer creates it when absent and never
- * replaces one that exists (`ensurePosture`), on any channel and under any flag.
+ * `--force` is an OWNERSHIP flag only. `<profile>/cordis.patch.yml` (the profile's own
+ * patch layer) and `<profile>/package.json` (its own manifest, incl. `dsh.profile.bundles`)
+ * are the user's; this installer creates them when absent and never replaces one that
+ * exists (`ensurePosture` / `ensureProfileManifest`), on any channel and under any flag.
  */
 
 import {
@@ -195,8 +196,9 @@ Options:
   --dsh-home <dir>    harness home (default: $DSH_HOME or ~/.dsh)
   --profile <name>    profile name (default: notes-assistant)
   --force             take over an other-channel-owned preset/profile. It does NOT
-                      rewrite the profile's own cordis.patch.yml: that file is the
-                      user's own patch layer and is only ever created, never replaced
+                      rewrite the profile's own cordis.patch.yml or package.json:
+                      those two files are the user's own layer and manifest, and are
+                      only ever created, never replaced
   --any-home          allow a non-harness home (sandboxes/probes); also DSH_ALLOW_ANY_HOME=1
   --flat              do not try to install a local bundle; use the flat copy (pre-A′ behaviour)
   --dry-run           print planned writes without touching the filesystem
@@ -549,6 +551,52 @@ export function ensurePosture(options, profileRoot) {
 }
 
 /**
+ * Put the profile scaffold manifest in place — but ONLY when the profile has none.
+ *
+ * WHY THIS EXISTS (2026-09-27; same class as `ensurePosture`, and the LAST instance of it).
+ * `<profile>/package.json` is the profile's own manifest: `dsh.profile.bundles` is where a user adds a
+ * bundle, and the file also carries their `dependencies`, `scripts` and whatever else they put in it.
+ * `repairProfileManifest` below already calls it "the one file a user may have edited by hand" and guards
+ * `--dry-run` for it, and the uninstall path refuses to delete a hand-edited posture file — but three call
+ * sites passed `firstRun || options.force` as `copyFile`'s overwrite flag, so `install --force` (an
+ * OWNERSHIP flag, see `assertChannelOwnership`) replaced the whole file. Measured: a profile carrying
+ * `bundles: […, user-custom-bundle]`, a `dependencies` entry, a `scripts` key and a custom key came back
+ * with **all four gone**.
+ *
+ * The template copy is also UNNECESSARY once the profile exists: measured on a profile whose copy is
+ * already skipped today (no `--force`), the real bundle channel still registers `dsh-math-memory` into
+ * `dsh.profile.bundles` and still keeps the user's own bundle entry.
+ *
+ * `name` is derived from the profile DIRECTORY when we do create the file — the same rule
+ * `repairProfileManifest` uses for a missing name — instead of the scaffold's hardcoded
+ * `dsh-profile-notes-assistant`, which is only right for one of the profiles we install into (a fresh
+ * install into `web` used to produce a manifest calling itself the notes-assistant profile).
+ *
+ * @returns true when the scaffold was copied, i.e. the profile had no manifest at all.
+ */
+export function ensureProfileManifest(options, profileRoot) {
+  const target = join(profileRoot, "package.json");
+  if (existsSync(target)) {
+    log(options, `[keep] package.json exists — preserving the user's own manifest: ${target}`);
+    return false;
+  }
+  // `overwrite: false` even though the target is absent — see `ensurePosture`. Under `--dry-run`
+  // `copyFile` writes nothing and returns false, so the rename below cannot fire either.
+  if (!copyFile(options, join(PROFILE_DIR, "package.json"), target, false)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(target, "utf8"));
+    const derived = `dsh-profile-${basename(profileRoot) || "profile"}`;
+    if (parsed.name !== derived) {
+      parsed.name = derived;
+      writeFileSync(target, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+    }
+  } catch {
+    // A scaffold we cannot parse is not worth guessing at; `repairProfileManifest` fills a missing name.
+  }
+  return true;
+}
+
+/**
  * Ensure a profile manifest declares non-empty `name` AND `version`.
  *
  * WHY (2026-09-26, real-machine failure). dsh's default-on request extension
@@ -694,8 +742,9 @@ function nativeInstall(options, dshHome) {
   // from pnpm. cordis.yml is the empty root; pnpm-workspace.yaml pins the
   // hoisted linker so `dsh plugin add` (pnpm) can run in the profile dir.
   const profileRoot = join(dshHome, "profiles", options.profile);
-  const firstRun = !existsSync(join(profileRoot, "package.json"));
-  copyFile(options, join(PROFILE_DIR, "package.json"), join(profileRoot, "package.json"), firstRun || options.force);
+  // ⚠️ Only an ABSENT manifest is written: it is the user's own file, and `--force` is an ownership
+  // flag. `firstRun` therefore means "we had to create it" — exactly what the scaffold copies below want.
+  const firstRun = ensureProfileManifest(options, profileRoot);
   // A profile manifest that names itself but declares no `version` makes dsh's
   // default-on plugin-inventory request extension throw during EVERY request
   // preparation (see repairProfileManifest) — repair both fresh and existing ones.
@@ -872,8 +921,7 @@ function tryBundleInstall(options, dshHome, profileRoot) {
   if (options.flat) return { staged: false, reason: "--flat" };
 
   // 1. minimal scaffold — `dsh plugin add` runs pnpm in the profile dir and needs a workspace file.
-  const firstRun = !existsSync(join(profileRoot, "package.json"));
-  copyFile(options, join(PROFILE_DIR, "package.json"), join(profileRoot, "package.json"), firstRun || options.force);
+  const firstRun = ensureProfileManifest(options, profileRoot);
   if (repairProfileManifest(profileRoot, options)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
   copyFile(options, join(PROFILE_DIR, "pnpm-workspace.yaml"), join(profileRoot, "pnpm-workspace.yaml"), firstRun);
@@ -1015,9 +1063,8 @@ async function directInstallProfile(options, dshHome) {
     log(options, "[flat] --flat 指定：跳过本地包化，使用平铺通道。");
   }
 
-  const firstRun = !existsSync(join(profileRoot, "package.json"));
-  copyFile(options, join(PROFILE_DIR, "package.json"), join(profileRoot, "package.json"), firstRun || options.force);
-  // Repair an EXISTING manifest: `copyFile` above skips it unless forced, and a
+  const firstRun = ensureProfileManifest(options, profileRoot);
+  // Repair an EXISTING manifest: `ensureProfileManifest` deliberately leaves a present file alone, and a
   // profile manifest that names itself but declares no `version` makes dsh's
   // default-on plugin-inventory request extension throw during EVERY request
   // preparation (see repairProfileManifest).

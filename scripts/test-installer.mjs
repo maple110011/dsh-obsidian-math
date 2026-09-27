@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // Aliased: this file already has a local `writeManifest` helper (a fixture that writes an owner marker).
-import { verifyPostureDigests, ensurePresetDeclaration, stripPresetDeclaration, ensurePosture, assertHarnessHome, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
+import { verifyPostureDigests, ensurePresetDeclaration, stripPresetDeclaration, ensurePosture, ensureProfileManifest, assertHarnessHome, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
 // The contract is the source for "what a profile needs" — assertions below derive from it instead of
 // hardcoding counts that rot the moment a file is added (2026-09-26).
 import { PROFILE_SCAFFOLD_FILES, PRESET_BODY_FILES } from '../dsh/preset/profile-contract.mjs';
@@ -1056,6 +1056,98 @@ rmSync(vault, { recursive: true, force: true });
     }
   } finally {
     rmSync(eolHome, { recursive: true, force: true });
+  }
+}
+
+// 14. `--force` must NEVER eat the profile's own `package.json` (2026-09-27 — same class as #13, and the
+// LAST instance of it; the other two writers of this file are already additive merges).
+//
+// `<profile>/package.json` is the profile's manifest: `dsh.profile.bundles` is where a user adds a
+// bundle, and it also carries their `dependencies` / `scripts` / own keys. Three call sites passed
+// `firstRun || options.force` as `copyFile`'s overwrite flag, so `install --force` (an OWNERSHIP flag)
+// replaced the whole file. Measured on a real profile fixture: `user-custom-bundle`, `some-user-plugin`,
+// `scripts` and a custom key all came back GONE — and the profile came back calling itself
+// `dsh-profile-notes-assistant` (the scaffold's literal), which is only right for one profile.
+//
+// MUTATION: put `firstRun || options.force` back (or copy when the target exists) ⇒ the "survives" and
+// "names ITSELF" checks below go red.
+{
+  const pkgHome = mkdtempSync(join(tmpdir(), 'dsh-pkg-keep-'));
+  const pkgProfile = join(pkgHome, 'profiles', 'web');
+  try {
+    mkdirSync(pkgProfile, { recursive: true });
+    const target = join(pkgProfile, 'package.json');
+    const userManifest = JSON.stringify({
+      name: 'dsh-profile-web',
+      version: '0.0.0',
+      private: true,
+      dependencies: { 'some-user-plugin': '^1.2.3' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'user-custom-bundle'] } },
+      scripts: { note: 'user added this' },
+      userField: 'keep me'
+    }, null, 2) + '\n';
+    writeFileSync(target, userManifest, 'utf8');
+
+    // (a) the real CLI, with --force, on a profile that ALREADY has a manifest
+    const cli = run(['install', '--direct', '--flat', '--force', '--profile', 'web', '--dsh-home', pkgHome, '--quiet']);
+    const afterCli = readFileSync(target, 'utf8');
+    const parsed = (() => { try { return JSON.parse(afterCli); } catch { return {}; } })();
+    check('pkg: CLI `install --force` exits 0', cli.status === 0, `status=${cli.status}`);
+    check("pkg: the user's bundles/dependencies/scripts/custom key all survive --force",
+      afterCli.includes('user-custom-bundle') && afterCli.includes('some-user-plugin') &&
+      afterCli.includes('"userField"') && afterCli.includes('user added this'),
+      `${userManifest.length} -> ${afterCli.length} chars`);
+    check('pkg: ...and the profile still names ITSELF, not another profile',
+      parsed.name === 'dsh-profile-web', String(parsed.name));
+    check('pkg: ...and the installer still declared its own client dependency alongside the user\'s',
+      typeof parsed.dependencies?.['@dsh-math-memory/client-ui-memory-panel'] === 'string' &&
+      parsed.dependencies?.['some-user-plugin'] === '^1.2.3');
+
+    // (a2) keeping it must be LOUD — silent preservation is how this class hides next time
+    const pkgPrinted = [];
+    const pkgRealLog = console.log;
+    console.log = (...a) => pkgPrinted.push(a.join(' '));
+    let pkgKeptLoud = false;
+    try {
+      pkgKeptLoud = ensureProfileManifest({ dryRun: false, quiet: false, force: true }, pkgProfile) === false;
+    } finally {
+      console.log = pkgRealLog;
+    }
+    check('pkg: keeping the manifest is announced ([keep] … package.json)',
+      pkgKeptLoud && pkgPrinted.some((l) => l.includes('[keep]') && l.includes('package.json')),
+      pkgPrinted.join(' | ').slice(0, 120));
+
+    // (b) an ABSENT manifest is still created — with the name derived from the PROFILE DIRECTORY
+    const fresh = join(pkgHome, 'profiles', 'someotherprofile');
+    mkdirSync(fresh, { recursive: true });
+    check('pkg: an ABSENT manifest is still created',
+      ensureProfileManifest({ dryRun: false, quiet: true }, fresh) === true);
+    const freshPkg = JSON.parse(readFileSync(join(fresh, 'package.json'), 'utf8'));
+    check('pkg: its name is derived from the profile dir, not the scaffold literal',
+      freshPkg.name === 'dsh-profile-someotherprofile', String(freshPkg.name));
+    check('pkg: ...and the scaffold bundles are intact',
+      JSON.stringify(freshPkg.dsh?.profile?.bundles) === JSON.stringify(['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']),
+      JSON.stringify(freshPkg.dsh?.profile?.bundles));
+
+    // (c) --dry-run still writes nothing (this file has its own dry-run guard in repairProfileManifest)
+    const dryProfile = join(pkgHome, 'profiles', 'dry');
+    mkdirSync(dryProfile, { recursive: true });
+    check('pkg: --dry-run creates no manifest',
+      ensureProfileManifest({ dryRun: true, quiet: true }, dryProfile) === false &&
+      !existsSync(join(dryProfile, 'package.json')));
+
+    // (d) structural pins — these catch a FUTURE fourth call site, which the CLI path above cannot.
+    const src = readFileSync(join(repo, 'dsh', 'install.mjs'), 'utf8');
+    const clobberSites = src.split('\n').map((line, i) => [i + 1, line])
+      .filter(([, line]) => line.includes('PROFILE_DIR, "package.json"') && line.includes('options.force'))
+      .map(([n, line]) => `${n}: ${line.trim()}`);
+    check('pkg: no source line copies the manifest under options.force',
+      clobberSites.length === 0, clobberSites.join(' | '));
+    check('pkg: all three channel call sites go through ensureProfileManifest',
+      (src.match(/ensureProfileManifest\(options, profileRoot\);/g) ?? []).length === 3,
+      String((src.match(/ensureProfileManifest\(options, profileRoot\);/g) ?? []).length));
+  } finally {
+    rmSync(pkgHome, { recursive: true, force: true });
   }
 }
 
