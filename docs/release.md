@@ -83,13 +83,14 @@ git push origin 0.7.6  # ← 这一步才会真正产出 Release
 |---|---|---|
 | `ci.yml` | push / PR | Ubuntu + Windows 双矩阵：`npm ci` → 版本一致性 → **Ubuntu 上**重建 `main.js` 并 `git diff --exit-code` → `npm test` |
 | `release.yml` | 推 `x.y.z` tag | 版本一致性（含 tag）→ 重建 + diff 门禁 → `npm test` → 从 CHANGELOG 抽取**该版本**段落当 Release notes → 上传 `main.js` / `manifest.json` / `styles.css` / `versions.json` |
-| `npm-publish.yml` | 推 `x.y.z` tag | 同上校验 → `npm publish --provenance`（OIDC，无 token）→ **按 registry 实际状态判定成败**（public 即成功并关闭历史失败 issue；missing 则打印 npm 原话 + OIDC claims、开 issue、判失败） |
+| `npm-publish.yml` | 推 `x.y.z` tag | 同上校验 → `npm publish --provenance`（OIDC，无 token）→ **按 registry 实际状态判定成败**（约 6 分钟退避轮询；public 即成功并关闭历史失败 issue；missing 则打印 npm 原话 + OIDC claims、开 issue、判失败） |
 
 **发布是否成功只由 registry 状态决定，不看 npm 的退出码**——「退出码/流水线在撒谎」的情况已经遇到过三种：
 
 - **退出码 0 ≠ 已发布**：分阶段发布（staged publishing）上传后等人用 2FA 批准，此时公开 registry 上什么都没有，而 pipeline 会全绿（0.7.5 就出现过一次「全绿但 npm 上没有」）。
 - **退出码非 0 ≠ 未发布**：重复推送同一个 tag 时 npm 报 `You cannot publish over the previously published versions`，而该版本其实早就在了（仓库为修发布链路反复移动过 0.7.5 tag）。现在这种情况算成功。
-- **⚠️ 第三种：registry 的可见性有延迟（0.7.6 实测 60–80 秒；0.7.7 约 4–5 分钟；0.7.8 约 92 秒）**。`Publish` 步 success、日志里已有 `+ dsh-math-memory@<版本>`，但下一步 `Confirm the registry state` 查到的仍是 missing ⇒ 开 issue + 判红。
+- **⚠️ 第三种：registry 的可见性有延迟（0.7.6 实测 60–80 秒；0.7.7 约 4–5 分钟；0.7.8 约 92 秒；0.8.0 **> 90 秒**）**。`Publish` 步 success、日志里已有 `+ dsh-math-memory@<版本>`，但下一步 `Confirm the registry state` 查到的仍是 missing ⇒ 开 issue + 判红。
+  - **该步已经会轮询，问题在预算**（2026-09-27 更正）：改前是固定 90 秒（6 × 15 s），而上面四次实测的延迟**在增长**、最长到 4–5 分钟 ⇒ 90 秒必然偶尔不够。现为 **18 次退避轮询（前 6 次 10 s，其后 25 s，约 6 分钟）**，并把 `elapsed Ns` 打进日志，便于以后重新定标。**"轮询存在"不等于"轮询够久"。**
   - **处置**：**先用只读方式独立核实 registry 的真实状态，不要凭 workflow 的结论行动**（0.7.8 实测有效的查法：直接取 `https://registry.npmjs.org/dsh-math-memory/latest`，回应里 `"version"`/`"_id"` 就是当前真实状态；本机 `npm view` 在受限环境可能因 `EPERM` 写不了缓存而失败，**失败≠未发布**）。若 registry 已有该版本 ⇒ 该红是**假失败**：可 `Re-run failed jobs`（等 registry 可见后第二次即绿并自动关 issue），也可以不 re-run、只手工关 issue。**绝对不要据此改代码或版本号。**
   - **附带后果**：失败路径会把"关历史 publish-failure issue"那一步 `skip`，所以每次这类假失败都**留下一件手工事（关 issue）**；issue 正文里最好写明"实际已发布 + 核实依据"，与 0.7.7 的做法一致。
 

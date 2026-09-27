@@ -121,16 +121,33 @@ jobs:
         id: state
         run: |
           version=$(node -p "require('./package.json').version")
-          for attempt in 1 2 3 4 5 6; do
+          # ⚠️ THIS STEP ALREADY POLLED, AND THE BUDGET WAS THE BUG (corrected 2026-09-27).
+          # The old loop was `for attempt in 1..6; sleep 15` = 90 s, and the registry's propagation lag
+          # has grown with every release we measured: 60–80 s (0.7.6), 92 s (0.7.8), 4–5 min (0.7.7) —
+          # and >90 s for 0.8.0, which is why "npm publish failed for 0.8.0" (issue #6) was filed while the
+          # registry already had it. That is trap 73, now four occurrences. So: poll with backoff for
+          # ~6 min, and PRINT how long it actually took — otherwise the next person re-derives the budget
+          # the same way this one did.
+          start=$(date +%s)
+          state=missing
+          for attempt in $(seq 1 18); do
             if npm view "dsh-math-memory@${version}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
-              echo "state=public" >> "$GITHUB_OUTPUT"
-              echo "registry state: dsh-math-memory@${version} IS public"
-              exit 0
+              state=public
+              break
             fi
-            sleep 15
+            # ~10 s for the first six tries (the common case), then ~25 s: covers the 4–5 min tail
+            # without hammering the registry for the routine 60–90 s one.
+            sleep_for=$(( attempt <= 6 ? 10 : 25 ))
+            echo "attempt ${attempt}: not public yet (elapsed $(( $(date +%s) - start ))s) — sleeping ${sleep_for}s"
+            sleep "$sleep_for"
           done
-          echo "state=missing" >> "$GITHUB_OUTPUT"
-          echo "registry state: dsh-math-memory@${version} is NOT public"
+          elapsed=$(( $(date +%s) - start ))
+          echo "state=${state}" >> "$GITHUB_OUTPUT"
+          if [ "$state" = "public" ]; then
+            echo "registry state: dsh-math-memory@${version} IS public (after ${elapsed}s)"
+          else
+            echo "registry state: dsh-math-memory@${version} is NOT public (after ${elapsed}s)"
+          fi
       # A tag can be re-pushed (this repository moved the 0.7.5 tag several times
       # while its release pipeline was being fixed), so an open report from an
       # earlier attempt has to be closed once the version is really out.
