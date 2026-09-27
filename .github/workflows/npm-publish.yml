@@ -26,12 +26,6 @@ on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
-  # ⚠️ TEMPORARY (added 2026-09-27, removed again in the next commit): see the `unpublish` job below.
-  workflow_dispatch:
-    inputs:
-      unpublish_version:
-        description: 'TEMPORARY one-off retraction: exact version to unpublish (e.g. 0.8.0)'
-        required: true
 
 # Least privilege: publishing needs no repository write access, and the OIDC
 # exchange requires `id-token: write`. `issues: write` is used only on the
@@ -231,59 +225,3 @@ jobs:
       - name: Fail the job when nothing shipped
         if: steps.state.outputs.state == 'missing'
         run: exit 1
-
-  # ⚠️⚠️ TEMPORARY — ADDED 2026-09-27 AND REMOVED IN THE NEXT COMMIT. DO NOT LEAVE THIS IN THE TREE. ⚠️⚠️
-  #
-  # One-off retraction of a version that was published by mistake (0.8.0, renumbered to 0.7.9). It has to
-  # live in THIS file: npm's trusted-publisher config is keyed to the workflow FILENAME, so any other file
-  # would present a `job_workflow_ref` that does not match and get a 404.
-  #
-  # Why automate at all: `npm unpublish` normally needs an interactive login + 2FA. This machine has NO npm
-  # credential (`~/.npmrc` holds only a registry line; `npm whoami` → ENEEDAUTH), so the OIDC trusted
-  # publisher is the only npm identity available. Whether npm will mint a credential for `unpublish` (as
-  # opposed to `publish`) is exactly what this job measures — hence the ::error::/::warning:: annotations,
-  # which are readable without repo admin rights (job logs are not).
-  #
-  # Gated on `workflow_dispatch`, so a tag push can never reach it. The result is reported as an annotation
-  # and the job always exits 0, so a failed attempt cannot masquerade as a failed release.
-  unpublish:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: 'https://registry.npmjs.org'
-      - name: npm >= 11.5.1 (trusted publishing)
-        run: npm install -g npm@11
-      - name: Unpublish via the trusted-publisher OIDC exchange
-        run: |
-          set -uo pipefail
-          v="${{ inputs.unpublish_version }}"
-          echo "target: dsh-math-memory@${v}"
-          oidc=$(curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" \
-            | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{try{process.stdout.write(JSON.parse(s).value||'')}catch{process.stdout.write('')}})")
-          if [ -z "$oidc" ]; then echo "::error::no OIDC token minted (id-token: write missing?)"; exit 0; fi
-          echo "OIDC token minted (len ${#oidc})"
-          ex=$(curl -sS -X POST -H "Authorization: Bearer ${oidc}" \
-            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/dsh-math-memory")
-          echo "exchange response: $(printf '%s' "$ex" | head -c 300)"
-          tok=$(printf '%s' "$ex" | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{try{process.stdout.write(JSON.parse(s).token||'')}catch{process.stdout.write('')}})")
-          if [ -z "$tok" ]; then
-            echo "::error::OIDC exchange returned NO token — npm will not mint one for 'unpublish' (only for allowed actions such as publish)"
-            exit 0
-          fi
-          echo "npm credential obtained (len ${#tok})"
-          out=$(npm unpublish "dsh-math-memory@${v}" --//registry.npmjs.org/:_authToken="${tok}" 2>&1) && rc=0 || rc=$?
-          echo "npm unpublish exit=${rc}"
-          printf '%s\n' "$out" | tail -12
-          if npm view "dsh-math-memory@${v}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
-            echo "::error::dsh-math-memory@${v} is STILL public (exit=${rc}): $(printf '%s' "$out" | tail -3 | tr '\n' ' ' | head -c 300)"
-          else
-            echo "::warning::dsh-math-memory@${v} is GONE from the registry (retraction succeeded)"
-          fi
