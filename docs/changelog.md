@@ -3,6 +3,42 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-27 · 只在 Windows 成立的测试缝 / 报不出失败的报告：**已实现**（Ubuntu 连续三轮一条红）
+
+**症状**：行尾那条修好之后，**Windows CI 转绿、Ubuntu 仍然红**，而且连续三轮都只有**一条**：
+`[FAIL] S4 fallback: it SAYS it fell back, with the reason`，细节是
+`[fallback] 本地包化未成功（dsh not found on PATH）⇒ 回落到平铺通道（--direct 形态）。`
+
+**根因一（真缺陷）：测试缝排在了环境相关的提前返回之后。**
+`tryBundleInstall` 先判 `result.error`，再判 `DSH_TEST_UNREGISTER_BUNDLE`。
+而 `spawnSync("dsh", …, { shell: process.platform === "win32" })` 报"工具缺失"的**形态按平台不同**：
+Linux 上 `shell:false` ⇒ 返回 `result.error`（ENOENT）；Windows 上 `shell:true` ⇒ cmd 起得来，只有退出码非零。
+于是**在没有 `dsh` 的机器上，Linux 走 ENOENT 提前返回，永远到不了那条缝** ——
+它本来要用变异证明"判定来自文件系统而不是退出码"，在 Linux 上**一次都没比过**；而断言又要求理由里出现
+`DSH_TEST_UNREGISTER_BUNDLE|not registered`，于是 Linux 红、Windows 绿。
+这正是 AGENTS.md §6 反复删掉的"空过"形状（**没有用例走到的分支，不算被测过**）。
+**修复**：把 `const forcedUnregistered = …` 提到 spawn 之前，判据改成 `if (result.error && !forcedUnregistered)`。
+
+**根因二（报告缺陷）：失败报告说不出是哪条失败。**
+`run-gates.mjs` 失败时只打该门禁输出的**尾 25 行**，而这条红排在约 **470** 条通过断言之前 ⇒
+本地与 CI 都只看到 `installer: 1 check(s) failed`；连 workflow 的 `::error::` 注解也救不了
+（截断发生在 run-gates **内部**，`[FAIL]` 行从未到达 stdout）。**报告失败却报不出失败是什么，这才是缺陷。**
+**修复**：run-gates 改为**先摘出所有 `[FAIL]` 行打印**（≤40 条，超出报数量），再打尾部；
+workflow 的注解窗口 2500 → 6000 字符。这条改动让"下一轮 CI 说得出是哪条"成为可能——它也确是本次定位的关键。
+
+**复现办法（本机就能做，不必等 Linux，值得记住）**：把三处
+`shell: process.platform === "win32"` 全改成 `shell: false`（= 模拟 Linux 分支），
+并把 `Roaming\npm` 从 `PATH` 去掉（= 模拟 CI 没有 `dsh`/`pnpm`）。实测：
+**修复前 ⇒ 恰好 1 条红，细节字符串与 Ubuntu 注解逐字相同；修复后 ⇒ 全绿。**
+
+**门禁**：`test-installer.mjs` 的 `S4 fallback: it SAYS it fell back, with the reason` 原样保留
+（它是这次唯一冒出问题的那条断言，正是它把缝失效暴露出来的）；`run-gates` 的新报告路径用一条临时塞入的
+必败断言自证过（打印出 `1 failing assertion line(s): [FAIL] DELIBERATE REPORTING PROBE | probe`），
+随后 `git checkout` 还原、`git diff` 为空。
+
+**纪律**：① 测试缝必须排在**任何**环境相关的提前返回之前；② 判据别依赖 `spawnSync` 的**形态**
+（`error` vs `status`）——那是平台方言；③ 见 `docs/handoff.md` §4 陷阱 105。
+
 ## 2026-09-27 · 声明修复改为**行尾保真**：**已实现**（CI 红倒逼出来，且红是预存的）
 
 **先分清归因**：这一条**不是**上一条修复引入的。把积压的 129 个提交推上去后 CI 红，但

@@ -912,7 +912,16 @@ function tryBundleInstall(options, dshHome, profileRoot) {
     shell: process.platform === "win32",
     env: { ...process.env, DSH_HOME: dshHome }
   });
-  if (result.error) {
+  // ⚠️ THE SEAM IS EVALUATED BEFORE THE SPAWN VERDICT, ON PURPOSE (2026-09-27).
+  // `spawnSync` reports a missing toolchain DIFFERENTLY per platform: with `shell: false` (Linux) it
+  // returns `result.error` (ENOENT), while with `shell: true` (Windows) cmd starts fine and only the
+  // STATUS is non-zero. The old order returned the environment reason first, so on any machine without
+  // `dsh` the seam below was never reached — the mutation it exists to prove was silently NOT exercised,
+  // and `test-installer`'s `S4 fallback: it SAYS it fell back, with the reason` was the one red check on
+  // ubuntu-latest while green on windows-latest. A test seam that only works on one OS is exactly the
+  // vacuous pass this repo keeps deleting (AGENTS.md §6: 没有用例走到的分支，不算被测过).
+  const forcedUnregistered = process.env.DSH_TEST_UNREGISTER_BUNDLE === "1";
+  if (result.error && !forcedUnregistered) {
     const hint = result.error.code === "ENOENT" ? "dsh not found on PATH" : String(result.error);
     return { staged: false, reason: hint };
   }
@@ -923,8 +932,7 @@ function tryBundleInstall(options, dshHome, profileRoot) {
   // required mutation — "walk the verdict back to `exit code == 0`" — is exercised without having to
   // fake a child process: with the verdict forced false, the fallback must happen and the manifest must
   // stay `direct`; if the check were absent, the install would report bundle success while the package
-  // is not registered. OFF unless set.
-  const forcedUnregistered = process.env.DSH_TEST_UNREGISTER_BUNDLE === "1";
+  // is not registered. OFF unless set. (Declared above, before the spawn verdict — see the note there.)
   if (forcedUnregistered || !bundleRegisteredIn(profileRoot)) {
     const detail = forcedUnregistered
       ? "verification was forced to fail (DSH_TEST_UNREGISTER_BUNDLE=1)"

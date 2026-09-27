@@ -88,7 +88,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：104
+> 陷阱条数：105
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -418,6 +418,26 @@
       ③ "本地绿、CI 红"优先怀疑**文件集合与字节**的差异，而不是代码逻辑差异。
     - **修复**：`lineEndingOf()` / `withLineEnding()` + 两处修复函数改为行尾保真（LF 下结果逐字节不变）。变异验证：
       把 `lineEndingOf` 改回写死 `"\n"` ⇒ **恰好 3 条 CRLF 断言红**（LF 三条仍绿），数字与事故现场一致（9849→9726、crlf 202→79）。
+
+105. **★ 只在 Windows 成立的"测试缝"等于在 Linux 上是空过**——`spawnSync` 报"工具缺失"的形态**按平台不同**（2026-09-27 实测）。
+    - **症状**：Ubuntu CI **连续三轮**都只有一条红，Windows 同一提交全绿：
+      `[FAIL] S4 fallback: it SAYS it fell back, with the reason`，细节是
+      `[fallback] 本地包化未成功（dsh not found on PATH）⇒ 回落到平铺通道`。
+    - **根因**：`tryBundleInstall` 先判 `result.error` 再判那条测试缝。而 `spawnSync("dsh", …, { shell: process.platform === "win32" })`：
+      **Linux 上 `shell:false` ⇒ 返回 `result.error`（ENOENT）**；**Windows 上 `shell:true` ⇒ cmd 起得来，只有退出码非零**。
+      于是没有 `dsh` 的机器上，**Linux 走 ENOENT 提前返回，永远到不了 `DSH_TEST_UNREGISTER_BUNDLE` 那条缝** ——
+      这条缝本来要用变异证明"判定来自文件系统而不是退出码"，在 Linux 上**一次都没比过**；而断言又要求理由里出现
+      `DSH_TEST_UNREGISTER_BUNDLE|not registered`，于是 Linux 报红、Windows 报绿。
+    - **纪律**：**测试缝必须排在任何环境相关的提前返回之前**，否则它在某些平台上静默失效（正是本仓库反复删掉的
+      "空过"形状，见 AGENTS.md §6「没有用例走到的分支，不算被测过」）。判据不要依赖 `spawnSync` 的**形态**
+      （`error` vs `status`），那是平台方言。
+    - **复现办法（本机就能做，不必等 Linux）**：把 `install.mjs` 里三处 `shell: process.platform === "win32"` 全改成
+      `shell: false`（= 模拟 Linux 分支），并把 `Roaming\npm` 从 `PATH` 里去掉（= 模拟 CI 没有 `dsh`/`pnpm`）。
+      于是：**修复前** ⇒ 恰好 1 条红、细节字符串与 Ubuntu 注解逐字相同；**修复后** ⇒ 全绿。
+    - **修复**：把 `const forcedUnregistered = …` 提到 spawn 之前，并写成 `if (result.error && !forcedUnregistered)`。
+      附带发现：`run-gates.mjs` 失败时只打**尾 25 行**，而这条红排在约 470 条通过断言之前 ⇒ **报告失败却报不出是哪条**；
+      连 CI 注解也救不了（截断发生在 run-gates 内部，`[FAIL]` 行从未到达 stdout）。已改为**先打印所有 `[FAIL]` 行**再打尾部；
+      workflow 的 `::error::` 窗口也从 2500 字符放宽到 6000。**诊断信息不该把失败藏起来**。
 
 ## 5. 用户决策记录（不要推翻）
 
