@@ -166,10 +166,25 @@ dsh plugin --profile <id> add file:<绝对路径>/.dsh-math-memory
 - **仍未做**：原稿的"让 patch 里的 preset 行退回 `./` 形态 ⇒ 该门必须红"**没做**——那条要改
   `dsh/cordis.patch.yml` 的生成块，属 S3/S6 的范围（生成器有 `--check` 门禁挡着），留到那时一起。
 
-### S3 · overlay 状态机 + 归属语义
-- **改**：`obsidian/main.template.js` 的 `buildNotesAssistantPatch()`（`:1822-1828`）按 `profileBundles(home).includes('dsh-math-memory')` 分支：是 → 去掉生成块与 `./math-memory-*` 两行；否 → 照旧。`dsh/install.mjs` 与 `obsidian/main.template.js` 的冲突判据改为两元组（2.5）。`dsh/host/index.mjs:60-70` 的守卫同样加"本地 bundle 也算 npm"。
-- **验收**：`node scripts/run-gates.mjs --only "patch-yaml"`、`--only installer`、`--only channel-owner`、重建 `main.js` 后 `check: main.js bundle freshness` 绿。
-- **变异验证**：① 让 overlay 在 bundle 已登记时**仍**保留 preset 声明 ⇒ 真 dsh 门必须红并报 `duplicate loader entry id`（陷阱 89 的形态）；② 让 overlay 保留 `./math-memory-panel.mjs` 行且 bundle 已启用 ⇒ 真 dsh 门必须红并报 `duplicate prefix route "/memory-panel"`（`dsh/client-panel/install-into-profile.mjs:195-205` 记录过同一形态）。这两条是**本方案的核心守卫**，没有它们就不能合。
+### S3 · overlay 状态机 + 归属语义 ✅ **已落地 2026-09-26（两条真 dsh 变异验证留到 S4/S6）**
+- **实际形态**：① overlay 的那两行用**成对标记**包住（`# >>> bundle-owned rows >>>` / `# <<< bundle-owned rows <<<`），
+  `buildNotesAssistantPatch()` 复用既有的 `profileBundles(home)` 判断"本包是不是这个 profile 的已登记 bundle"，
+  是则删掉标记之间整块、否则**逐字节不变**；标记缺失或顺序颠倒时**原样返回**（fail-safe，不半删）。
+  ② `dsh/host/index.mjs` 的守卫改为 `owner === null || owner.owner === "npm" || packageIsRegisteredBundle(profileDir)`，
+  并**按 `dsh.profile.bundles` 实查**（不靠 owner 标签推断，陈旧标记无法让守卫变松）。
+- **与原文的差异（以代码为准）**：原文 ① 说"去掉生成块与 `./math-memory-*` 两行"——**生成块不在这个 overlay 里**
+  （B3 早已把它搬到 profile 自己的 `cordis.patch.yml`），所以只有那两行要处理；
+  原文 ② 说的"冲突判据改为两元组（owner + bundleSource）"**未按字面实现**：A4 选的是①"保持两值 + 新字段"，
+  而判据实际做成了**"owner 或 bundles 实查"**——比两元组更强（不依赖标记是否正确），已照此记为实际形态。
+- **验收（实测）**：新门禁 `check: overlay drops bundle-owned rows` **22/22**；`test-channel-owner` **25/25**；
+  `--only installer` 绿；重建 `main.js` 后 `check: main.js bundle freshness` 绿；`npm test` **53 ok / 1 SKIP / 0 FAIL**。
+- **变异验证**：谓词恒 `true` ⇒ 1 条红；恒 `false` ⇒ 4 条红。另有 3 条"fail-safe"断言（标记缺失/顺序颠倒 ⇒ 原样返回）。
+- **⚠️ 仍未做（不能算完成）**：原文要求的两条**真 dsh** 变异验证 ——
+  ① overlay 在 bundle 已登记时仍保留那份声明 ⇒ 必须报 `duplicate loader entry id`；
+  ② overlay 保留 `./math-memory-panel.mjs` 且 bundle 已启用 ⇒ 必须报 `duplicate prefix route "/memory-panel"`。
+  这两条要真装配一个 bundle 形态的 profile 并启动 dsh，属 **S4/S6 的收口范围**（原文自己也把它们列为本方案的
+  **核心守卫**：没有它们就不能合）。本轮已用组合级门禁覆盖"该删的删 / 该留的留 / 解析得动"，但**没有**在真 dsh 上
+  复现过那两句报错。
 
 ### S4 · 两条调用路径接线
 - **改**：CLI `dsh/install.mjs` 在 `directInstallProfile()`（`:364-415`）里追加"物化 → `localBundleAddArgs` → spawn（`dsh plugin --profile <id> add file:<abs>`）→ 文件系统核验 → 写 owner(含 bundle 来源) → 写 overlay"；Obsidian `bootstrapDshConfig()`（`:1876-1945`）同序（spawn 形状照抄 `:1788-1795`，成败判据照抄 `:1802-1811` 的"以文件系统为准"）。若 `dsh`/`pnpm` 不可用或核验失败 ⇒ **回落平铺并明确报告**（不静默）。新增 `--flat` 强制旧形态（D1）。
