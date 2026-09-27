@@ -1001,5 +1001,63 @@ rmSync(vault, { recursive: true, force: true });
   }
 }
 
+// 13. The declaration repairs must be LINE-ENDING PRESERVING (2026-09-27 — this was a pre-existing CI red).
+//
+// Both repairs used to hardcode `"\n"`. On the CRLF file that is actually committed (`dsh/profile/
+// cordis.patch.yml` is CRLF in the blob, like 267 other tracked files — there is no `.gitattributes`),
+// `stripPresetDeclaration`'s `/\n{3,}/` collapse could not match `\r\n\r\n\r\n` and the append glued an LF
+// block onto a CRLF document: measured `9849 → 9726` chars with MIXED endings (79 CRLF + 123 LF).
+// Consequence: the `no drift` pair above went red in every FRESH clone while staying green in a working
+// copy that held the file as LF — `core.autocrlf=true` normalizes BOTH sides for `git status`, so the
+// working copy looked clean while its bytes differed from the blob. (Found by extracting the tracked tree
+// with `git archive` and running this suite there — the same file set CI gets.)
+//
+// ⚠️ THESE CASES FEED CRLF EXPLICITLY ON PURPOSE. Asserting against the repo's own file would silently
+// follow whatever the local checkout happens to be, which is exactly the data that lied here.
+//
+// MUTATION: change either repair back to a hardcoded `"\n"` and the CRLF cases go red.
+{
+  const eolHome = mkdtempSync(join(tmpdir(), 'dsh-eol-'));
+  try {
+    const scaffold = readFileSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), 'utf8');
+    const asLf = scaffold.replace(/\r\n/g, '\n');
+    const asCrlf = asLf.replace(/\n/g, '\r\n');
+    check('eol fixture: the shipped scaffold really carries the generated declaration',
+      scaffold.includes(DECLARATION_BEGIN) && scaffold.includes(DECLARATION_END));
+
+    for (const [label, text] of [['LF', asLf], ['CRLF', asCrlf]]) {
+      const dir = join(eolHome, label);
+      mkdirSync(dir, { recursive: true });
+      const target = join(dir, 'cordis.patch.yml');
+
+      // strip then ensure is exactly what `directInstallProfile` leaves on an EXISTING posture.
+      writeFileSync(target, text, 'utf8');
+      const didStrip = stripPresetDeclaration(dir);
+      ensurePresetDeclaration(dir);
+      const roundTripped = readFileSync(target, 'utf8');
+      check(`eol: strip+ensure round-trips a ${label} patch layer byte-for-byte`,
+        didStrip === true && roundTripped === text,
+        `${text.length} -> ${roundTripped.length} chars`);
+      check(`eol: ...and the ${label} result is NOT mixed-ending`,
+        (roundTripped.match(/\r\n/g) ?? []).length === (text.match(/\r\n/g) ?? []).length &&
+        (roundTripped.match(/\n/g) ?? []).length === (text.match(/\n/g) ?? []).length,
+        `crlf ${(text.match(/\r\n/g) ?? []).length}->${(roundTripped.match(/\r\n/g) ?? []).length}`);
+
+      // The append path on its own (no prior strip): a posture that lost the block must get it back
+      // without changing how the rest of the file is terminated.
+      const withoutBlock = text.replace(text.slice(text.indexOf(DECLARATION_BEGIN),
+        text.indexOf(DECLARATION_END) + DECLARATION_END.length), '');
+      writeFileSync(target, withoutBlock, 'utf8');
+      const didEnsure = ensurePresetDeclaration(dir);
+      const rebuilt = readFileSync(target, 'utf8');
+      check(`eol: re-appending the block to a ${label} layer keeps that layer's terminator`,
+        didEnsure === true && rebuilt === text,
+        `${withoutBlock.length} +block -> ${rebuilt.length} vs ${text.length}`);
+    }
+  } finally {
+    rmSync(eolHome, { recursive: true, force: true });
+  }
+}
+
 console.log(failed === 0 ? 'installer: all checks passed' : `installer: ${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);

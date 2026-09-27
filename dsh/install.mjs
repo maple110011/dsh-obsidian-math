@@ -421,22 +421,55 @@ export function ensurePresetDeclaration(profileRoot) {
   if (start < 0 || stop <= start) return false;
   const block = source.slice(start, stop + end.length);
   const current = readFileSync(target, "utf8");
+  const eol = lineEndingOf(current);
   const from = current.indexOf(begin);
   const to = current.indexOf(end);
   if (from >= 0 && to > from) {
     if (current.slice(from, to + end.length).trim() === block.trim()) return false;
-    writeFileSync(target, current.slice(0, from) + block + current.slice(to + end.length), "utf8");
+    // The block comes from the SCAFFOLD; the target may be terminated differently. Re-terminate it,
+    // or this splice writes a mixed-ending file (see `lineEndingOf`).
+    writeFileSync(target, current.slice(0, from) + withLineEnding(block, eol) + current.slice(to + end.length), "utf8");
     return true;
   }
   // No block at all. If the id is declared some other way by hand, leave that alone — the user may have
   // arranged it deliberately, and guessing would be worse than the gate reporting a stale declaration.
   if (/- id:\s*["']?preset-notes-assistant["']?\s*$/m.test(current)) return false;
-  writeFileSync(target, current.replace(/\s*$/, "\n") + "\n" + block + "\n", "utf8");
+  // `replace(/\s*$/, eol)` collapses the trailing run to exactly one terminator; the extra `eol` opens the
+  // blank line the block is separated by. For an LF file this is byte-for-byte the old expression.
+  writeFileSync(target,
+    current.replace(/\s*$/, "") + eol + eol + withLineEnding(block, eol) + eol, "utf8");
   return true;
 }
 
 const DECL_BEGIN = DECLARATION_BEGIN;
 const DECL_END = DECLARATION_END;
+
+/**
+ * The line ending a patch layer is written in.
+ *
+ * WHY THIS EXISTS (2026-09-27, CI red on a `no drift` assertion — and it was NOT the change that pushed it):
+ * both declaration repairs below used to hardcode `"\n"`. On a CRLF file that is not cosmetic:
+ * `stripPresetDeclaration`'s blank-run collapse (`/\n{3,}/`) cannot match `\r\n\r\n\r\n`, and the append
+ * path glued an LF block onto a CRLF document — measured on the shipped scaffold: `9849 → 9726` chars with
+ * **mixed** endings (79 CRLF + 123 LF). The installer therefore rewrote a user's own `cordis.patch.yml`
+ * with mangled line endings, and `test-installer`'s `no drift` pair (`<profile>/cordis.patch.yml` must be
+ * byte-identical to the repo scaffold) went red in every FRESH clone while staying green in a working copy
+ * that happened to hold the file as LF. That asymmetry is the trap: `core.autocrlf=true` normalizes BOTH
+ * sides for `git status`, so the working copy looked clean while its bytes differed from the blob.
+ *
+ * Rule: never assume the terminator. Detect it from the file being edited, and never mix the two.
+ */
+function lineEndingOf(text) {
+  const total = (text.match(/\n/g) ?? []).length;
+  const crlf = (text.match(/\r\n/g) ?? []).length;
+  return crlf > total - crlf ? "\r\n" : "\n";
+}
+
+/** Re-terminate `text` with `eol`, so a block taken from one file can be spliced into another. */
+function withLineEnding(text, eol) {
+  const lf = text.replace(/\r\n/g, "\n");
+  return eol === "\n" ? lf : lf.replace(/\n/g, "\r\n");
+}
 
 /** One place for the block's bounds, so the two channel repairs cannot drift apart. */
 function declarationBounds(source) {
@@ -464,7 +497,12 @@ export function stripPresetDeclaration(profileRoot) {
   const current = readFileSync(target, "utf8");
   const bounds = declarationBounds(current);
   if (bounds === null) return false;
-  const stripped = (current.slice(0, bounds.from) + current.slice(bounds.to)).replace(/\n{3,}/g, "\n\n");
+  // Collapse the blank run the block leaves behind, IN THE FILE'S OWN TERMINATOR: `/\n{3,}/` can never
+  // match a CRLF run (`\r\n\r\n\r\n` has an `\r` between every pair), which is how a CRLF file came back
+  // with one blank line too many (see `lineEndingOf`).
+  const eol = lineEndingOf(current);
+  const stripped = (current.slice(0, bounds.from) + current.slice(bounds.to))
+    .replace(/(?:\r?\n){3,}/g, eol + eol);
   writeFileSync(target, stripped, "utf8");
   return true;
 }
