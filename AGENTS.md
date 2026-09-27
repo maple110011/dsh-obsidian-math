@@ -64,7 +64,7 @@
 
 ## 4. 验证：什么才算"通过"
 
-**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 **53** 条门禁；**这个数字由 `scripts/lib/gates.mjs` 派生、由 `check-doc-counts.mjs` 守住**——它曾手写成「34/34」而在门禁增长到 41 条后仍在原地）。⚠️ 但"绿"要读三态：`ok` / `SKIP` / `FAIL`。**SKIP 只表示那条门禁在本机没比任何东西**（缺 dsh、缺已部署的 profile、沙箱不允许子进程写自身状态），汇总会**单独列出被跳过的门禁名与原因**；它**不是**通过。历史上 `test: deployed profile accepts a session` 曾长期 `0/0 断言 + exit 0`，而"45/45 全绿"把这件事盖住了（坑 69 的同族，2026-09-26 已改为三态汇总，详见坑 98）。见到 `SKIP` 就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
+**首选**：`npm test`（= `node scripts/run-gates.mjs`）。它**跑完全部门禁再汇总**，逐个报告状态与套件自报计数，失败时打印该门禁输出的末尾。**若它绿，你是真的绿**（本机当前 **54** 条门禁；**这个数字由 `scripts/lib/gates.mjs` 派生、由 `check-doc-counts.mjs` 守住**——它曾手写成「34/34」而在门禁增长到 41 条后仍在原地）。⚠️ 但"绿"要读三态：`ok` / `SKIP` / `FAIL`。**SKIP 只表示那条门禁在本机没比任何东西**（缺 dsh、缺已部署的 profile、沙箱不允许子进程写自身状态），汇总会**单独列出被跳过的门禁名与原因**；它**不是**通过。历史上 `test: deployed profile accepts a session` 曾长期 `0/0 断言 + exit 0`，而"45/45 全绿"把这件事盖住了（坑 69 的同族，2026-09-26 已改为三态汇总，详见坑 98）。见到 `SKIP` 就去读那条门禁自己的输出（`node scripts/run-gates.mjs --only <子串>`），别把汇总当成"每条都真的比过"。
 
 ```bash
 node scripts/run-gates.mjs               # 全部门禁（= npm test）

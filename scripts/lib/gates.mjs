@@ -75,6 +75,12 @@ export const GATES = [
   // statement of what gets staged / which rows exist / which routes are served. It says explicitly
   // which assertions READ the contract and which only PIN a hand-written list.
   { name: 'check: profile contract is the single source', args: ['scripts/check-profile-contract.mjs'] },
+  // S3（2026-09-26）：装了包之后，插件拥有的 overlay **不能**再声明包自己已经注册的那两行，否则
+  // 两个来源都注册 `/memory-panel/*`，dsh 直接拒绝启动整个 profile（`duplicate prefix route`）。
+  // 这条门禁把**出厂的** `buildNotesAssistantPatch` / `stripBundleOwnedRows` 从 main.js 里抽出来执行
+  // （acorn 取函数节点，不手数括号），验「无包时逐字节不变 / 有包时只删那两行 / client-panel 行必须留下 /
+  // 两种形态都能被 YAML 解析 / 标记缺失时 fail-safe 不改文本」。
+  { name: 'check: overlay drops bundle-owned rows', args: ['scripts/check-overlay-bundle-rows.mjs'] },
   // 用户现场发生过四次 `$DSH_HOME` 被清空（陷阱 56/59）。插件号称每次启动都会从内嵌副本重建 profile，
   // 但在 2026-09-26 之前**没有任何门禁执行过那个函数**：`check-embedded-writers` 跑的是内嵌的
   // memory-admin，`check-profile-contract` 只验清单是派生的（不验真的写），自带的 real-profile 门禁又是

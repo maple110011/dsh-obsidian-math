@@ -23,12 +23,22 @@
 # (it is embedded into `main.js` by scripts/build-obsidian.mjs) and let
 # `dsh/client-panel/install-into-profile.mjs` only INSTALL THE PACKAGE.
 - insert:
+    # >>> bundle-owned rows (see buildNotesAssistantPatch) >>>
+    #
+    # The two rows below are the FLAT channel's copies of what the installed package already registers
+    # through its own entry (`dsh-math-memory` → `host/index.mjs`, which calls applyPanel + applyWorkspace).
+    # When that package IS a registered bundle in this profile, keeping these rows means TWO sources
+    # register `/memory-panel/*` and auto-register the workspace ⇒ dsh refuses the whole profile with
+    # `duplicate prefix route "/memory-panel"`. `buildNotesAssistantPatch` therefore DROPS everything
+    # between these markers when the bundle is present; the row after them stays in both cases (the
+    # client package is installed separately and is NOT part of the bundle's patch).
     - id: math-memory-workspace
       name: ./math-memory-workspace.mjs
       config:
         vaultPath: !!js process.env.DSH_WORKSPACE_ROOT ?? process.env.DSH_OBSIDIAN_VAULT
     - id: math-memory-panel
       name: ./math-memory-panel.mjs
+    # <<< bundle-owned rows <<<
     - id: math-memory-client-panel
       name: '@dsh-math-memory/client-ui-memory-panel'
 

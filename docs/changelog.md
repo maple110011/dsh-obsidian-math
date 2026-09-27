@@ -3,6 +3,64 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · A′ S3：overlay 状态机 + 归属语义（让"装成包"之后不再自己撞自己）
+
+**要防的是什么（这不是整洁问题，是"整个 profile 起不来"）**：`dsh-math-memory` 的入口
+（`dsh/host/index.mjs`）会注册 `/memory-panel/*` **并**自动登记 vault 工作区；而插件拥有的 overlay
+（`notes-assistant.patch.yml`）里的 `math-memory-workspace` / `math-memory-panel` 两行**做同样两件事**。
+两者同时生效时 dsh 拒绝启动**整个 profile**：
+
+    dsh: plugin tree failed to load: … duplicate prefix route "/memory-panel"
+
+即**侧栏完全打不开**，与 2026-09-21 那次 duplicate-loader-id 事故同类（陷阱 89）。
+
+**改动一：overlay 变成有状态的。**
+`dsh/profile/notes-assistant.patch.yml` 里给那两行加了成对标记
+（`# >>> bundle-owned rows >>>` / `# <<< bundle-owned rows <<<`），`buildNotesAssistantPatch()` 现在问
+"这个 profile 有没有把本包登记成 bundle"（复用既有的 `profileBundles(home)`，读的正是 dsh 插件管理页
+用的那一份 `dsh.profile.bundles`）：**有**就把标记之间整块删掉，**没有**则**逐字节不变**。
+
+**必须留下、不能一起删的**：`math-memory-client-panel` —— 浏览器半个是**单独装进 `node_modules`** 的，
+**不在** bundle 的 patch 里，overlay 是它在这个 profile 里**唯一**的声明；删了就是拖拽引用静默失效。
+
+**fail-safe 而不是半删**：标记缺失或顺序颠倒时**原样返回**（保持删之前的行为）。半删（删一行留一行）
+比不删更糟：仍然冲突，却看起来像是有意为之。
+
+**改动二：host 守卫认得"本地 bundle"。**
+`dsh/host/index.mjs` 原来只接受 `owner === "npm"`，于是**本地 bundle**（A′ 用 `dsh plugin add file:…`
+装的，owner 同样是 npm，但早期标记可能写着 `direct`）会被当成**外来通道**而跳过 ⇒ 面板路由与工作区
+登记全不挂，而其他所有信号都说"装好了"。现在判据是
+`owner === null || owner.owner === "npm" || packageIsRegisteredBundle(profileDir)`，且**注册与否按
+`dsh.profile.bundles` 实查**（不靠标签推断，这样陈旧标记无法让守卫变松）。判据不一致时会**打一行日志说明**
+（"标记说 direct，但这个 profile 登记了本包 ⇒ 按 bundle 通道激活"）。
+
+**验证**：
+· 新门禁 `check: overlay drops bundle-owned rows`（**22 条**，门禁总数 53→**54**）：把**出厂**的
+  `buildNotesAssistantPatch` / `stripBundleOwnedRows` 从 `main.js` 抽出执行（acorn 取函数节点），验
+  "无包时逐字节不变 / 有包时那两行消失 / client-panel 行两种情况下都留下 / 两种形态都能被 YAML 解析且
+  仍是**单根节点 + insert 列表** / 标记缺失或颠倒时 fail-safe / 仓库源文件与内嵌副本带同一对标记"。
+· `test-channel-owner` 18 → **25**：新增"登记了 bundle 就不再因标记写着 direct 而跳过"与
+  **四条控制用例**（无 bundle 要跳过 / 登记了要激活 / 可读但**不含**本包的 manifest 视为未登记 /
+  **解析不了**的 manifest 也视为未登记且不抛）。变异验证：把谓词改成恒 `true` ⇒ 1 条红；恒 `false` ⇒ **4 条红**。
+
+**过程里我自己修掉的三个测试缺陷**（都属"控制用例其实没在控制"）：
+1. 控制用例断言"无 bundle ⇒ 仍跳过"，但**变异成恒 `true` 时它没红** —— 因为探针与索引用的是**同一个 home**，
+   断言匹配到的是**前面用例遗留的旧警告**。改为**独立 profile 目录**。
+2. 改成独立目录后**仍然没红**：文件不存在时函数在 `try` 之前就返回了，**变异根本走不到那个分支**。
+   最终补上"**manifest 可读、只是不含本包**"这一条，恒 `true` 才被抓住。
+3. 期间为了定位，我往 `index.mjs` 插了临时 `console.log` 并**确认已清干净**（`DBG` 残留 0）。
+   ⇒ 教训与陷阱 68 同族：**控制用例必须能把警告归因到它自己那一次运行**。
+
+**顺带被仓库门禁抓到的两处**（都按设计工作）：`check: plugin rebuilds a wiped $DSH_HOME` 因为 bootstrap 现在
+会调用新助手而报 `mathMemoryBundled is not defined`（已把**真实实现**补进它的提取范围，而不是塞个常量）；
+`check-doc-counts` 因为门禁总数变了而报红（已同步 `AGENTS.md`）。
+
+**证据边界**：本步验的是**组合逻辑**（该删的删、该留的留、解析得动、变异能抓）。方案原文要求的
+**两条真 dsh 变异验证**（overlay 与 bundle 同时声明时的 `duplicate loader entry id` / 保留
+`./math-memory-panel.mjs` 时的 `duplicate prefix route`）**尚未做** —— 它们要真装配一个 bundle 形态的
+profile 并启动 dsh，属 S4/S6 的收口范围，这里如实记为未做。
+
+
 ## 2026-09-26 · S0：安装器拒绝"把 OS 主目录当成 harness home"（A′ 的安全前置）
 
 **缘起**：用户看到"`$home` 静默保持用户主目录"之后担心 A′ 会不会重演删库。查证后我必须把话说准：

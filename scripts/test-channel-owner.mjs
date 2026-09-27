@@ -139,6 +139,97 @@ try {
     !warnsC.some((m) => /skipping bundle activation/.test(m)), warnsC.join(' | ').slice(0, 200));
   check('runtime guard: it goes on to attempt the panel routes for that profile (routes get registered)',
     warnsC.some((m) => /panel routes failed/.test(m)), warnsC.join(' | ').slice(0, 200));
+
+  // Case D — S3 (2026-09-26): the marker says `direct`, but the profile DOES register our package as a
+  // bundle. Before S3 the guard accepted only `owner === "npm"`, so this exact shape was treated as a
+  // foreign channel and skipped — which is what a LOCAL bundle install (A′: `dsh plugin add file:…`)
+  // looks like when an older marker survives. Skipping it means the panel routes and the workspace
+  // registration never mount while every other signal says the install succeeded.
+  rmSync(legacyMarkerPath, { force: true });
+  writeFileSync(manifestPath, JSON.stringify({ owner: 'direct', version: '0.7.8' }), 'utf8');
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
+    name: 'dsh-profile-p', private: true,
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-math-memory'] } }
+  }), 'utf8');
+  const warnsD = [];
+  const { apply: applyD } = await import(`../dsh/host/index.mjs?case=d-${Date.now()}`);
+  await applyD(fakeCtx(warnsD), {});
+  check('runtime guard: a registered bundle is NOT skipped just because the marker says "direct" (S3)',
+    !warnsD.some((m) => /skipping bundle activation/.test(m)), warnsD.join(' | ').slice(0, 200));
+  check('...it says why it activated anyway (the disagreement is visible at runtime)',
+    warnsD.some((m) => /registers dsh-math-memory as a bundle/.test(m)), warnsD.join(' | ').slice(0, 200));
+  check('...and it really goes on to mount (panel routes attempted)',
+    warnsD.some((m) => /panel routes failed/.test(m)), warnsD.join(' | ').slice(0, 200));
+
+  // Case E — the CONTROL for case D, on its OWN PROFILE DIRECTORY.
+  //
+  // Two earlier versions of this control were broken, and the way they were broken is worth keeping:
+  //   1st: it re-imported `index.mjs` and asserted "no bundle ⇒ still skips". Mutating the predicate to
+  //        `return true` did NOT turn it red.
+  //   2nd: it drove two fresh instances over the SHARED profile dir from the cases above. Still green
+  //        under the same mutation.
+  // The instrumented run showed why: both shared `warnsE`-style arrays with the earlier cases, and the
+  // `skipping bundle activation` warning from case A was still in the array — so the assertion matched a
+  // STALE message rather than this run's behaviour. A control that cannot attribute a warning to its own
+  // run is not a control (trap 68), so this one gets a private profile directory and a private home
+  // marker state, and asserts BOTH directions in the same pair:
+  //   · no bundle registered + `direct` marker   → must skip;
+  //   · bundle registered     + `direct` marker   → must NOT skip.
+  // The only difference between the two runs is `dsh.profile.bundles`, so the pair pins the predicate.
+  {
+    const controlDir = join(home, 'profiles', 'control-profile');
+    mkdirSync(controlDir, { recursive: true });
+    const controlCtx = (warns) => ({
+      baseUrl: pathToFileURL(controlDir).href + '/',
+      logger: { warn: (m) => warns.push(String(m)), info: () => {} }
+    });
+    const controlManifest = join(controlDir, '.install-manifest.json');
+    writeFileSync(controlManifest, JSON.stringify({ owner: 'direct', version: '0.7.8' }), 'utf8');
+
+    rmSync(join(controlDir, 'package.json'), { force: true });
+    const warnsNoBundle = [];
+    const { apply: applyNoBundle } = await import(`../dsh/host/index.mjs?case=e1-${Date.now()}`);
+    await applyNoBundle(controlCtx(warnsNoBundle), {});
+    check('control: with NO bundle registered the "direct" marker skips',
+      warnsNoBundle.some((m) => /skipping bundle activation/.test(m)),
+      warnsNoBundle.join(' | ').slice(0, 200));
+
+    writeFileSync(join(controlDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-control', private: true,
+      dsh: { profile: { bundles: ['dsh-math-memory'] } }
+    }), 'utf8');
+    const warnsWithBundle = [];
+    const { apply: applyWithBundle } = await import(`../dsh/host/index.mjs?case=e2-${Date.now()}`);
+    await applyWithBundle(controlCtx(warnsWithBundle), {});
+    check('control: the SAME marker stops skipping once the bundle is registered',
+      !warnsWithBundle.some((m) => /skipping bundle activation/.test(m)),
+      warnsWithBundle.join(' | ').slice(0, 200));
+
+    // Third control, and the one that actually pins the PREDICATE: a package.json that EXISTS and
+    // parses, but does NOT list our package. The predicate must answer false here, so the guard must
+    // SKIP. This is what makes an unconditional `return true` inside the predicate detectable: the
+    // earlier "delete package.json" form did NOT catch it (measured 2026-09-26) because a missing file
+    // returns early, before the branch a `return true` mutation would live in.
+    writeFileSync(join(controlDir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-control', private: true,
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } }
+    }), 'utf8');
+    const warnsOtherBundles = [];
+    const { apply: applyOtherBundles } = await import(`../dsh/host/index.mjs?case=e3-${Date.now()}`);
+    await applyOtherBundles(controlCtx(warnsOtherBundles), {});
+    check('control: a readable manifest WITHOUT our bundle is "not registered" (so the guard skips)',
+      warnsOtherBundles.some((m) => /skipping bundle activation/.test(m)),
+      warnsOtherBundles.join(' | ').slice(0, 200));
+
+    // Fourth: the file exists but is NOT valid JSON — the catch branch must also answer "not registered".
+    writeFileSync(join(controlDir, 'package.json'), '{ not json', 'utf8');
+    const warnsBroken = [];
+    const { apply: applyBroken } = await import(`../dsh/host/index.mjs?case=e4-${Date.now()}`);
+    await applyBroken(controlCtx(warnsBroken), {});
+    check('control: a manifest that cannot be parsed is "not registered" (guard skips, never throws)',
+      warnsBroken.some((m) => /skipping bundle activation/.test(m)),
+      warnsBroken.join(' | ').slice(0, 200));
+  }
 } finally {
   if (previousHome === undefined) delete process.env.DSH_HOME;
   else process.env.DSH_HOME = previousHome;

@@ -1896,12 +1896,70 @@ function installSkinCenterPackages(home, done) {
 }
 
 /** Build the plugin-owned notes-assistant.patch.yml content (embedded base + optional skin center). */
+/**
+ * Markers around the overlay rows that the INSTALLED PACKAGE already provides (S3, 2026-09-26).
+ *
+ * ⚠️ These strings are duplicated in `dsh/profile/notes-assistant.patch.yml` as literal YAML comments.
+ * This file is evaluated as a bundle (it cannot `import`), so the pair cannot be shared through a
+ * module — the same constraint as `DECLARATION_BEGIN`/`END` in `scripts/lib/preset-declaration.mjs`.
+ * `scripts/check-preset-body-lists.mjs` asserts the markers are present in the overlay and that the
+ * pair stays balanced, so a rename on one side cannot silently disable the strip.
+ */
+const BUNDLE_ROWS_BEGIN = '# >>> bundle-owned rows (see buildNotesAssistantPatch) >>>';
+const BUNDLE_ROWS_END = '# <<< bundle-owned rows <<<';
+
+/**
+ * True when the installed package is a registered bundle of this profile.
+ *
+ * `dsh.profile.bundles` is exactly the list dsh's plugin-manager reads, so this is the same predicate
+ * the manager uses to decide the package is present (see `check-plugin-manifest-meta.mjs` and
+ * `docs/installation.md` §"三种方式的可见性").
+ */
+function mathMemoryBundled(home) {
+  return profileBundles(home).includes('dsh-math-memory');
+}
+
+/**
+ * Build the plugin-owned `notes-assistant.patch.yml` overlay text.
+ *
+ * S3 (2026-09-26): when the PACKAGE is a registered bundle, drop the two overlay rows it already
+ * registers. Both sources register `/memory-panel/*` and auto-register the workspace, and dsh treats a
+ * repeated route prefix as a hard failure for the WHOLE profile:
+ *   `dsh: plugin tree failed to load: … duplicate prefix route "/memory-panel"`
+ * which is the same class of outage as the 2026-09-21 duplicate-loader-id incident — the sidebar stops
+ * starting entirely. Dropping the rows is therefore not cosmetic.
+ *
+ * What must NOT be dropped when the bundle is active:
+ *   · `math-memory-client-panel` — the browser half is installed into `node_modules` by the client-half
+ *     installer (`dsh/client-panel/install-into-profile.mjs`) and is NOT part of the bundle's patch, so
+ *     the overlay is its only declaration in this profile;
+ *   · the generated declaration — it does not live here at all any more (B3 moved it to the profile's
+ *     own `cordis.patch.yml`), so there is nothing to strip for it.
+ */
 function buildNotesAssistantPatch(settings, home) {
   let content = EMBEDDED_PRESET['profile-notes-assistant.patch.yml'];
+  if (mathMemoryBundled(home)) {
+    content = stripBundleOwnedRows(content);
+  }
   if (skinCenterMountable(settings, home)) {
     content += '\n\n' + SKIN_CENTER_INSERT + '\n';
   }
   return content;
+}
+
+/**
+ * Remove the marker-delimited block (markers included) from the overlay text.
+ *
+ * Fails SAFE: when either marker is missing or they are out of order, the text is returned UNCHANGED
+ * (i.e. the flat rows stay, which is the pre-S3 behaviour and the correct one when no bundle is
+ * registered). Silently returning a half-stripped file would be worse than not stripping: the overlay
+ * would lose one row and keep the other, still colliding while looking deliberate.
+ */
+function stripBundleOwnedRows(content) {
+  const begin = content.indexOf(BUNDLE_ROWS_BEGIN);
+  const end = content.indexOf(BUNDLE_ROWS_END);
+  if (begin < 0 || end < 0 || end < begin) return content;
+  return content.slice(0, begin) + content.slice(end + BUNDLE_ROWS_END.length);
 }
 
 /**

@@ -159,7 +159,22 @@ const HARNESS_PRELUDE = [
   '// Same reasoning: on a home where nothing is installed, `readGlobalSkinIds` finds no ids and the',
   '// real function returns the empty string (main.template.js:1766-1771). Stubbed to that value so the',
   '// skin-center surface (`readGlobalSkinIds`, `SKIN_FALLBACK_*`) is not re-implemented here.',
-  "function buildSkinFallbackBlock() { return ''; }"
+  "function buildSkinFallbackBlock() { return ''; }",
+  '// S3 (2026-09-26): the overlay composition now asks whether this profile registers our package as a',
+  '// bundle, so the bootstrap reaches `mathMemoryBundled` -> `profileBundles`. Both are pure filesystem',
+  '// reads of `<profile>/package.json`; on a WIPED home there is no package.json at all, so the honest',
+  '// value is "not bundled" (flat channel) — which is exactly what the real pair returns here. Kept as',
+  '// the real read rather than a constant so this harness still follows the shipped logic.',
+  'function profileBundles(home) {',
+  "  try {",
+  "    const parsed = JSON.parse(readFileSync(join(home, 'profiles', PRESET_NAME, 'package.json'), 'utf8'));",
+  '    const bundles = parsed?.dsh?.profile?.bundles;',
+  '    return Array.isArray(bundles) ? bundles : [];',
+  '  } catch {',
+  '    return [];',
+  '  }',
+  '}',
+  "function mathMemoryBundled(home) { return profileBundles(home).includes('dsh-math-memory'); }"
 ].join('\n');
 
 const harness = new Function(

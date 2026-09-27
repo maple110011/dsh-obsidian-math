@@ -23,6 +23,7 @@
  */
 
 import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { profileDirFromCtx, readChannelOwner } from "./channel-owner.mjs";
 import { apply as applyPanel } from "./math-memory-panel.mjs";
@@ -30,6 +31,30 @@ import { apply as applyWorkspace } from "../profile/math-memory-workspace.mjs";
 
 export const name = "math-memory-host";
 export const inject = ["webServer", "workspaceRegistry"];
+
+/**
+ * True when THIS profile lists our package as a registered bundle.
+ *
+ * S3 (2026-09-26). The guard below used to accept only `owner === "npm"`, which meant a **local**
+ * bundle (A′: the offline channel materializes the package and installs it with `dsh plugin add
+ * file:…`, recording `owner: "npm"` plus a "local" bundle source) would be treated as a FOREIGN
+ * channel and skipped — the package's routes and workspace would never mount, while every other
+ * signal said the install succeeded. That is the silent-half-mount shape this file exists to prevent.
+ *
+ * The predicate is the same authority dsh's plugin-manager uses (`dsh.profile.bundles`), so "the
+ * bundle is really registered here" is checked rather than inferred from the owner label: a stale
+ * marker must not be able to make the guard permissive.
+ */
+function packageIsRegisteredBundle(profileDir) {
+  if (typeof profileDir !== "string" || profileDir === "") return false;
+  try {
+    const parsed = JSON.parse(readFileSync(join(profileDir, "package.json"), "utf8"));
+    const bundles = parsed?.dsh?.profile?.bundles;
+    return Array.isArray(bundles) && bundles.includes("dsh-math-memory");
+  } catch {
+    return false;
+  }
+}
 
 const PRESET_ID = "notes-assistant";
 
@@ -59,7 +84,12 @@ export async function apply(ctx, config) {
   // which anchor decided, so that distinction is visible at runtime.
   const profileDir = profileDirFromCtx(ctx);
   const owner = readChannelOwner({ profileDir, home: dshHome(), presetId: PRESET_ID });
-  if (owner !== null && owner.owner !== "npm") {
+  // `owner === "npm"` covers the registry bundle AND the local bundle A′ installs (both are installed
+  // through `dsh plugin add`, so both record the npm channel). The extra `packageIsRegisteredBundle`
+  // check covers the case where the manifest is missing or was written by an older version while the
+  // package IS registered — without it, a real bundle install could be skipped for want of a marker.
+  const ownChannel = owner === null || owner.owner === "npm";
+  if (!ownChannel && !packageIsRegisteredBundle(profileDir)) {
     ctx.logger?.warn?.(
       `dsh-math-memory: this profile is owned by "${owner.owner}" ` +
       `(${owner.source === "manifest" ? "profile .install-manifest.json" : "legacy .agent-presets marker"}) — ` +
@@ -67,6 +97,12 @@ export async function apply(ctx, config) {
       `or \`dsh-math-memory install --force\` to switch to the npm bundle channel.`
     );
     return;
+  }
+  if (!ownChannel) {
+    ctx.logger?.warn?.(
+      `dsh-math-memory: the ownership marker says "${owner.owner}" but this profile registers ` +
+      `dsh-math-memory as a bundle — activating as the bundle channel.`
+    );
   }
 
   // 1. memory-panel routes
