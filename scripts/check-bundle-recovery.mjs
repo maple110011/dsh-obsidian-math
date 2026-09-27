@@ -211,6 +211,19 @@ const fakePlugin = (home, version = '0.7.8') => ({
   try {
     const res = bootstrap(fakePlugin(home), false);
     check('an ABSENT $DSH_HOME is recovered (no throw)', res.home === home, res.home);
+    // ── The plugin MANAGER honesty contract (2026-09-26) ─────────────────────────────────────────
+    //
+    // This bootstrap writes the flat layout, which dsh's plugin page cannot list. A user looking for
+    // their plugin naturally looks there, so the bootstrap must SAY that and point at the alternative
+    // — instead of leaving them to conclude the install failed. Asserted here (rather than only in a
+    // doc) because it is a user-visible promise that is easy to delete by accident.
+    check('bootstrap reports whether this profile registers the package as a bundle',
+      res.bundled === false, `bundled=${res.bundled}`);
+    check('bootstrap explains the plugin will NOT appear in dsh\'s plugin page',
+      typeof res.notice === 'string' && /不会出现在 dsh 的「插件」页/.test(res.notice),
+      String(res.notice).slice(0, 80));
+    check('...and it names the CLI alternative that DOES make it visible',
+      typeof res.notice === 'string' && /dsh-math-memory install --direct/.test(res.notice));
     const profileRoot = join(home, 'profiles', PRESET_NAME);
     const missing = DIRECT_PROFILE_FILES.filter((n) => !existsSync(join(profileRoot, n)));
     check('every contracted profile file exists after recovery from nothing',

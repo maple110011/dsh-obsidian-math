@@ -233,10 +233,18 @@ dsh plugin --profile <id> add file:<绝对路径>/.dsh-math-memory
   `--flat`（它们断言的是平铺通道的文件/卸载行为）。
 - **变异验证（实测）**：① 判据退回 `exit code == 0` ⇒ **3 条红**（含 `the manifest does NOT claim the npm channel | npm`，
   即"包没登记却写成 owner=npm"）；② 不再剥 overlay ⇒ 1 条红；③ 删掉核验 ⇒ **5 条红**。
-- **⚠️ Obsidian 侧（`bootstrapDshConfig`）未做**：它仍是纯平铺，所以**从侧栏那条路装出来的插件仍不出现在管理页**。
-  障碍是成本而非设计：插件进程没有 `pnpm`，物化器是 ESM 而模板是 `new Function` 求值的 bundle（不能 `import`），
-  要先把物化器按 basename 内嵌进 `main.js` 并在模板作用域里自备 `read`/`collectClosure`。**如实记为未做**，
-  已登记 `docs/handoff.md` §7。
+- **⚠️ Obsidian 侧（`bootstrapDshConfig`）经实测判定为结构性不可行，本轮改为"诚实告知"**：它仍是纯平铺，
+  所以**从侧栏那条路装出来的插件不会出现在管理页**。**根因（实测，非推断）**：物化包要求
+  `dsh/host/index.mjs` 与其同级依赖 `./channel-owner.mjs`、`./math-memory-panel.mjs` 处于**真实子目录**；
+  而 `main.js` 的内嵌表 `EMBEDDED_PRESET` **以 basename 为键**、平铺存放，且 `hook-frontmatter.mjs` /
+  `engine-shared.mjs` 在 `dsh/host/` 与 `dsh/preset/` 下**同名但不同文件**（host 那两份是给已发布包布局用的
+  re-export shim）—— 这正是它们被列入 `NOT_EMBEDDED`（"would collide on materialization"）的理由；
+  `dsh/host/index.mjs` 本身也不在内嵌表里。⇒ 要做得**同时**改造内嵌表（子目录键）+ 模板寻址 + 物化器路径模型，
+  属架构改动且触及**每次起服务都跑**的活路径。**本轮交付的替代**：`bootstrapDshConfig` 返回 `notice`/`bundled`，
+  设置页两个按钮都会用 `Notice` 告知"平铺形态不会出现在「插件」页（设计取舍）、想要可见请用 CLI
+  `dsh-math-memory install --direct`、两条路互不冲突"，并由门禁（3 条断言，变异 1 条红）钉住。
+  **前置改造清单**（要做时按此验收）：① 内嵌键改子目录相对路径；② 物化器支持子目录；③ 按 CLI 同序接线
+  （物化 → `dsh plugin add file:<abs>` → **文件系统核验** → owner 最后翻转 → overlay 剥行），失败回落并明说。
 
 ### S5 · 迁移与回滚 ✅ **已落地（实测，2026-09-26）**
 - 三个方向都实测：**平铺 → 本地包**（升级已装用户，owner/bundles/overlay **两两一致**、旧平铺文件保留）；

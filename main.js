@@ -2105,7 +2105,36 @@ function bootstrapDshConfig(plugin, force = false) {
     vaults: []
   }, null, 2) + '\n', 'utf8');
 
-  return { home, written };
+  // ── Honest report about the dsh PLUGIN MANAGER (2026-09-26) ───────────────────────────────────
+  //
+  // This bootstrap stages the offline FLAT layout: modules as siblings of the profile plus an
+  // overlay that references them by relative path. That layout has no package name, no version and
+  // no `dsh.bundle.patch`, so dsh's plugin page has nothing to list — the plugin is invisible there
+  // BY DESIGN, not because something failed.
+  //
+  // The CLI can do better (`dsh-math-memory install --direct` now opportunistically installs a real
+  // local bundle, so that route IS visible in the manager). Doing the same from here is NOT a small
+  // addition, and claiming otherwise would be a lie the user could not check:
+  //   · a materialized package needs `dsh/host/index.mjs` plus its siblings `./channel-owner.mjs`
+  //     and `./math-memory-panel.mjs`, i.e. REAL SUBDIRECTORIES;
+  //   · this bundle's embedded map is keyed by BASENAME and stored flat, and two of those names
+  //     (`hook-frontmatter.mjs`, `engine-shared.mjs`) exist under BOTH `dsh/host/` and
+  //     `dsh/preset/` as different files — which is exactly why they are in `NOT_EMBEDDED`
+  //     ("would collide on materialization");
+  //   · so it needs a subdirectory-aware embed map AND a matching materializer — a structural
+  //     change to a code path that runs on every service start.
+  // See docs/bundle-channel-plan-2026-09-26.md (S4) and docs/handoff.md §7.
+  //
+  // So the honest thing is to SAY it, once, with the alternative — instead of leaving the user to
+  // wonder why the plugin never shows up in that page.
+  const bundled = mathMemoryBundled(home);
+  const notice = bundled
+    ? '此 profile 已把 dsh-math-memory 登记为 bundle —— 它应当出现在 dsh 的「插件」页。'
+    : '提示：Obsidian 侧栏这条安装路径写入的是"平铺"形态，它不会出现在 dsh 的「插件」页（这是设计取舍，不是故障）。'
+      + '想要在「插件」页里可见（可启用/禁用/移除），请改用 CLI：dsh-math-memory install --direct —— 它会优先把本插件装成一个真包。'
+      + '两条路互不冲突（各自认自己的 profile 归属）。';
+
+  return { home, written, notice, bundled };
 }
 
 function bootstrapVaultTemplates(plugin, force = false) {
@@ -3917,6 +3946,9 @@ class DshObsidianSettingTab extends PluginSettingTab {
         const dsh = bootstrapDshConfig(this.plugin, false);
         const vault = bootstrapVaultTemplates(this.plugin, false);
         new Notice(`dsh 配置已就绪（${dsh.written.length} 个文件）。vault 模板：${vault.written.length} 个。`);
+        // The plugin page is where a user naturally looks for an installed plugin, so the answer to
+        // "why is it not listed there" belongs here, not only in a doc they will never open.
+        if (dsh.notice) new Notice(dsh.notice, 12000);
         this.display();
       } catch (error) {
         new Notice(String(error));
@@ -3927,6 +3959,7 @@ class DshObsidianSettingTab extends PluginSettingTab {
       try {
         const result = bootstrapDshConfig(this.plugin, true);
         new Notice(`dsh 配置已重装到 ${result.home}`);
+        if (result.notice) new Notice(result.notice, 12000);
         this.display();
       } catch (error) {
         new Notice(String(error));
