@@ -179,12 +179,30 @@ dsh plugin --profile <id> add file:<绝对路径>/.dsh-math-memory
 - **验收（实测）**：新门禁 `check: overlay drops bundle-owned rows` **22/22**；`test-channel-owner` **25/25**；
   `--only installer` 绿；重建 `main.js` 后 `check: main.js bundle freshness` 绿；`npm test` **53 ok / 1 SKIP / 0 FAIL**。
 - **变异验证**：谓词恒 `true` ⇒ 1 条红；恒 `false` ⇒ 4 条红。另有 3 条"fail-safe"断言（标记缺失/顺序颠倒 ⇒ 原样返回）。
-- **⚠️ 仍未做（不能算完成）**：原文要求的两条**真 dsh** 变异验证 ——
-  ① overlay 在 bundle 已登记时仍保留那份声明 ⇒ 必须报 `duplicate loader entry id`；
-  ② overlay 保留 `./math-memory-panel.mjs` 且 bundle 已启用 ⇒ 必须报 `duplicate prefix route "/memory-panel"`。
-  这两条要真装配一个 bundle 形态的 profile 并启动 dsh，属 **S4/S6 的收口范围**（原文自己也把它们列为本方案的
-  **核心守卫**：没有它们就不能合）。本轮已用组合级门禁覆盖"该删的删 / 该留的留 / 解析得动"，但**没有**在真 dsh 上
-  复现过那两句报错。
+- **⚠️ 两条"真 dsh 变异验证"尝试过但未能复现（2026-09-26 实测，重要）**：原文要求
+  ①"overlay 在 bundle 已登记时仍保留声明 ⇒ 必须报 `duplicate loader entry id`"；
+  ②"overlay 保留 `./math-memory-panel.mjs` 且 bundle 已启用 ⇒ 必须报 `duplicate prefix route "/memory-panel"`"。
+  我在真 dsh（隔离 `$DSH_HOME`、真物化 bundle 包、`--patch` 挂 overlay）上把两种形态都装配出来，用
+  `--dump-config` 确认了**组合树里确实同时有包的行与 overlay 的行**（`math-memory-host`+`math-memory` 来自包，
+  `math-memory-workspace`+`math-memory-panel` 来自 overlay），然后**真启动**：
+
+  | 形状 | profile 根有平铺文件？ | 结果 |
+  |---|---|---|
+  | overlay 仍声明那两行 | **没有** | 3 行 `failed to import`（workspace / panel / client-panel），**能启动**，无 duplicate 报错 |
+  | overlay 仍声明那两行 | **有**（`--direct` 形态） | workspace **成功激活**；panel 仍 `failed to import`；**能启动**，无 `duplicate prefix route` |
+  | overlay 已剥掉那两行（S3 输出） | 有 | 只剩 client-panel `failed to import`，**能启动** |
+
+  ⇒ **两条预测的硬失败都没出现**。原因查清了：overlay 那两行用的是**相对名** `./math-memory-workspace.mjs` /
+  `./math-memory-panel.mjs`，而 **bundle 通道只在 `node_modules/` 里放包、不在 profile 根铺平铺文件**
+  （这正是"包化"的定义），于是这些行**解析不到模块**、以"未激活"告终 —— 它们**不注册路由**，也就无从撞车。
+  在形状 B（手工把平铺文件摆上）里 workspace 才真的激活，而 **panel 那行仍然 import 失败**，所以路由始终只有
+  一份，`duplicate prefix route` 也就**不可能**触发。
+
+  **这对本方案意味着什么（必须如实说）**：S3 的"剥掉那两行"**仍然是对的**（避免死行、避免将来平铺文件在场时
+  撞车、让组合树只声明一份），但**它的紧迫性被高估了** —— 在"纯 bundle"形态下那些行是**死行**而不是**冲突源**。
+  真正的撞车条件是**"bundle 已装 且 平铺文件也在 profile 根"**（混合形态），而这恰好是 **S4/S5 迁移期**会出现的
+  状态（从 `--direct` 升到 bundle 时旧平铺文件还在）。⇒ 那两条守卫应当**在 S4/S5 的混合形态用例里**复现，
+  而不是在纯 bundle 形态里。**原文第 ② 条预测的证据我没能取得，已按实测记为"未复现"，不是"已验证"。**
 
 ### S4 · 两条调用路径接线
 - **改**：CLI `dsh/install.mjs` 在 `directInstallProfile()`（`:364-415`）里追加"物化 → `localBundleAddArgs` → spawn（`dsh plugin --profile <id> add file:<abs>`）→ 文件系统核验 → 写 owner(含 bundle 来源) → 写 overlay"；Obsidian `bootstrapDshConfig()`（`:1876-1945`）同序（spawn 形状照抄 `:1788-1795`，成败判据照抄 `:1802-1811` 的"以文件系统为准"）。若 `dsh`/`pnpm` 不可用或核验失败 ⇒ **回落平铺并明确报告**（不静默）。新增 `--flat` 强制旧形态（D1）。
