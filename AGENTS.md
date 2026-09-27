@@ -20,7 +20,7 @@
 | 上手/交接：改哪里、跑什么、**102 条历史陷阱** | [`docs/handoff.md`](docs/handoff.md)（§2 入口地图、§4 陷阱、§7 未做清单）；**拖拽引用专题进展见 [`docs/drag-to-mention-progress-2026-09-25.md`](docs/drag-to-mention-progress-2026-09-25.md)** |
 | **给 agent 的仓库维护方法（通用）** | [`docs/agent-repo-maintenance.md`](docs/agent-repo-maintenance.md)（**§0.5 = 八荣八耻、§0.6 = 业务项目测试纪律六条，动手前先读**） |
 | 可维护性审查与整改台账 | [`docs/maintainability-review-2026-09-11.md`](docs/maintainability-review-2026-09-11.md)（审计，只读）、[`docs/maintainability-fixes-2026-09-11.md`](docs/maintainability-fixes-2026-09-11.md)（状态 + 证据） |
-| **为什么插件不出现在 dsh「插件管理」/ 能不能让离线通道也包化** | [`docs/bundle-channel-plan-2026-09-26.md`](docs/bundle-channel-plan-2026-09-26.md)（**S1/S2 已落地**，S3–S6 待拍板）；三种安装方式的可见性差异见 [`docs/installation.md`](docs/installation.md) |
+| **为什么插件不出现在 dsh「插件管理」/ 能不能让离线通道也包化** | [`docs/bundle-channel-plan-2026-09-26.md`](docs/bundle-channel-plan-2026-09-26.md)（**S1–S5 已落地**，S6 收口中）；三种安装方式的可见性差异见 [`docs/installation.md`](docs/installation.md) |
 | **Obsidian 侧与 dsh 侧耦合有多深、要不要解耦** | [`docs/decoupling-assessment-2026-09-26.md`](docs/decoupling-assessment-2026-09-26.md)（含量化底数、六类耦合、4 个方案、推荐 4 步） |
 | **笔记里自造符号/AI 补全太多，会不会让 AI 越看越乱** | [`docs/note-noise-and-memory-fidelity-2026-09-26.md`](docs/note-noise-and-memory-fidelity-2026-09-26.md)（P1–P7 改进方案 + 证据边界） |
 | **上面三件事里需要用户拍板的项（A1–A7 / B1–B5 / C1–C6）** | [`docs/pending-decisions-2026-09-26.md`](docs/pending-decisions-2026-09-26.md)——**未拍板前不要替用户动代码** |
@@ -49,6 +49,7 @@
 | preset **声明**（两个通道的 name 形态不同） | **生成物**：`node scripts/build-preset-declaration.mjs` 从 `dsh/preset/agent.cordis.yml` + `preset.yml` 生成进 `dsh/cordis.patch.yml`（包内 specifier）与 **`dsh/profile/cordis.patch.yml`（`./`，profile 自己那层）** | 同一提交里跑 `--check` + `check-preset-body-lists.mjs`；**不要手改生成块**。⚠️ **不要放回 `notes-assistant.patch.yml`**：那份 overlay 由插件**每次起服务**重写（2026-09-26 B3 实测：插件比 profile 旧就把声明擦掉，所有会话报 `agent-preset/not-found`）。存量 profile 由 `ensurePresetDeclaration()` / `ensureProfileDeclaration()` **只增不改**地补上 |
 | **"往 profile 里放什么"的机器可读契约** | `dsh/preset/profile-contract.mjs` —— **唯一**陈述（body 文件 / scaffold 文件 / 三层的行 id / 面板路由）。必须保持**平铺可用**（内嵌后在 profile 里物化成 `./profile-contract.mjs`） | `node scripts/check-profile-contract.mjs`（它逐条标明哪些是**读契约**、哪些只是**钉住手写清单**） |
 | 记忆面板的**客户端半个**（安装时生成的包） | `dsh/client-panel/install-into-profile.mjs`（复制**相对 import 闭包**，别改成手写清单） | `node scripts/check-client-package-layout.mjs`（真的 `import()` 一次产物，两个宿主半分支各一次） |
+| **离线通道的"包化物化"**（A′：把本插件造成真包，让离线安装也出现在插件管理页） | `dsh/profile/local-bundle.mjs`（纯函数；物化清单从**宿主入口 import 闭包 ∪ 契约体文件 ∪ 声明的 extras** 派生，不写第二份清单） | `node scripts/check-overlay-bundle-rows.mjs`（overlay 只声明一份）+ `scripts/check-preset-body-lists.mjs` 的 A′ 段 + `node scripts/test-real-profile-accept.mjs`（真 dsh 冷启动物化包） |
 
 ## 3. 改代码的五条铁律
 

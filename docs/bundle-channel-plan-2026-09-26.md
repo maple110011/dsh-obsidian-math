@@ -220,18 +220,43 @@ dsh plugin --profile <id> add file:<绝对路径>/.dsh-math-memory
   真正需要警惕的是**混合形态**（bundle 已装 + 平铺文件仍在 profile 根，正是 S4/S5 迁移期的状态）：那时两边的行
   **都会真的挂载**，行为取决于 dsh 对重复前缀的容忍度（本机：容忍），但这属于**要实测**的问题，不是可以假定的。
 
-### S4 · 两条调用路径接线
-- **改**：CLI `dsh/install.mjs` 在 `directInstallProfile()`（`:364-415`）里追加"物化 → `localBundleAddArgs` → spawn（`dsh plugin --profile <id> add file:<abs>`）→ 文件系统核验 → 写 owner(含 bundle 来源) → 写 overlay"；Obsidian `bootstrapDshConfig()`（`:1876-1945`）同序（spawn 形状照抄 `:1788-1795`，成败判据照抄 `:1802-1811` 的"以文件系统为准"）。若 `dsh`/`pnpm` 不可用或核验失败 ⇒ **回落平铺并明确报告**（不静默）。新增 `--flat` 强制旧形态（D1）。
-- **验收**：`node scripts/test-installer.mjs` 全绿 + 新增"机会式 bundle / 回落 / `--flat`"三组用例（沙箱里没有 dsh/pnpm，所以要把 spawn 结果**注入**，否则这条用例只能 SKIP —— 见 D3 的实现约束）。
-- **变异验证**：把核验判据从"`<profile>/node_modules/dsh-math-memory/package.json` 存在且名字在 `dsh.profile.bundles` 里"退回"exit code == 0" ⇒ 造一个 exit 0 但没装上的假 spawn，用例必须红（这正是陷阱 89 的教训：`includes('包名')` 式的子串判据不算数）。
+### S4 · 两条调用路径接线 ✅ **CLI 侧已落地 2026-09-26；Obsidian 侧未做（见末尾）**
+- **实际形态**：`dsh/install.mjs` 新增 `tryBundleInstall()` —— 写 pnpm 需要的最小脚手架 → 物化到
+  `<profile>/.dsh-math-memory/` → `dsh plugin add file:<abspath>` → **按文件系统核验**（包目录存在**且**名字在
+  `dsh.profile.bundles` 里）→ 写 posture（并 `stripPresetDeclaration`）与 overlay（剥掉包已提供的行）→
+  **最后**才翻转 `owner: npm` + `bundleSource: local`。失败 ⇒ 打印 `[fallback] …（原因）` 并回落平铺。
+  新增 `--flat` 强制旧形态。退出码非 0 但核验通过时**以文件系统为准**（只打一行提示）。
+- **为什么 owner 最后翻转（S5 依赖它）**：中断只会留下 `owner: direct` + 包已登记 ⇒ 下一次运行**重试并完成迁移**；
+  反过来先写 `owner: npm` 就会留下"声称 npm 却没有包"的坏形态。
+- **验收（实测）**：`test-installer.mjs` 新增 **29 条**（0e 节 S4 16 条 + 0f 节 S5 13 条）；新增测试缝
+  `DSH_TEST_UNREGISTER_BUNDLE=1`（已登记 `docs/env-vars.md`）让核验可被确定性失效。既有 1–6 节改为显式
+  `--flat`（它们断言的是平铺通道的文件/卸载行为）。
+- **变异验证（实测）**：① 判据退回 `exit code == 0` ⇒ **3 条红**（含 `the manifest does NOT claim the npm channel | npm`，
+  即"包没登记却写成 owner=npm"）；② 不再剥 overlay ⇒ 1 条红；③ 删掉核验 ⇒ **5 条红**。
+- **⚠️ Obsidian 侧（`bootstrapDshConfig`）未做**：它仍是纯平铺，所以**从侧栏那条路装出来的插件仍不出现在管理页**。
+  障碍是成本而非设计：插件进程没有 `pnpm`，物化器是 ESM 而模板是 `new Function` 求值的 bundle（不能 `import`），
+  要先把物化器按 basename 内嵌进 `main.js` 并在模板作用域里自备 `read`/`collectClosure`。**如实记为未做**，
+  已登记 `docs/handoff.md` §7。
 
-### S5 · 迁移与回滚
-见 §4。验收：新增"已装用户（owner=direct + 平铺）→ 升级后 owner/bundles/overlay 三者的两两一致"用例，覆盖**中途崩溃**（在 add 与重写 overlay 之间中断）后的下一次启动能自愈。
+### S5 · 迁移与回滚 ✅ **已落地（实测，2026-09-26）**
+- 三个方向都实测：**平铺 → 本地包**（升级已装用户，owner/bundles/overlay **两两一致**、旧平铺文件保留）；
+  **中断自愈**（用测试缝模拟"包已 add、owner 未翻转" ⇒ 该次留在 direct，**再跑一次完成迁移**）；
+  **反向切换**（native 安装会**移除**直接通道留下的暂存包 `LOCAL_BUNDLE_DIR`，一个 profile 只有一个来源）。
+- **变异验证**：native 不再移除暂存包 ⇒ 1 条红。⚠️ **未做**：把"写 owner"提前以真正反转发号顺序 —— 需要在同一函数里
+  移动代码，字符串替换做不干净，**没有用不可靠的替换去凑**；第二条变异（删核验）**间接**覆盖同一后果。
 
-### S6 · 门禁与文档
-- 见 §5 的改动清单；`docs/installation.md` 的"方式 C"要改写（它现在的承诺是"不需要 pnpm / 网络"，A′ 之后是"**优先**不联网地包化，失败才平铺"）；`docs/handoff.md` §7 增一条（§6）；`docs/changelog.md` 记理由；`AGENTS.md` §2 文件地图增一行（"离线通道的包化物化"→ 改 `dsh/profile/local-bundle.mjs`，改完跑哪条门禁）。
-- **验收**：`npm test` 全绿（三态：`ok` / `SKIP` / `FAIL`，`AGENTS.md:61`），且新门禁的**变异验证那句报错**抄进 changelog。
-- **变异验证**：每新增一条门禁各自一次（S1–S4 已列）。
+### S6 · 门禁与文档 ✅ **本轮已落地**
+- **`check: shipped yaml parses` 补上一个真实覆盖缺口**：它**从来没看** `dsh/cordis.patch.yml`（只走
+  `dsh/profile/` 与 `dsh/preset/`），而那个文件正是**整个 bundle 通道的启动依据**。已显式加入 candidates，
+  现在 25 条断言（原 20）。变异：把顶层 `- id:` 改成 `id:`（破坏结构）⇒ 红。
+- `docs/installation.md` 的**方式 C** 与**可见性表**已改写：承诺从"**不需要** pnpm/网络"改为"**优先**不联网地包化，
+  `dsh`/`pnpm` 不在或核验失败时**回落平铺并明确报告**"，并说明**如何分辨当前走的是哪条通道**。
+- `AGENTS.md` §2 文件地图增一行（离线通道的包化物化 → `dsh/profile/local-bundle.mjs` + 三条门禁）；
+  §1 的计划状态更新为"S1–S5 已落地"。
+- `docs/handoff.md` §7 增两条（A′ S1–S5 完成；**插件侧机会式包化未做**，含验收判据）。
+- **仍未做**：本节列的门禁影响面里，`check: plugin manifest meta`（对物化树跑一次真 `readPluginMeta`）、
+  `test: agent preset mounts` 的"声明恰好在一个地方"改写、`check: version consistency` 的"物化版本派生自根"
+  三条**未改** —— 现状下它们**仍是绿的**，只是**没有专门覆盖** A′ 带来的新形态。如实记为未做，不假装覆盖了。
 
 ---
 

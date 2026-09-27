@@ -37,13 +37,27 @@ dsh-math-memory install --vault /path/to/你的Obsidian库
 
 内部依次做：调 `dsh plugin add` 装能力 → 写 profile 姿态 → 写 owner marker → 种 vault 模板（`AGENTS.md` + `.deepseek/**`）。这是**完整**安装，需要 pnpm + 网络。
 
-### 方式 C：离线扁平拷贝（无 pnpm）
+### 方式 C：离线安装（优先本地包化，失败才平铺）
 
 ```bash
 dsh-math-memory install --direct --vault /path/to/你的Obsidian库
 ```
 
-把随包发布的 preset/profile 文件直接写进 `~/.dsh`（不需要 pnpm / 网络），并写同样的 owner marker。功能与方式 B 等价，差别在**能力怎么送达**：方式 B 由 bundle 的补丁层声明 preset（模块走包内路径），方式 C 把 preset 的模块**命令式落盘到 profile 目录**、并在 `--patch` overlay 里用相对路径引用它们（这两条都在 dsh 启动前完成，所以不存在"第一次启动来不及"的问题）。
+**A′（2026-09-26）之后，这条通道默认会先试着"包化"**：把本插件**物化成一个真正的包**放进 profile 的
+`.dsh-math-memory/`，再用 `dsh plugin add file:<绝对路径>` 装进 profile —— 这一步**不联网**（`file:` 规格不查
+registry，实测 `downloaded 0`），装成的包因此**会出现在 dsh 的「插件管理」页**并可启用/禁用/移除。
+
+- **需要的东西**：`dsh` 与 `pnpm` 在场。**任一不在、或装完核验不通过**（核验看的是文件系统：包目录存在
+  **且**名字在 `dsh.profile.bundles` 里，不看退出码）⇒ 自动回落到**平铺**（方式 C 的旧行为），并**明确打印`
+[fallback]` 与原因**，不静默。
+- **想强制走旧的平铺形态**：加 `--flat`（输出的成功行会写清是哪条通道赢了，`status` 也是这条通道的唯一真相）。
+- **离线承诺的变化**：之前写的是"**不需要** pnpm / 网络"；现在是"**优先**不联网地包化，`dsh`/`pnpm` 不在时
+  回落平铺"。**平铺通道本身没有消失**，无 pnpm 的机器仍然可用。
+
+平铺形态把随包发布的 preset/profile 文件直接写进 `~/.dsh`，并写同样的 owner marker。功能与方式 B 等价，差别在
+**能力怎么送达**：方式 B 由 bundle 的补丁层声明 preset（模块走包内路径），平铺形态把 preset 的模块
+**命令式落盘到 profile 目录**、并在 `--patch` overlay 里用相对路径引用它们（这两条都在 dsh 启动前完成，所以
+不存在"第一次启动来不及"的问题）。
 
 ### Obsidian 插件安装
 
@@ -63,13 +77,14 @@ names = dsh.profile.bundles ∪ profile.dependencies ∪ installation.dependenci
 |---|---|
 | **方式 A**（把 bundle 加进 profile） | ✅ 能看到 `dsh-math-memory`，带版本、描述、它声明的行，可启用/禁用/移除 |
 | **方式 B**（安装程序，native） | ✅ 同上（B 内部就是 `dsh plugin add dsh-math-memory`） |
-| **方式 C / Obsidian 插件**（离线扁平拷贝） | ❌ **看不到**。这条通道刻意**不装包**：它把模块**平铺**进 profile 目录、用 overlay 里的**相对路径行**引用它们。没有包名/版本/`dsh.bundle.patch` ⇒ 那一页没有可列的东西。 |
+| **方式 C / Obsidian 插件**（离线通道） | **取决于它实际走了哪条路（A′ 之后）**：**包化成功** ⇒ ✅ 能看到（与 A/B 一样，因为内部就是 `dsh plugin add file:<本地目录>`）；**回落平铺** ⇒ ❌ 看不到（平铺形态只把模块铺进 profile 目录，没有包名/版本/`dsh.bundle.patch`，那一页没有可列的东西）。**怎么分辨**：`dsh-math-memory status` 会显示当前是哪条通道，安装结束的成功行也会写明。 |
 
-**这不是缺陷**：方式 C 存在的意义就是"不需要 pnpm/网络"，代价是它不由 dsh 的包管理器托管。**离线通道的启用/禁用/卸载在 Obsidian 插件的设置页里做**（这是该通道设计的 UX），CLI 侧用 `dsh-math-memory uninstall`。
+**回落形态（平铺）不是缺陷，但它确实不由 dsh 的包管理器托管**：那条路存在的意义就是"`dsh`/`pnpm` 不在时也要能用"。那种情况下**离线通道的启用/禁用/卸载在 Obsidian 插件的设置页里做**，CLI 侧用 `dsh-math-memory uninstall`。
 
 对照：用 `dsh plugin add` 装进去的第三方包（例如 `@linxin666/dsh-client-ui-skin-center`）**会**出现在那一页 ✓。
 
-> 让离线通道也"包化"（从而既可离线又能在那一页被管理）是一份**提案**，见 [`bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md)（状态：提案，未动代码）。
+> **A′ 已落地（2026-09-26）**：让离线通道也"包化"曾是一份提案，现在 S1–S5 已实现 —— 离线通道默认先试包化、
+> 失败回落平铺并明确报告，`--flat` 可强制旧形态。计划与实测见 [`bundle-channel-plan-2026-09-26.md`](bundle-channel-plan-2026-09-26.md)。
 
 ### 让主 dsh web（3080）也有笔记助手模式与记忆面板
 

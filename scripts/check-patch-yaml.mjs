@@ -62,6 +62,12 @@ for (const dir of [join(root, 'dsh', 'profile'), join(root, 'dsh', 'preset')]) {
     if (name.endsWith('.yml')) candidates.push(join(dir, name));
   }
 }
+// A′ S6 (2026-09-26): `dsh/cordis.patch.yml` — the BUNDLE's own patch — was never checked here, and it
+// is the file the whole npm/local bundle channel boots from. A syntax error in it breaks the bundle
+// outright while every other gate stays green, which is exactly the coverage hole this loop had (it
+// only walked `dsh/profile/` and `dsh/preset/`). It lives one level up, so it is added explicitly
+// rather than by widening the walk (which would also sweep in unrelated YAML).
+candidates.push(join(root, 'dsh', 'cordis.patch.yml'));
 check('there is at least one shipped YAML to check', candidates.length > 0, `${candidates.length} files`);
 
 const rel = (p) => p.slice(root.length + 1).replace(/\\/g, '/');
