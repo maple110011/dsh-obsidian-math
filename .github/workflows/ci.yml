@@ -38,7 +38,10 @@ jobs:
           npm test 2>&1 | tee /tmp/npm-test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            python3 -c "import sys; s=open('/tmp/npm-test.log').read(); s=s.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); print('::error::' + s[-2500:])"
+            # Report the FAILED assertions FIRST (and a longer tail). The plain `s[-2500:]` tail hid the
+            # one failing assertion behind ~470 lines of passing ones — on 2026-09-27 that cost an extra
+            # CI round trip just to learn which check was red.
+            python3 -c "s=open('/tmp/npm-test.log').read(); nl=chr(10); bad=[l for l in s.split(nl) if '[FAIL]' in l]; e=lambda t: t.replace('%','%25').replace(chr(13),'%0D').replace(nl,'%0A'); print('::error::' + e(nl.join(bad) + nl + '--- tail ---' + nl + s[-6000:]))"
           fi
           exit "$status"
       - name: Run tests (windows)
