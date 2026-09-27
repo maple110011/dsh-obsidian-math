@@ -42,6 +42,10 @@
  * A native (bundle) install owns the profile as "npm"; a --direct install owns it
  * as "direct". Install refuses to overwrite a profile owned by the other channel
  * unless --force.
+ *
+ * `--force` is an OWNERSHIP flag only. `<profile>/cordis.patch.yml` is the profile's
+ * own, user-editable dsh patch layer; this installer creates it when absent and never
+ * replaces one that exists (`ensurePosture`), on any channel and under any flag.
  */
 
 import {
@@ -190,7 +194,9 @@ Options:
   --vault <dir>       also seed the vault memory templates (.deepseek/..., AGENTS.md)
   --dsh-home <dir>    harness home (default: $DSH_HOME or ~/.dsh)
   --profile <name>    profile name (default: notes-assistant)
-  --force             take over an other-channel-owned preset/profile
+  --force             take over an other-channel-owned preset/profile. It does NOT
+                      rewrite the profile's own cordis.patch.yml: that file is the
+                      user's own patch layer and is only ever created, never replaced
   --any-home          allow a non-harness home (sandboxes/probes); also DSH_ALLOW_ANY_HOME=1
   --flat              do not try to install a local bundle; use the flat copy (pre-A′ behaviour)
   --dry-run           print planned writes without touching the filesystem
@@ -464,6 +470,47 @@ export function stripPresetDeclaration(profileRoot) {
 }
 
 /**
+ * Put the posture scaffold into a profile — but ONLY when that profile has none.
+ *
+ * WHY THIS EXISTS (2026-09-27, measured twice on a real machine).
+ * `<profile>/cordis.patch.yml` is the profile's OWN, user-editable dsh patch layer. Four call sites
+ * passed `!existsSync(target) || options.force` as `copyFile`'s overwrite flag, so ANY
+ * `install --force` replaced the WHOLE file — even though `--force` exists for CHANNEL-OWNERSHIP
+ * takeover (`assertChannelOwnership`), which has nothing to do with this file. Measured cost: on
+ * 2026-09-27 15:13:18 the `web` profile's layer went 988 B → 3738 B and the user's custom model
+ * provider block (`llm-pi-ai` / `agent-default-model`) vanished with it; the `notes-assistant`
+ * profile lost its layer the same way at 14:27:45. Both were reproduced byte-for-byte against this
+ * installer's own output — see the sibling workspace's
+ * `.dsh-snapshots/PRESERVE-20260927-1513-overlay-clobber/INCIDENT-REPORT.md`.
+ *
+ * The contract this restores is one WE ALREADY WROTE DOWN — in the comment the client-half installer
+ * plants inside that very file (`dsh/client-panel/install-into-profile.mjs`): "这一层是 profile
+ * 自己的 patch 层，没有任何人会重写它".
+ *
+ * So: absent ⇒ copy the scaffold. Present ⇒ keep it, loudly, and let the caller's declaration repair
+ * (`stripPresetDeclaration` / `ensurePresetDeclaration`) make the only edits this installer is
+ * entitled to make — both are already row-preserving and carry their own assertions.
+ *
+ * KNOWN GAP (recorded, not hidden): keeping a file means the installer no longer refreshes its own
+ * NON-declaration rows in it (e.g. an older `sandbox-policy` / `permission` posture stays as written).
+ * That is a staleness cost, deliberately chosen over silent data loss.
+ *
+ * @returns true when the scaffold was copied, i.e. the profile had no posture at all.
+ */
+export function ensurePosture(options, profileRoot) {
+  const target = join(profileRoot, "cordis.patch.yml");
+  if (existsSync(target)) {
+    // Loud on purpose: "the installer kept a file it used to rewrite" must be visible in the log of
+    // the run that did it, or the next person re-derives this whole incident from scratch.
+    log(options, `[keep] posture exists — preserving the user's own patch layer: ${target}`);
+    return false;
+  }
+  // `overwrite: false` even though the target is absent: if it appeared between the check and the
+  // copy, skipping is the right outcome for a file we do not own.
+  return copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), target, false);
+}
+
+/**
  * Ensure a profile manifest declares non-empty `name` AND `version`.
  *
  * WHY (2026-09-26, real-machine failure). dsh's default-on request extension
@@ -655,10 +702,7 @@ function nativeInstall(options, dshHome) {
   // and exited 0, and only a SECOND install fixed it. Creating the anchor first removes the
   // prerequisite instead of documenting it.
   writeManifest(options, profileRoot, "npm", ["cordis.patch.yml"], []);
-  if (!options.dryRun) {
-    copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), join(profileRoot, "cordis.patch.yml"),
-      !existsSync(join(profileRoot, "cordis.patch.yml")) || options.force);
-  }
+  if (!options.dryRun) ensurePosture(options, profileRoot);
 
   // The bundle delivers the ENGINE + the panel's HOST routes, but the panel's CLIENT half is
   // a separate locally staged package — and this path used to skip it entirely, which is why
@@ -858,8 +902,11 @@ function tryBundleInstall(options, dshHome, profileRoot) {
   //     native path learned this the hard way (two rows, one id ⇒ `broken` preset, measured
   //     2026-09-26). It is also a hard prerequisite of the client half, which refuses to stage without
   //     `<profile>/cordis.patch.yml`.
-  const posturePath = join(profileRoot, "cordis.patch.yml");
-  copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), posturePath, !existsSync(posturePath) || options.force);
+  //
+  //     ⚠️ `ensurePosture` writes it ONLY when absent. It is the user's own layer; `--force` is an
+  //     ownership flag and must not reach it (2026-09-27: `|| options.force` here is what deleted a
+  //     real user's model provider block — see the function's own note).
+  ensurePosture(options, profileRoot);
   stripPresetDeclaration(profileRoot);
 
   // 5b. overlay: drop the rows the package now provides (the client-panel row stays).
@@ -938,8 +985,10 @@ async function directInstallProfile(options, dshHome) {
     log(options, `[preset] 已从 profile 的 patch 层撤掉扁平声明（bundle 层已经在声明同一个 id）：${join(profileRoot, "cordis.patch.yml")}`);
   }
   copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
-  const postureExists = existsSync(join(profileRoot, "cordis.patch.yml"));
-  copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), join(profileRoot, "cordis.patch.yml"), !postureExists || options.force);
+  // Only an ABSENT posture is written. A present one is the user's own layer and survives even
+  // `--force` — the declaration repair below is the only edit this installer may make to it
+  // (2026-09-27 real-machine data loss; see `ensurePosture`).
+  ensurePosture(options, profileRoot);
   // This is the channel that DOES need the flat declaration: there is no bundle layer here, the preset
   // body is staged flat, and `copyFile` above skips an existing posture file — so a profile whose
   // posture predates B3 would otherwise be left with no declaration at all and every reply would fail
@@ -1012,8 +1061,8 @@ function writePosture(options, dshHome) {
     log(options, `[conflict] profile ${options.profile} is ${conflict}`);
     return false;
   }
-  const posturePath = join(profileRoot, "cordis.patch.yml");
-  copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), posturePath, !existsSync(posturePath) || options.force);
+  // Only an ABSENT posture is written; a present one is the user's own layer (see `ensurePosture`).
+  ensurePosture(options, profileRoot);
   // Same rule applied to the file just written: on this channel the BUNDLE layer is the only declarer
   // (the copied scaffold carries the flat declaration, which belongs to the `--direct`/Obsidian
   // channel). Without this the native install produced two rows with one id and the preset came out

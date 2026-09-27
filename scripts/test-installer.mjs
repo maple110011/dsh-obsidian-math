@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // Aliased: this file already has a local `writeManifest` helper (a fixture that writes an owner marker).
-import { verifyPostureDigests, ensurePresetDeclaration, stripPresetDeclaration, assertHarnessHome, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
+import { verifyPostureDigests, ensurePresetDeclaration, stripPresetDeclaration, ensurePosture, assertHarnessHome, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
 // The contract is the source for "what a profile needs" — assertions below derive from it instead of
 // hardcoding counts that rot the moment a file is added (2026-09-26).
 import { PROFILE_SCAFFOLD_FILES, PRESET_BODY_FILES } from '../dsh/preset/profile-contract.mjs';
@@ -901,6 +901,104 @@ rmSync(vault, { recursive: true, force: true });
   check("channels: that repair keeps the user's own rows", after.includes('id: user-thing'));
   check('channels: and a second run is a no-op', stripPresetDeclaration(channelProfile) === false);
   rmSync(channelHome, { recursive: true, force: true });
+}
+
+// 12. `--force` must NEVER eat the profile's own patch layer (2026-09-27 real-machine data loss).
+//
+// `<profile>/cordis.patch.yml` is the profile's OWN user-editable dsh patch layer — it is where a
+// user puts things like a custom model provider. Four call sites passed
+// `!existsSync(target) || options.force` as `copyFile`'s overwrite flag, so `install --force`
+// (an OWNERSHIP flag, per `assertChannelOwnership`) replaced the whole file. Measured on a real
+// machine: the `web` profile's layer went 988 B → 3738 B at 15:13:18 and the user's `llm-pi-ai`
+// provider block vanished; the `notes-assistant` profile lost its layer the same way at 14:27:45.
+// Evidence: `../.dsh-snapshots/PRESERVE-20260927-1513-overlay-clobber/INCIDENT-REPORT.md`.
+//
+// MUTATION: put `|| options.force` back into any call site, or make `ensurePosture` copy when the
+// target exists, and the "keeps"/"byte-intact" checks below go red (verified by doing exactly that).
+{
+  const postureHome = mkdtempSync(join(tmpdir(), 'dsh-posture-keep-'));
+  const postureProfile = join(postureHome, 'profiles', 'web');
+  try {
+    mkdirSync(postureProfile, { recursive: true });
+    const target = join(postureProfile, 'cordis.patch.yml');
+    const userLayer = [
+      '# Your patch layer for this dsh profile, applied after every bundle layer:',
+      '- id: llm-pi-ai',
+      '  config:',
+      '    providers:',
+      '      penguin:',
+      '        apiKeyEnv: PENGUIN_API_KEY',
+      '        baseURL: https://go.penguin.ooo/api',
+      '- id: agent-default-model',
+      '  config:',
+      '    provider: penguin',
+      ''
+    ].join('\n');
+    writeFileSync(target, userLayer, 'utf8');
+
+    // (a) the helper must refuse to touch it, even with force
+    const copied = ensurePosture({ dryRun: false, quiet: true, force: true }, postureProfile);
+    check('posture: --force does not replace an existing profile patch layer', copied === false);
+    check("posture: the user's own rows survive byte-intact",
+      readFileSync(target, 'utf8') === userLayer);
+
+    // (a2) and keeping it must be LOUD — silent preservation is how this class hides next time
+    const printed = [];
+    const realLog = console.log;
+    console.log = (...a) => printed.push(a.join(' '));
+    let keptLoud = false;
+    try {
+      keptLoud = ensurePosture({ dryRun: false, quiet: false, force: true }, postureProfile) === false;
+    } finally {
+      console.log = realLog;
+    }
+    check('posture: keeping the file is announced ([keep] … cordis.patch.yml)',
+      keptLoud && printed.some((l) => l.includes('[keep]') && l.includes('cordis.patch.yml')),
+      printed.join(' | ').slice(0, 120));
+
+    // (b) the real CLI must agree, on the deterministic flat channel (no pnpm, no network).
+    //     `--profile web` is load-bearing: without it the installer defaults to `notes-assistant`
+    //     and never touches the fixture (which is how this check first passed vacuously-ish).
+    const cli = run(['install', '--direct', '--flat', '--force', '--profile', 'web', '--dsh-home', postureHome, '--quiet']);
+    const afterCli = readFileSync(target, 'utf8');
+    check('posture: CLI `install --force` exits 0', cli.status === 0, `status=${cli.status}`);
+    check("posture: CLI `install --force` keeps the user's provider block",
+      afterCli.includes('id: llm-pi-ai') && afterCli.includes('go.penguin.ooo/api'),
+      `${afterCli.split('\n').length} lines`);
+    check("posture: ...and the flat channel's generated declaration was still applied (the install is not a no-op)",
+      afterCli.includes(DECLARATION_BEGIN) && afterCli.includes('- id: preset-notes-assistant'));
+
+    // (c) an ABSENT layer is still created, verbatim — the fresh-install path must not regress into
+    //     "never writes it", which would break every first-time install.
+    const freshProfile = join(postureHome, 'profiles', 'fresh');
+    mkdirSync(freshProfile, { recursive: true });
+    check('posture: an ABSENT layer is still created',
+      ensurePosture({ dryRun: false, quiet: true, force: false }, freshProfile) === true);
+    check('posture: and it is the shipped scaffold verbatim',
+      readFileSync(join(freshProfile, 'cordis.patch.yml'), 'utf8') ===
+        readFileSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), 'utf8'));
+
+    // (d) --dry-run still writes nothing
+    const dryProfile = join(postureHome, 'profiles', 'dry');
+    mkdirSync(dryProfile, { recursive: true });
+    ensurePosture({ dryRun: true, quiet: true, force: true }, dryProfile);
+    check('posture: --dry-run creates no file', !existsSync(join(dryProfile, 'cordis.patch.yml')));
+
+    // (e) structural pin: no call site may copy the scaffold over an existing layer. This catches a
+    //     FUTURE fifth call site, which the two runtime channels above cannot.
+    const installSrc = readFileSync(join(repo, 'dsh', 'install.mjs'), 'utf8');
+    const clobberSites = installSrc.split('\n')
+      .map((line, i) => [i + 1, line])
+      .filter(([, line]) => line.includes('PROFILE_DIR, "cordis.patch.yml"') && line.includes('options.force'))
+      .map(([n, line]) => `${n}: ${line.trim()}`);
+    check('posture: no source line copies the scaffold under options.force',
+      clobberSites.length === 0, clobberSites.join(' | '));
+    check('posture: all four channel call sites go through ensurePosture',
+      (installSrc.match(/ensurePosture\(options, profileRoot\);/g) ?? []).length === 4,
+      String((installSrc.match(/ensurePosture\(options, profileRoot\);/g) ?? []).length));
+  } finally {
+    rmSync(postureHome, { recursive: true, force: true });
+  }
 }
 
 console.log(failed === 0 ? 'installer: all checks passed' : `installer: ${failed} check(s) failed`);

@@ -88,7 +88,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：102
+> 陷阱条数：103
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -379,6 +379,28 @@
       打印组合行才发现的（与陷阱 68 同族：**控制用例必须能把现象归因到它自己那一次运行**）。
     - **另一条操作细节**：`dsh --patch` 必须排在 app 参数（`--no-open` / `--port`）**之前**，否则 dsh 已停止解析自己的
       flag，报 `unknown option '--patch'`（仓库里 `test-agent-preset.mjs` 就是这么写的）。
+
+103. **★ `--force` 曾把用户在 `<profile>/cordis.patch.yml` 里写的配置整份吃掉**（2026-09-27 真机，同一机制一天内两次）。
+    - **症状**：用户装本插件到 3080 的 `web` profile，随后"自定义模型信息消失了"。
+    - **根因**：那个文件是 **profile 自己的、用户可编辑的 dsh patch 层**（用户把自定义 provider 写在这里）。
+      `install.mjs` 有四处把 `!existsSync(target) || options.force` 当 `copyFile` 的 overwrite 标志传给
+      `PROFILE_DIR/cordis.patch.yml`。而 `--force` 的**本职是通道归属接管**（`assertChannelOwnership`），与这个文件无关
+      ⇒ 任何 `install --force` 都会整份替换它。实测：`web` 的层 `988 B → 3738 B`（`15:13:18`），用户的 `llm-pi-ai`
+      块随之消失；`notes-assistant` 的层同日 `14:27:45` 同样被换掉。
+    - **我们其实早就把契约写下来了**——写在**安装器自己种进那个文件的注释里**
+      （`dsh/client-panel/install-into-profile.mjs`）："这一层是 profile 自己的 patch 层，**没有任何人会重写它**"。
+      所以这不是设计分歧，是**自己违反自己的契约**。
+    - **修法**：新增 `ensurePosture()`，四处调用点全部改走它：**只在缺失时铺脚手架**，存在就原样保留（并打 `[keep]` 行），
+      通道需要的声明增删仍由本来就会保留用户行的 `stripPresetDeclaration` / `ensurePresetDeclaration` 精确完成。
+      **关键细节**：真正防住数据丢失的是 `copyFile(..., false)`，不是那句 `if (existsSync)` 提前返回
+      ——变异验证时把提前返回去掉，文件**依然安全**（只是不再出声），把标志位改回 `options.force` 才会丢数据。
+    - **门禁**：`test-installer.mjs` 新增 11 条（helper 保持 `--force` 不改写 / 逐字节不变 / 出声 / 真 CLI 端到端 /
+      缺失时仍铺且与仓库一致 / `--dry-run` 不写 / **源码里不许再出现 `cordis.patch.yml` 与 `options.force` 同行** /
+      四个调用点都走 `ensurePosture`）。**变异验证**：还原成原始形态 ⇒ **5 条红**（含两条数据丢失断言与 CLI 端到端）。
+    - **教训**：一个 flag 同时兼职"接管归属"与"覆盖文件"两件事时，**"用户数据"是它顺手碾过去的那一类**。给可写配置加
+      overwrite 参数之前，先问"这个文件到底是我的还是用户的"。
+    - **顺带记录（未修）**：同一批 `copyFile` 对 `package.json` 也传了 `firstRun || options.force`（3 处）。profile 的
+      `dsh.profile.bundles` 里可能有用户自己加的行，**这是同一类风险的候选**，本轮未查未改，别当成已解决。
 
 ## 5. 用户决策记录（不要推翻）
 

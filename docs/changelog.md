@@ -3,6 +3,56 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-27 · 安装器不再覆写 profile 自己的 patch 层：**已实现**（真机数据丢失驱动）
+
+**起因是一次真机事故，不是设计讨论**：用户让 agent 把本插件装进 3080 的 `web` profile，之后报
+"自定义模型信息消失了"。排查确认**没有删库**（`~/.dsh` 顶层全天只有 `.credentials.yaml` 被原子改写，且内容与各份
+备份逐字节相同），丢的是 **`web` profile 自己的 patch 层**里的自定义 provider 块。
+
+**根因**：`<profile>/cordis.patch.yml` 是 dsh 给 **profile 自己的、用户可编辑的** patch 层，用户把
+`llm-pi-ai` / `agent-default-model` 写在那里。`install.mjs` 有**四处**把
+`!existsSync(target) || options.force` 当作 `copyFile` 的 overwrite 标志传给 `PROFILE_DIR/cordis.patch.yml`。
+而 `--force` 的**本职是通道归属接管**（`assertChannelOwnership`：`if (owner.owner === channel || options.force) return null`），
+与这个文件毫无关系 ⇒ **任何** `install --force` 都会整份替换它。
+
+**实测（两处，同一天）**：`web` 的层 `988 B → 3738 B`（`15:13:18`，sha `D6E851341519 → 733715C9A519`），
+用户的 `llm-pi-ai` 块随之消失；`notes-assistant` 的层 `11720 B → 3738 B`（其 `installedAt` = `14:27:45`）。
+3738 这个数可**逐字节复现**：仓库 `dsh/profile/cordis.patch.yml`（11150 B）经 `stripPresetDeclaration()` 切掉
+7411 B 的生成声明块即得，且与 `.install-manifest.json` 里记的 `postureDigests["cordis.patch.yml"]` 一致
+——**安装器自己把这份文件登记为它的产物**。全程取证见兄弟工作区的
+`.dsh-snapshots/PRESERVE-20260927-1513-overlay-clobber/INCIDENT-REPORT.md`。
+
+**这条契约我们早就写下来了**，而且是**安装器自己种进那个文件的注释**
+（`dsh/client-panel/install-into-profile.mjs`）："这一层是 profile 自己的 patch 层，**没有任何人会重写它**。
+删掉本行即等于在面板里卸掉客户端半个。" 所以这不是设计分歧，是**自己违反自己写下的承诺**。
+
+**做法**：新增 `ensurePosture(options, profileRoot)`（导出，便于门禁直接调），四处调用点
+（`nativeInstall` / `tryBundleInstall` / `directInstallProfile` / `writePosture`）全部改走它：
+
+- **缺失** ⇒ 铺脚手架（与旧行为一致，冷启动/首次安装不受影响）；
+- **已存在** ⇒ **原样保留**，并打一行 `[keep] posture exists — preserving the user's own patch layer: …`
+  （静默保留是这类问题下次继续潜伏的方式，所以必须出声）；
+- 通道需要的声明增删**仍照旧**由 `stripPresetDeclaration` / `ensurePresetDeclaration` 精确完成
+  ——这两个函数本来就只切/补标记块、保留用户自己的行，且各自已有断言。
+
+`--force` 从此**只**是归属标志：`--help` 与文件头注释都写明了它不动这个文件。
+
+**一个反直觉的实测细节（值得单独记）**：真正防住数据丢失的是 **`copyFile(..., false)` 这个标志位**，
+不是那句 `if (existsSync) { return false }` 提前返回。变异验证时把提前返回去掉，文件**依然安全**
+（只是不再出声，被"必须出声"那条断言逮住）；把标志位改回 `options.force` 才会真的丢数据。
+
+**门禁**：`test-installer.mjs` 新增 11 条 —— helper 在 `--force` 下不改写 / 用户行逐字节不变 / 出声 /
+**真 CLI 端到端**（`install --direct --flat --force --profile web`，用户块仍在**且**声明照旧补上）/
+缺失时仍铺且与仓库源逐字节一致 / `--dry-run` 不写文件 / **源码里不许再出现 `cordis.patch.yml` 与 `options.force` 同行** /
+四个调用点都走 `ensurePosture`。
+**变异验证**（按 AGENTS.md §6 要求）：把 helper 还原成原始形态（`!existsSync(target) || options.force`
+且去掉提前返回）⇒ **5 条红**，含两条数据丢失断言与 CLI 端到端；恢复后 `test-installer` 全绿、
+`run-gates` **54/54**（本轮实测 120.4s，无 SKIP）。
+
+**未做（别当成已解决）**：同一批 `copyFile` 对 **`package.json`** 也传了 `firstRun || options.force`（3 处）。
+profile 的 `dsh.profile.bundles` 里可能有用户自己加的行，**属于同一类风险的候选**；本轮没查也没改，
+已记进 `docs/handoff.md` §4 陷阱 103 的末条。
+
 ## 2026-09-26 · A′ S4 的 Obsidian 半个：**已实现**（并纠正上一轮"结构性不可行"的错判）
 
 **先纠正我自己的错**：上一轮我写下"从 `main.js` 物化一个完整包**结构性不可行**"，理由是内嵌表以
