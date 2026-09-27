@@ -302,6 +302,25 @@ const check = (label, cond, detail = '') => {
           overlay.includes('client-ui-memory-panel'));
         check('S4 bundle: the success line says which channel won (no misleading "Done (direct)")',
           /Done \(direct → local bundle\)/.test(out));
+        // THE INTEGRITY BASELINE MUST DESCRIBE THE FINISHED PROFILE (bug found 2026-09-27 by installing
+        // into a real profile). `stageClientHalf` rewrites `package.json` AFTER the bundle install, so a
+        // manifest written before it recorded a stale digest — and the profile then reported its OWN
+        // fresh install as "drifted" forever. The posture list also used to claim the flat module set,
+        // 8 files of which the bundle channel never writes (a manifest that lies).
+        const bundleProfile = join(bHome, 'profiles', 'notes-assistant');
+        const recorded = manifest?.postureDigests ?? {};
+        const driftedNames = Object.entries(recorded)
+          .filter(([name, digest]) => {
+            try { return createHash('sha256').update(readFileSync(join(bundleProfile, name))).digest('hex') !== digest; }
+            catch { return true; }
+          })
+          .map(([name]) => name);
+        check('S4 bundle: the recorded digests match the files on disk (no self-reported drift)',
+          Object.keys(recorded).length > 0 && driftedNames.length === 0,
+          driftedNames.length ? driftedNames.join(', ') : `${Object.keys(recorded).length} digests`);
+        const claimedMissing = (manifest?.posture ?? []).filter((name) => !existsSync(join(bundleProfile, name)));
+        check('S4 bundle: the manifest claims no file that was never written',
+          claimedMissing.length === 0, claimedMissing.join(', ') || `${(manifest?.posture ?? []).length} claimed`);
       } finally {
         rmSync(bHome, { recursive: true, force: true });
       }

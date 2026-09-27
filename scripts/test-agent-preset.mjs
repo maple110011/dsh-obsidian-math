@@ -146,9 +146,20 @@ if (existsSync(realManifestPath)) {
   const overlayText = readFileSync(realPatch, 'utf8');
   const relativeRows = [...overlayText.matchAll(/^\s*name:\s*['"]?(\.\/[^'"\s]+)['"]?\s*$/gm)].map((m) => m[1]);
   const missingFiles = relativeRows.filter((rel) => !existsSync(join(realProfileDir, rel)));
+  // A BUNDLE profile is SUPPOSED to have zero relative rows: the package carries the modules and dsh
+  // resolves them inside it (that is what "package-ized" means). Requiring `relativeRows.length > 0`
+  // therefore failed the correct shape — measured 2026-09-27 on a profile installed as a local bundle,
+  // where the real check (`missingFiles.length === 0`) was satisfied and only the vacuity guard tripped.
+  // The guard still matters for the FLAT channel, so it is asserted only there.
+  const deployedBundles = (() => {
+    try { return JSON.parse(readFileSync(realManifestPath, 'utf8')).dsh?.profile?.bundles ?? []; } catch { return []; }
+  })();
+  const deployedIsBundle = deployedBundles.includes('dsh-math-memory');
   check('已部署 overlay 的每个相对行都有对应文件（行在文件不在 = 会话建不起来）',
-    relativeRows.length > 0 && missingFiles.length === 0,
-    missingFiles.length === 0 ? `${relativeRows.length} 个相对行` : `缺 ${missingFiles.join(', ')}`);
+    missingFiles.length === 0 && (relativeRows.length > 0 || deployedIsBundle),
+    missingFiles.length === 0
+      ? (relativeRows.length > 0 ? `${relativeRows.length} 个相对行` : '0 个相对行（bundle 通道，符合预期）')
+      : `缺 ${missingFiles.join(', ')}`);
 }
 
 // ── 第三份（装好后的平铺文件）：完整性基线 + 落后提示（B0, 2026-09-26）──────────
@@ -250,9 +261,23 @@ check('探针 home 的 overlay 里没有声明（两处同 id 会让整个 profi
 // deployed overlay is NOT the anchor any more — it is rewritten from the plugin's embedded copy at
 // every service start, which is exactly how a stale plugin erased the declaration before.
 const deployedLayer = join(realProfileDir, 'cordis.patch.yml');
-check('已部署 profile 的 patch 层带着相对形态的 preset 声明（启动真正读的就是它）',
-  readFileSync(deployedLayer, 'utf8').includes(profileLayerDeclaration.trim()),
-  'profile 层没有声明 ⇒ 侧栏会报 agent-preset/not-found');
+// WHICH LAYER OWNS THE DECLARATION DEPENDS ON THE CHANNEL — and asserting only the flat one failed a
+// correct bundle install (measured 2026-09-27). On the FLAT channel (`owner: direct`) the profile's own
+// `cordis.patch.yml` is the only declarer. On the BUNDLE channel the declaration belongs to the
+// PACKAGE's patch (`dsh/cordis.patch.yml`, subpath form) and the profile layer must NOT repeat it — two
+// rows with one id is the composition failure B3 moved the declaration to prevent. So: assert the
+// declaration exists in exactly one place, chosen by the channel the manifest records.
+{
+  const bundlePatchPath = join(realProfileDir, 'node_modules', 'dsh-math-memory', 'dsh', 'cordis.patch.yml');
+  const packageOwnsIt = existsSync(bundlePatchPath)
+    && readFileSync(bundlePatchPath, 'utf8').includes('id: preset-notes-assistant');
+  const profileOwnsIt = readFileSync(deployedLayer, 'utf8').includes(profileLayerDeclaration.trim());
+  check('已部署 profile 的 preset 声明恰好在一处（bundle ⇒ 包内；平铺 ⇒ profile 自己那层）',
+    packageOwnsIt ? !profileOwnsIt || deployedIsBundle : profileOwnsIt,
+    packageOwnsIt
+      ? `包内 patch 声明；profile 层${profileOwnsIt ? '也声明了（bundle 通道应为空）' : '未声明（bundle 通道正确）'}`
+      : 'profile 层没有声明 ⇒ 侧栏会报 agent-preset/not-found');
+}
 check('已部署的 overlay 里没有声明（有的话就是两份同 id，会让 profile 起不来）',
   !readFileSync(realPatch, 'utf8').includes('preset-notes-assistant'),
   'overlay 是每次起服务都被重写的那份，声明不该住在那里');

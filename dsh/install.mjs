@@ -872,10 +872,13 @@ function tryBundleInstall(options, dshHome, profileRoot) {
     log(options, "[bundle] 警告：overlay 里没找到成对标记，未剥掉包已提供的行（它们可能成为重复声明）");
   }
 
-  // 5c. flip ownership LAST (see the order note above).
-  writeManifest(options, profileRoot, "npm", DIRECT_PROFILE_FILES, [], { bundleSource: "local", staging: LOCAL_BUNDLE_DIR });
+  // 5c. Ownership is written by the CALLER, last of all — see the note in `directInstallProfile`.
+  // Recording digests here would be recording a profile that is not finished yet: `stageClientHalf`
+  // runs after this function returns and rewrites `package.json` (it declares the client package),
+  // so a baseline taken now would report this very install as drifted. That is precisely the false
+  // signal the baseline exists to avoid (found by installing into a real profile, 2026-09-27).
   log(options, `[bundle] ${LOCAL_BUNDLE_PKG} 已作为本地 bundle 装进 ${options.profile}（owner=npm, bundleSource=local）`);
-  return { staged: true };
+  return { staged: true, manifestExtras: { bundleSource: "local", staging: LOCAL_BUNDLE_DIR } };
 }
 
 async function directInstallProfile(options, dshHome) {
@@ -898,6 +901,20 @@ async function directInstallProfile(options, dshHome) {
         log(options, `[client] 客户端半个没装上 —— 记忆面板在 ${options.profile} 里不会出现（面板的其余部分已写入）`);
         return false;
       }
+      // ⚠️ OWNERSHIP AND THE INTEGRITY BASELINE ARE WRITTEN HERE, AFTER EVERY OTHER WRITE.
+      // `stageClientHalf` above rewrites `package.json` (to declare the client package), so a manifest
+      // written before it records a file that no longer exists on disk — and the profile then reports
+      // its OWN fresh install as "drifted" forever. Measured 2026-09-27 on a real profile: the recorded
+      // digest did not match byte-for-byte immediately after `install --direct` returned.
+      //
+      // The posture list is likewise the files that ACTUALLY exist. The bundle channel does not stage
+      // the flat module set at all (the package carries them, and dsh resolves them inside it), so
+      // writing `DIRECT_PROFILE_FILES` here made the manifest claim 13 files of which 8 were never
+      // written — a manifest that lies, which is the one thing this file must never do. Verified: the
+      // flat path already has a hard postcondition for exactly this; the bundle path needed the same
+      // treatment applied to its own, smaller set.
+      const bundlePosture = DIRECT_PROFILE_FILES.filter((name) => existsSync(join(profileRoot, name)));
+      writeManifest(options, profileRoot, "npm", bundlePosture, [], attempt.manifestExtras ?? {});
       return true;
     }
     log(options, `[fallback] 本地包化未成功（${attempt.reason}）⇒ 回落到平铺通道（--direct 形态）。`);
