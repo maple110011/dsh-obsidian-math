@@ -85,8 +85,10 @@ const check = (label, cond, detail = '') => {
       /^preset:\s+\[missing/m.test(broken.stdout ?? ''),
       (String(broken.stdout ?? '').match(/^preset:.*$/m) ?? [''])[0].slice(0, 90));
 
-    // The flat shape must keep reporting honestly too.
-    run(['install', '--direct', '--dsh-home', directHome, '--quiet']);
+    // The flat shape must keep reporting honestly too. `--flat` because since A′ S4 the DEFAULT for
+    // `install --direct` is "try a local bundle first, fall back to flat" — this case is specifically
+    // about the flat channel's own reporting, so it asks for that channel explicitly.
+    run(['install', '--direct', '--flat', '--dsh-home', directHome, '--quiet']);
     const flatOk = runCapture(['status', '--dsh-home', directHome, '--quiet']);
     check('status on a flat (--direct) profile still reports [present]',
       /^preset:\s+\[present\]/m.test(flatOk.stdout ?? ''),
@@ -110,7 +112,7 @@ const check = (label, cond, detail = '') => {
 {
   const forceHome = mkdtempSync(join(tmpdir(), 'dsh-client-fail-'));
   try {
-    const forced = spawnSync(process.execPath, [installer, 'install', '--direct', '--dsh-home', forceHome],
+    const forced = spawnSync(process.execPath, [installer, 'install', '--direct', '--flat', '--dsh-home', forceHome],
       { encoding: 'utf8', env: { ...process.env, DSH_TEST_FORCE_CLIENT_FAIL: '1' } });
     const forcedOut = `${forced.stdout ?? ''}${forced.stderr ?? ''}`;
     check('a client-half failure makes the direct install exit non-zero (no more silent Done)',
@@ -119,13 +121,13 @@ const check = (label, cond, detail = '') => {
       /没装上/.test(forcedOut) && /记忆面板/.test(forcedOut),
       (forcedOut.split('\n').find((l) => l.includes('没装上')) ?? '').trim().slice(0, 90));
     check('...and it does not print the success banner',
-      !/Done \(direct\)/.test(forcedOut));
+      !/Done \(direct/.test(forcedOut));
 
     // Anti-constant: the same command WITHOUT the hook must still succeed, so the assertions above
     // cannot be satisfied by "this command always fails".
     const okHome = mkdtempSync(join(tmpdir(), 'dsh-client-ok-'));
     try {
-      const fine = spawnSync(process.execPath, [installer, 'install', '--direct', '--dsh-home', okHome],
+      const fine = spawnSync(process.execPath, [installer, 'install', '--direct', '--flat', '--dsh-home', okHome],
         { encoding: 'utf8' });
       check('without the failure the same install still exits 0',
         fine.status === 0, `status=${fine.status}`);
@@ -203,8 +205,118 @@ const check = (label, cond, detail = '') => {
   }
 }
 
-// 1. install --direct (fresh)
-const installArgs = ['install', '--direct', '--dsh-home', home, '--vault', vault];
+// 0e. A′ S4 (2026-09-26): the offline channel's THREE outcomes — bundle / fallback / --flat.
+//
+// The default `install --direct` now first tries to install a REAL local bundle and falls back to the
+// flat copy when it cannot. All three paths must be observable and honest:
+//   · bundle succeeds  ⇒ owner=npm + bundleSource=local, the package is registered, the flat rows are
+//                        stripped from the overlay, the client-panel row SURVIVES;
+//   · bundle fails     ⇒ the manifest must NOT claim npm, and the log must SAY it fell back;
+//   · `--flat`         ⇒ the flat channel, unchanged, and the bundle is not attempted.
+//
+// This also pins the plan's required mutation: the verdict must come from the FILE SYSTEM, not from the
+// child process's exit code (trap 89). `DSH_TEST_UNREGISTER_BUNDLE=1` makes the verification fail while
+// `dsh plugin add` really succeeded — if the check were walked back to `status === 0`, the run below
+// would claim bundle success on a profile where nothing was registered.
+{
+  const overlayPathFor = (h) => join(h, 'profiles', 'notes-assistant', 'notes-assistant.patch.yml');
+  const manifestFor = (h) => join(h, 'profiles', 'notes-assistant', '.install-manifest.json');
+  const readManifest = (h) => {
+    try { return JSON.parse(readFileSync(manifestFor(h), 'utf8')); } catch { return null; }
+  };
+  const runInstall = (h, env = {}, extra = []) => spawnSync(
+    process.execPath,
+    [installer, 'install', '--direct', '--dsh-home', h, ...extra],
+    { encoding: 'utf8', env: { ...process.env, ...env } }
+  );
+
+  // (a) `--flat`: the pre-A′ shape, requested explicitly.
+  {
+    const flatHome = mkdtempSync(join(tmpdir(), 'dsh-s4-flat-'));
+    try {
+      const res = runInstall(flatHome, {}, ['--flat']);
+      const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+      check('S4 --flat: exits 0', res.status === 0, `status=${res.status}`);
+      check('S4 --flat: says it skipped bundling on purpose', /--flat 指定：跳过本地包化/.test(out));
+      check('S4 --flat: the manifest stays on the direct channel',
+        readManifest(flatHome)?.owner === 'direct', String(readManifest(flatHome)?.owner));
+      check('S4 --flat: no local bundle is materialized',
+        !existsSync(join(flatHome, 'profiles', 'notes-assistant', '.dsh-math-memory')));
+      check('S4 --flat: the overlay KEEPS the flat rows it needs',
+        readFileSync(overlayPathFor(flatHome), 'utf8').includes('name: ./math-memory-panel.mjs'));
+    } finally {
+      rmSync(flatHome, { recursive: true, force: true });
+    }
+  }
+
+  // (b) the bundle attempt fails its FILE-SYSTEM verdict ⇒ fall back, and do not claim npm.
+  {
+    const fbHome = mkdtempSync(join(tmpdir(), 'dsh-s4-fallback-'));
+    try {
+      const res = runInstall(fbHome, { DSH_TEST_UNREGISTER_BUNDLE: '1' });
+      const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+      check('S4 fallback: still exits 0 (falling back is not a failure)',
+        res.status === 0, `status=${res.status}`);
+      check('S4 fallback: it SAYS it fell back, with the reason',
+        /\[fallback\] 本地包化未成功/.test(out) && /DSH_TEST_UNREGISTER_BUNDLE|not registered/.test(out),
+        (out.split('\n').find((l) => l.includes('[fallback]')) ?? '').trim().slice(0, 120));
+      // THE assertion for the mutation: a bundle attempt that failed verification must not flip the
+      // channel. If the verdict were `status === 0`, this install WOULD have written owner=npm while the
+      // package was never registered.
+      check('S4 fallback: the manifest does NOT claim the npm channel',
+        readManifest(fbHome)?.owner === 'direct', String(readManifest(fbHome)?.owner));
+      check('S4 fallback: the flat channel was really written',
+        readFileSync(overlayPathFor(fbHome), 'utf8').includes('name: ./math-memory-panel.mjs'));
+    } finally {
+      rmSync(fbHome, { recursive: true, force: true });
+    }
+  }
+
+  // (c) the real bundle route — only when this machine actually has dsh AND pnpm.
+  {
+    const probe = spawnSync('pnpm', ['--version'], { encoding: 'utf8', shell: process.platform === 'win32' });
+    const haveToolchain = !probe.error && probe.status === 0;
+    if (!haveToolchain) {
+      check('S4 bundle: skipped (no pnpm on this machine — the fallback case above covers that shape)',
+        true);
+    } else {
+      const bHome = mkdtempSync(join(tmpdir(), 'dsh-s4-bundle-'));
+      try {
+        const res = runInstall(bHome);
+        const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+        const manifest = readManifest(bHome);
+        const overlay = readFileSync(overlayPathFor(bHome), 'utf8');
+        const profilePkg = JSON.parse(readFileSync(join(bHome, 'profiles', 'notes-assistant', 'package.json'), 'utf8'));
+        check('S4 bundle: exits 0', res.status === 0, `status=${res.status}`);
+        check('S4 bundle: the package really is registered as a bundle',
+          (profilePkg.dsh?.profile?.bundles ?? []).includes('dsh-math-memory'),
+          (profilePkg.dsh?.profile?.bundles ?? []).join(', '));
+        check('S4 bundle: the manifest records owner=npm + bundleSource=local (A4 ①)',
+          manifest?.owner === 'npm' && manifest?.bundleSource === 'local',
+          `owner=${manifest?.owner} source=${manifest?.bundleSource}`);
+        check('S4 bundle: the staging directory is recorded for cleanup (A6 ②)',
+          manifest?.staging === '.dsh-math-memory', String(manifest?.staging));
+        check('S4 bundle: the rows the package provides are stripped from the overlay',
+          !overlay.includes('name: ./math-memory-panel.mjs') && !overlay.includes('name: ./math-memory-workspace.mjs'));
+        check('S4 bundle: the client-panel row SURVIVES (nothing else declares it)',
+          overlay.includes('client-ui-memory-panel'));
+        check('S4 bundle: the success line says which channel won (no misleading "Done (direct)")',
+          /Done \(direct → local bundle\)/.test(out));
+      } finally {
+        rmSync(bHome, { recursive: true, force: true });
+      }
+    }
+  }
+}
+
+// 1. install --direct --flat (fresh, FLAT channel)
+//
+// `--flat` is passed on purpose from here on: since A′ S4 the default `install --direct` first tries to
+// install a REAL local bundle (and falls back to flat when dsh/pnpm are unavailable). The cases in
+// sections 1–6 assert the FLAT channel's files, manifest and uninstall behaviour, so they ask for that
+// channel explicitly and stay deterministic on machines WITH and WITHOUT dsh. The bundle route, the
+// fallback and the default itself are covered by their own section (0e) below.
+const installArgs = ['install', '--direct', '--flat', '--dsh-home', home, '--vault', vault];
 let r = run(installArgs);
 check('direct install exit 0', r.status === 0 && !r.error);
 
@@ -584,7 +696,7 @@ check('vault cache removed', !existsSync(join(vault, '.deepseek', 'cache')));
   const pv = mkdtempSync(join(tmpdir(), 'dsh-purge-manifest-'));
   const pvVault = mkdtempSync(join(tmpdir(), 'dsh-purge-vault-'));
   try {
-    const install = run(['install', '--direct', '--dsh-home', pv, '--vault', pvVault, '--quiet']);
+    const install = run(['install', '--direct', '--flat', '--dsh-home', pv, '--vault', pvVault, '--quiet']);
     check('purge fixture: seeded install exit 0', install.status === 0, `status=${install.status}`);
     // A manifest-named target at the vault ROOT: no container directory covers it.
     writeFileSync(join(pvVault, 'AGENTS.md'), '# content\n', 'utf8');

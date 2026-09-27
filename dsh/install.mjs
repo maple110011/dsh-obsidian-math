@@ -68,6 +68,18 @@ import {
 // 2026-09-26 (B2): the profile contract is the ONE statement of what gets staged. `preset-deploy.mjs`
 // re-exports its `PRESET_BODY_FILES`; the scaffold half is read straight from here.
 import { PROFILE_SCAFFOLD_FILES } from "./preset/profile-contract.mjs";
+// A′ S4 (2026-09-26): the offline channel can now install a REAL bundle package instead of only
+// flattening files. `local-bundle.mjs` is the pure materializer (S1); the closure collector is the same
+// authority the client half uses, so the package's module list cannot drift from the repo layout.
+import {
+  LOCAL_BUNDLE_DIR,
+  LOCAL_BUNDLE_PKG,
+  localBundleSourceFiles,
+  materializeLocalBundle,
+  removeLocalBundle,
+  localBundleInstalledIn
+} from "./profile/local-bundle.mjs";
+import { collectDshImportClosure } from "./client-panel/install-into-profile.mjs";
 // The marker FILENAMES come from the module that owns their semantics — a second
 // literal here is how the two anchors could drift apart silently.
 import {
@@ -146,6 +158,9 @@ export function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "install" || arg === "status" || arg === "uninstall") options.command = arg;
     else if (arg === "--direct") options.direct = true;
+  // A′ S4 (A1 ①): the offline channel tries to install a REAL local bundle first and falls back to the
+  // flat copy. `--flat` forces the old shape for anyone who wants the pre-A′ behaviour on purpose.
+  else if (arg === "--flat") options.flat = true;
     else if (arg === "--vault" || arg === "-v") options.vault = argv[++index] ?? "";
     else if (arg === "--dsh-home") options.dshHome = argv[++index] ?? "";
     else if (arg === "--profile") options.profile = argv[++index] ?? PROFILE_NAME;
@@ -177,6 +192,7 @@ Options:
   --profile <name>    profile name (default: notes-assistant)
   --force             take over an other-channel-owned preset/profile
   --any-home          allow a non-harness home (sandboxes/probes); also DSH_ALLOW_ANY_HOME=1
+  --flat              do not try to install a local bundle; use the flat copy (pre-A′ behaviour)
   --dry-run           print planned writes without touching the filesystem
   --purge             uninstall: also remove scaffold templates (vault)
   --purge-data        uninstall: also remove memory CONTENT (requires --confirm)
@@ -508,7 +524,7 @@ function assertChannelOwnership(options, { profileDir, home, presetId }, channel
   return `owned by "${owner.owner}" (${owner.source}, v${owner.version ?? "?"}) — pass --force to take over as "${channel}"`;
 }
 
-export function writeManifest(options, profileRoot, channel, postureFiles, vaults) {
+export function writeManifest(options, profileRoot, channel, postureFiles, vaults, extras = {}) {
   const manifestPath = join(profileRoot, CHANNEL_MANIFEST);
   const payload = {
     owner: channel,
@@ -522,7 +538,12 @@ export function writeManifest(options, profileRoot, channel, postureFiles, vault
     // legitimately LAGS the repo between deployments (that is reported as a notice, not a
     // failure), but it must never silently DIVERGE from its own record.
     postureDigests: postureDigests(profileRoot, postureFiles),
-    vaults
+    vaults,
+    // A′ S4/A4 ① (2026-09-26): a local bundle keeps `owner: npm` (it really is installed through
+    // `dsh plugin add`) and records WHERE it came from. `staging` is also the cleanup list that
+    // `commandUninstall` uses, so removal stays symmetric with installation (A6 ② — the staging
+    // directory and the registered package used to be left behind).
+    ...extras
   };
   write(options, manifestPath, JSON.stringify(payload, null, 2) + "\n");
 }
@@ -698,6 +719,165 @@ function stageClientHalf(options, profileRoot) {
 // `directInstallProfile` writes. `commandUninstall` still CLEANS UP a directory a
 // pre-2026-09-26 install left behind.
 
+/**
+ * Remove the marker-delimited block from the plugin-owned overlay text (A′ S3/S4, 2026-09-26).
+ *
+ * The two markers are literal YAML comments in `dsh/profile/notes-assistant.patch.yml`; this function
+ * is the installer half of the pair the Obsidian template also carries (`stripBundleOwnedRows` there —
+ * they cannot share a module: the template is evaluated as a bundle and cannot `import`).
+ *
+ * FAILS SAFE: missing or inverted markers return the text UNCHANGED (the flat rows stay, which is the
+ * correct pre-S3 behaviour). A half-stripped file would lose one row and keep the other — still a
+ * duplicate declaration, but now looking deliberate.
+ *
+ * ⚠️ Trap 102: the reason this exists is NOT "dsh hard-fails on a repeated route prefix" — that premise
+ * was measured and did not reproduce on this machine. The real reason is that the bundle and the overlay
+ * would otherwise BOTH declare the same rows (dead or double-mounted depending on whether the flat files
+ * happen to be staged), and the composed tree should declare each row once.
+ */
+const BUNDLE_ROWS_BEGIN = "# >>> bundle-owned rows (see buildNotesAssistantPatch) >>>";
+const BUNDLE_ROWS_END = "# <<< bundle-owned rows <<<";
+
+function stripBundleOwnedRows(text) {
+  const begin = text.indexOf(BUNDLE_ROWS_BEGIN);
+  const end = text.indexOf(BUNDLE_ROWS_END);
+  if (begin < 0 || end < 0 || end < begin) return text;
+  return text.slice(0, begin) + text.slice(end + BUNDLE_ROWS_END.length);
+}
+
+/**
+ * True when THIS profile lists our package as a registered bundle.
+ *
+ * This is the FILE-SYSTEM verdict the plan requires: the package directory AND the
+ * `dsh.profile.bundles` entry, never "the child process exited 0". Trap 89 is the precedent — a
+ * substring/exit-code check once reported success while nothing had been installed.
+ */
+function bundleRegisteredIn(profileRoot) {
+  const pkgJsonPath = join(profileRoot, "node_modules", LOCAL_BUNDLE_PKG, "package.json");
+  if (!existsSync(pkgJsonPath)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(join(profileRoot, "package.json"), "utf8"));
+    const bundles = parsed?.dsh?.profile?.bundles;
+    return Array.isArray(bundles) && bundles.includes(LOCAL_BUNDLE_PKG);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A′ S4: opportunistically install this plugin as a REAL bundle for the offline channel.
+ *
+ * Returns `{ staged: boolean, reason?: string }`. `staged: false` is NOT a failure of the install — the
+ * caller falls back to the flat channel and says so. That is the whole point of A1 ① ("机会式包化"):
+ * the offline path must keep working on a machine with no dsh/no pnpm, and it must never silently
+ * pretend the bundle route succeeded.
+ *
+ * ORDER (deliberate, and S5 depends on it):
+ *   1. the minimal scaffold pnpm needs (package.json / cordis.yml / pnpm-workspace.yaml);
+ *   2. materialize the package into `<profile>/.dsh-math-memory/`;
+ *   3. `dsh plugin --profile <id> add file:<abs>` — OFFLINE (a `file:` spec never touches the registry);
+ *   4. VERIFY on the file system (directory + bundles entry), ignoring the exit code;
+ *   5. only THEN flip the manifest to `npm` + `bundleSource: local`, and rewrite the overlay.
+ *
+ * Step 5 last means an interruption leaves `owner: direct` with the package registered — a shape the
+ * next run recovers from (S5), rather than a profile that claims `npm` while nothing is installed.
+ */
+function tryBundleInstall(options, dshHome, profileRoot) {
+  if (options.dryRun) {
+    log(options, `[dry-run] would materialize ${join(profileRoot, LOCAL_BUNDLE_DIR)} and run: dsh plugin --profile ${options.profile} add file:<abs>`);
+    return { staged: false, reason: "dry-run" };
+  }
+  if (options.flat) return { staged: false, reason: "--flat" };
+
+  // 1. minimal scaffold — `dsh plugin add` runs pnpm in the profile dir and needs a workspace file.
+  const firstRun = !existsSync(join(profileRoot, "package.json"));
+  copyFile(options, join(PROFILE_DIR, "package.json"), join(profileRoot, "package.json"), firstRun || options.force);
+  if (repairProfileManifest(profileRoot, options)) log(options, `[manifest] 补上缺失的 name/version：${join(profileRoot, "package.json")}`);
+  copyFile(options, join(PROFILE_DIR, "cordis.yml"), join(profileRoot, "cordis.yml"), true);
+  copyFile(options, join(PROFILE_DIR, "pnpm-workspace.yaml"), join(profileRoot, "pnpm-workspace.yaml"), firstRun);
+
+  // 2. materialize. A missing source throws in the materializer — caught here so a broken repo copy
+  //    falls back to flat rather than aborting the install.
+  try {
+    const rootPkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8"));
+    const result = materializeLocalBundle({
+      profileDir: profileRoot,
+      files: localBundleSourceFiles({
+        repoRoot: PACKAGE_ROOT,
+        collectClosure: collectDshImportClosure,
+        presetBodyFiles: PRESET_BODY_FILES
+      }),
+      read: (rel) => {
+        try { return readFileSync(join(PACKAGE_ROOT, ...rel.split("/"))); } catch { return null; }
+      },
+      meta: {
+        name: rootPkg.name,
+        version: rootPkg.version,
+        description: rootPkg.description,
+        dshEngine: rootPkg.peerDependencies?.["@deepseek-ai/dsh"] ?? rootPkg.dsh?.engines?.dsh
+      }
+    });
+    log(options, `[bundle] 物化本地包：${result.written.length} 个文件 → ${join(profileRoot, LOCAL_BUNDLE_DIR)}`);
+  } catch (error) {
+    return { staged: false, reason: `materialize: ${error instanceof Error ? error.message : String(error)}` };
+  }
+
+  // 3. install it through dsh, offline.
+  const args = ["plugin", "--profile", options.profile, "add", `file:${join(profileRoot, LOCAL_BUNDLE_DIR).split("\\").join("/")}`];
+  log(options, `[run] dsh ${args.join(" ")}`);
+  const result = spawnSync("dsh", args, {
+    stdio: "inherit",
+    shell: process.platform === "win32",
+    env: { ...process.env, DSH_HOME: dshHome }
+  });
+  if (result.error) {
+    const hint = result.error.code === "ENOENT" ? "dsh not found on PATH" : String(result.error);
+    return { staged: false, reason: hint };
+  }
+  // 4. the verdict comes from the FILE SYSTEM, not from `result.status` (trap 89).
+  //
+  // TEST SEAM (S4 mutation check, 2026-09-26): `DSH_TEST_UNREGISTER_BUNDLE=1` makes the verification
+  // answer "not registered" even though `dsh plugin add` really succeeded. That is how the plan's
+  // required mutation — "walk the verdict back to `exit code == 0`" — is exercised without having to
+  // fake a child process: with the verdict forced false, the fallback must happen and the manifest must
+  // stay `direct`; if the check were absent, the install would report bundle success while the package
+  // is not registered. OFF unless set.
+  const forcedUnregistered = process.env.DSH_TEST_UNREGISTER_BUNDLE === "1";
+  if (forcedUnregistered || !bundleRegisteredIn(profileRoot)) {
+    const detail = forcedUnregistered
+      ? "verification was forced to fail (DSH_TEST_UNREGISTER_BUNDLE=1)"
+      : `dsh plugin add exited ${result.status} but ${LOCAL_BUNDLE_PKG} is not registered in ${options.profile}`;
+    return { staged: false, reason: detail };
+  }
+  if (result.status !== 0) {
+    log(options, `[bundle] 注意：dsh plugin add 退出码 ${result.status}，但文件系统核验通过 —— 以文件系统为准`);
+  }
+
+  // 5a. the profile's own patch layer (posture). A BUNDLE profile must not carry the FLAT preset
+  //     declaration: the package's own patch declares the same id with a package subpath, and the
+  //     native path learned this the hard way (two rows, one id ⇒ `broken` preset, measured
+  //     2026-09-26). It is also a hard prerequisite of the client half, which refuses to stage without
+  //     `<profile>/cordis.patch.yml`.
+  const posturePath = join(profileRoot, "cordis.patch.yml");
+  copyFile(options, join(PROFILE_DIR, "cordis.patch.yml"), posturePath, !existsSync(posturePath) || options.force);
+  stripPresetDeclaration(profileRoot);
+
+  // 5b. overlay: drop the rows the package now provides (the client-panel row stays).
+  const overlayPath = join(profileRoot, "notes-assistant.patch.yml");
+  const flatOverlay = readFileSync(join(PROFILE_DIR, "notes-assistant.patch.yml"), "utf8");
+  const bundledOverlay = stripBundleOwnedRows(flatOverlay);
+  write(options, overlayPath, bundledOverlay);
+  if (bundledOverlay === flatOverlay) {
+    // Not fatal — but it means the strip silently did nothing, which is worth a line.
+    log(options, "[bundle] 警告：overlay 里没找到成对标记，未剥掉包已提供的行（它们可能成为重复声明）");
+  }
+
+  // 5c. flip ownership LAST (see the order note above).
+  writeManifest(options, profileRoot, "npm", DIRECT_PROFILE_FILES, [], { bundleSource: "local", staging: LOCAL_BUNDLE_DIR });
+  log(options, `[bundle] ${LOCAL_BUNDLE_PKG} 已作为本地 bundle 装进 ${options.profile}（owner=npm, bundleSource=local）`);
+  return { staged: true };
+}
+
 async function directInstallProfile(options, dshHome) {
   const profileRoot = join(dshHome, "profiles", options.profile);
   const conflict = assertChannelOwnership(options, { profileDir: profileRoot, home: dshHome, presetId: PRESET_ID }, "direct");
@@ -705,6 +885,26 @@ async function directInstallProfile(options, dshHome) {
     log(options, `[conflict] profile ${options.profile} is ${conflict}`);
     return false;
   }
+
+  // A′ S4: try the bundle route first; fall back to the flat channel loudly (A1 ①, `--flat` forces the
+  // old shape). `assertChannelOwnership` above already refused a profile owned by another channel, so an
+  // EXISTING `npm` install is not silently converted here — that direction belongs to `--force`.
+  if (!options.flat) {
+    const attempt = tryBundleInstall(options, dshHome, profileRoot);
+    if (attempt.staged) {
+      // The client half is still installed separately: it is NOT part of the bundle's patch.
+      const clientStaged = stageClientHalf(options, profileRoot);
+      if (!clientStaged) {
+        log(options, `[client] 客户端半个没装上 —— 记忆面板在 ${options.profile} 里不会出现（面板的其余部分已写入）`);
+        return false;
+      }
+      return true;
+    }
+    log(options, `[fallback] 本地包化未成功（${attempt.reason}）⇒ 回落到平铺通道（--direct 形态）。`);
+  } else {
+    log(options, "[flat] --flat 指定：跳过本地包化，使用平铺通道。");
+  }
+
   const firstRun = !existsSync(join(profileRoot, "package.json"));
   copyFile(options, join(PROFILE_DIR, "package.json"), join(profileRoot, "package.json"), firstRun || options.force);
   // Repair an EXISTING manifest: `copyFile` above skips it unless forced, and a
@@ -802,6 +1002,15 @@ function writePosture(options, dshHome) {
   // channel). Without this the native install produced two rows with one id and the preset came out
   // `broken` (measured 2026-09-26). `copyFile` already honoured --dry-run; so must this.
   if (!options.dryRun) stripPresetDeclaration(profileRoot);
+  // A′ S5 (2026-09-26): if a LOCAL bundle was staged by the direct path and the user now installs
+  // through the native (registry) channel, the staging directory would be left behind as a second copy
+  // of the same package. The registry bundle supersedes it; remove the staging tree so the profile has
+  // exactly one source for this plugin. (`removeLocalBundle` is idempotent.)
+  if (!options.dryRun && existsSync(join(profileRoot, LOCAL_BUNDLE_DIR))) {
+    if (removeLocalBundle(profileRoot)) {
+      log(options, `[bundle] 已移除直接通道留下的本地暂存包：${join(profileRoot, LOCAL_BUNDLE_DIR)}（改用 registry 包）`);
+    }
+  }
   writeManifest(options, profileRoot, "npm", ["cordis.patch.yml"], []);
   return true;
 }
@@ -861,8 +1070,18 @@ async function commandInstall(options) {
 
   log(options, "");
   if (options.direct) {
-    log(options, "Done (direct). Start with:");
-    log(options, `  dsh --profile ${options.profile} --patch "${join(dshHome, "profiles", options.profile, "notes-assistant.patch.yml")}"`);
+    // A′ S4: report WHICH channel actually ended up in force. Printing "Done (direct)" for a profile
+    // that is now a registered bundle would be exactly the kind of misleading summary this repo keeps
+    // removing — and A1 ① promises `status` is the single truth about the current channel, so the
+    // message must not contradict it.
+    const bundled = bundleRegisteredIn(join(dshHome, "profiles", options.profile));
+    if (bundled) {
+      log(options, `Done (direct → local bundle). ${LOCAL_BUNDLE_PKG} is registered in "${options.profile}" and shows up in dsh's plugin manager. Start with:`);
+      log(options, `  dsh --profile ${options.profile} --patch "${join(dshHome, "profiles", options.profile, "notes-assistant.patch.yml")}"`);
+    } else {
+      log(options, `Done (direct, flat). Local bundling was not used${options.flat ? " (--flat)" : ""} — this channel only flattens files, so it does NOT appear in dsh's plugin manager. Start with:`);
+      log(options, `  dsh --profile ${options.profile} --patch "${join(dshHome, "profiles", options.profile, "notes-assistant.patch.yml")}"`);
+    }
   } else {
     log(options, "Done (native). The preset appears in the agent picker after the next dsh boot.");
     log(options, `  dsh --profile ${options.profile}`);
@@ -951,6 +1170,19 @@ function commandUninstall(options) {
       } else if (result.status !== 0) {
         log(options, `[note] dsh plugin remove exited ${result.status} — the bundle may still be registered; remove it manually.`);
       }
+    }
+  }
+
+  // 1b. A′ S4/A6 ② (2026-09-26): the LOCAL STAGING package. `dsh plugin remove` above removes the
+  //     registration and the `node_modules` entry, but it knows nothing about our staging directory —
+  //     so without this the profile kept a full second copy of the package after "uninstall"
+  //     (asymmetric, and it confuses every later reader of the tree).
+  const stagingRoot = join(profileRoot, LOCAL_BUNDLE_DIR);
+  if (existsSync(stagingRoot)) {
+    if (localBundleInstalledIn(profileRoot) || options.force) {
+      remove(options, stagingRoot, true);
+    } else {
+      log(options, `[keep] ${stagingRoot} does not look like a bundle we staged (no usable package.json) — leaving it.`);
     }
   }
 

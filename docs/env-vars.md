@@ -37,6 +37,7 @@
 | `DSH_TEST_FORCE_CLIENT_FAIL` | `dsh/client-panel/install-into-profile.mjs`（**仅测试缝**） | 设成 `1` 时让"装客户端半个"这个函数**确定性地报失败**，好让门禁断言"客户端半个没装上 ⇒ 安装必须非零退出、不许打印 Done"（M3，2026-09-26）。生产路径永不设置它 | 无（未设 = 正常安装） |
 | `DSH_TEST_DROP_BUNDLE_FILE` | `scripts/test-real-profile-accept.mjs`（**仅测试缝**） | 让物化出的 A′ 本地 bundle 包**故意少一个文件**（值为仓库相对路径，如 `dsh/preset/note-tools.mjs`）。用于 S2 的变异验证：该门禁在"少一个 preset 体文件"时**必须红**（`agentPresets/list` 里出现 `broken` 或 `session/create` 非 `ok:true`）。没有这个缝就只能去改仓库本身，而门禁正在跑它 | 无（未设 = 完整物化） |
 | `DSH_ALLOW_ANY_HOME` | `dsh/install.mjs`（等价于 `--any-home`） | 设成 `1` 时**关闭 harness-home 地标守卫**（S0，2026-09-26）。守卫会拒绝两种形态：① 解析出的 home **就是** OS 主目录；② 它**包含**一个 harness home（`<raw>/.dsh` 存在）——后者是 2026-09-26 那两次"home 少一段 `\.dsh`"事故的签名，写出者在用户主目录里留下 `profiles/`、`skins/`。**沙箱与探针**用临时目录时必须显式放行（否则真机上存在 `~/.dsh` 时会误伤）；生产安装不该设它 | 无（未设 = 守卫生效） |
+| `DSH_TEST_UNREGISTER_BUNDLE` | `dsh/install.mjs`（**仅测试缝**） | 设成 `1` 时让"本地包是否已登记"的**文件系统核验**强制回答"没登记"，好让门禁断言"S4 的回落确实发生、且 manifest **不会**谎报 npm 通道"（A′ S4，2026-09-26）。它存在的理由是方案要求的变异验证——"把判据退回 `exit code == 0`"——不用去伪造子进程就能跑：判据一旦退回，这条缝就抓不住，manifest 会在包根本没登记的 profile 上写成 `owner=npm`。生产路径永不设置它 | 无（未设 = 以文件系统为准） |
 | `APPDATA` | Obsidian 插件 + 两个脚本 | **平台变量**：定位全局 npm 安装目录（`%APPDATA%\npm\node_modules\@deepseek-ai\dsh`） | 无（Windows 上由系统提供） |
 | `USERPROFILE` | 侧栏性能探针 | **平台变量**：推导 `DSH_HOME` 默认值 | 无（Windows 上由系统提供） |
 

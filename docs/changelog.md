@@ -3,6 +3,46 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · A′ S4：离线通道真的会装包了（机会式包化 + 回落 + `--flat`）
+
+**改了什么**：`install --direct` 现在默认**先试本地包化**——物化 → `dsh plugin --profile <id> add file:<abs>`
+→ **按文件系统核验** → 写 posture/overlay → **最后**才翻转 owner；失败就**回落平铺并明说原因**（A1 ①）。
+新增 `--flat` 强制旧形态。
+
+**三个关键设计点（都不是随手写的）**：
+1. **判据是文件系统，不是 exit code**：核验"`<profile>/node_modules/dsh-math-memory/package.json` 存在**且**
+   名字在 `dsh.profile.bundles` 里"。这正是陷阱 89 的教训（`includes(包名)` 式子串判据不算数）。
+2. **owner 最后翻转**：中途崩溃（在 `add` 与写 manifest 之间）留下的是 `owner: direct` + 包已登记 —— 下一次运行
+   会**重试包化并自愈**；反过来若先写 `owner: npm`，崩了就成了"声称 npm 却没有包"（S5 要防的坏形态）。
+3. **子进程退出码非 0 但核验通过时以文件系统为准**，只打一行提示（pnpm 在某些环境下会返回非 0 却其实成功）。
+
+**顺带修掉的两个真问题**：
+· **`tryBundleInstall` 起初不写 `cordis.patch.yml`** ⇒ 客户端半个报 `没有 cordis.patch.yml` 并让整个安装
+  **exit 1**（虽然包已装好）。已按 native 路径的做法补上：写 posture **并** `stripPresetDeclaration`
+  （bundle 层已经声明同一个 id，profile 层再声明一次就是两个同 id 行）。
+· `writePosture`（native 路径）现在会**移除直接通道留下的本地暂存包** `LOCAL_BUNDLE_DIR` —— 否则从
+  `--direct` 换到 registry 通道后，profile 里会同时躺着一份暂存包与一份 registry 包（S5 的一致性要求）。
+
+**测试**：新增 **16 条**断言（`test-installer.mjs` 新的 0e 节），覆盖三种结局
+（`--flat` / 回落 / 真包化）以及"成功行必须说清是哪条通道赢了"。既有 1–6 节改为**显式 `--flat`**：它们断言的是
+平铺通道的文件与卸载行为，而默认现在是"先试包化"，所以它们要明确要求那条通道（在有/无 dsh 的机器上都确定）。
+
+**变异验证（两条，都按方案原文要求）**：
+| 变异 | 结果 |
+|---|---|
+| 判据退回 `exit code == 0`（陷阱 89 形态） | **3 条红**，其中一条直接报 `the manifest does NOT claim the npm channel \| npm` —— 即"包没登记却写成 owner=npm" |
+| 不再剥 overlay 里包已提供的行 | **1 条红** |
+
+为此新增测试缝 `DSH_TEST_UNREGISTER_BUNDLE=1`（已登记 `docs/env-vars.md`）：让核验强制失败，从而能确定性地
+断言"回落确实发生且不谎报通道"，而不必伪造子进程。
+
+**证据边界**：本节在**本机**（有 dsh + pnpm）实测了真包化路径：`owner=npm` + `bundleSource=local`、
+`bundles` 里含 `dsh-math-memory`、暂存目录 `.dsh-math-memory` 已记录、overlay 里那两行被剥掉而
+**client-panel 行留下**、退出码 0、成功行是 `Done (direct → local bundle)`。**没有**验证"装完之后 dsh 能真的
+冷启动这个 profile"——那条由 `test: self-provisioned profile accepts a session` 负责（它用同一套物化模块，
+S2 实测 10/10），本轮未重跑。
+
+
 ## 2026-09-26 · A′ S3：overlay 状态机 + 归属语义（让"装成包"之后不再自己撞自己）
 
 **要防的是什么（这不是整洁问题，是"整个 profile 起不来"）**：`dsh-math-memory` 的入口
