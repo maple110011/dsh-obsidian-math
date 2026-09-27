@@ -150,6 +150,9 @@ export function parseArgs(argv) {
     else if (arg === "--dsh-home") options.dshHome = argv[++index] ?? "";
     else if (arg === "--profile") options.profile = argv[++index] ?? PROFILE_NAME;
     else if (arg === "--force" || arg === "-f") options.force = true;
+  // Escape hatch for the harness-home guard (see assertHarnessHome): sandboxes and probes legitimately
+  // point at a temporary directory, which the guard would otherwise refuse when a real ~/.dsh exists.
+  else if (arg === "--any-home") options.anyHome = true;
     else if (arg === "--quiet" || arg === "-q") options.quiet = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--yes" || arg === "-y") options.yes = true;
@@ -173,6 +176,7 @@ Options:
   --dsh-home <dir>    harness home (default: $DSH_HOME or ~/.dsh)
   --profile <name>    profile name (default: notes-assistant)
   --force             take over an other-channel-owned preset/profile
+  --any-home          allow a non-harness home (sandboxes/probes); also DSH_ALLOW_ANY_HOME=1
   --dry-run           print planned writes without touching the filesystem
   --purge             uninstall: also remove scaffold templates (vault)
   --purge-data        uninstall: also remove memory CONTENT (requires --confirm)
@@ -238,8 +242,72 @@ function remove(options, target, recursive = false) {
   }
 }
 
+/**
+ * Refuse to treat the OS home (or a directory that merely CONTAINS the harness home) as the harness
+ * home.
+ *
+ * WHY (2026-09-26, measured — the disaster-prevention handoff in the sibling workspace, sections 2/4
+ * and its gap 8)
+ * ----------------------------------------------------------------------------------------------------
+ * Two of the four harness-home loss incidents have their `installedAt` timestamps coinciding to the
+ * MILLISECOND with a `install.mjs --direct` write, and the artefact they left is unmistakable: the
+ * profile was written to `<user-home>/profiles/notes-assistant` and a skin to
+ * `<user-home>/skins/orca-link` — i.e. **the home path was missing its final `.dsh` segment**. The
+ * documented root cause is a swallowed assignment in a shell where the home variable is read-only, so
+ * it silently kept the user's profile directory and the installer wrote one level too high.
+ *
+ * What this guard is and is NOT:
+ *   · It IS a defence against **writing into the user's home one level too high** — creating stray
+ *     `~\profiles`, `~\skins` and a manifest that names the wrong profile (which is exactly what the
+ *     incident documents record). Such writes are ugly and confusing, and they are what the object
+ *     audit had to add extra ACEs for (`~\profiles`, `~\skins`).
+ *   · It is NOT a defence against deletion. It does not need to be: no code path in this installer
+ *     deletes the home — every removal target is a specific file or a plugin-owned directory (see the
+ *     five `remove()` call sites in `commandUninstall`), and `remove()` deletes only the exact path it
+ *     is handed. Saying otherwise would overstate this guard.
+ *
+ * Two shapes are refused, because both are the documented failure:
+ *   1. the resolved path EQUALS the OS home directory;
+ *   2. the resolved path CONTAINS the harness home as a child (`<raw>/.dsh` exists) — here the caller's
+ *      value is the parent of a real harness home, which is the "missing one segment" case.
+ *
+ * An explicit value is still trusted: passing `--dsh-home` / `$DSH_HOME` is an intentional act, and the
+ * escape hatch (`--any-home` / `DSH_ALLOW_ANY_HOME=1`) exists for sandboxes and probes that
+ * legitimately use a temporary directory. Without the hatch, `shape 2` would fire for any test that
+ * points at a temp dir while the real `~/.dsh` happens to exist.
+ *
+ * @throws when the resolved path looks like a mistake. The message names the actual paths, because the
+ *   whole failure mode is "the operator believed a different path was in use".
+ */
+/**
+ * Exported so a test can exercise the branch directly. The OS-home branch is NOT reachable through the
+ * default path (the default is `join(homedir(), ".dsh")`, which can never EQUAL the OS home) — it only
+ * fires when `DSH_HOME`/`--dsh-home` is set to a home directory itself, which is exactly the shell
+ * accident this guard exists for. Leaving it unexported would mean shipping an unverified branch.
+ */
+export function assertHarnessHome(raw, anyHome) {
+  if (anyHome) return;
+  const resolved = resolve(raw);
+  const osHome = resolve(homedir());
+  if (resolved === osHome) {
+    throw new Error(
+      `refusing to use the OS home directory as the harness home: ${resolved}\n` +
+      `  pass --dsh-home <dir> (or set DSH_HOME) to point at the harness home — normally ${join(osHome, ".dsh")}.\n` +
+      `  If a temporary directory really is intended, say so explicitly with --any-home.`
+    );
+  }
+  if (existsSync(join(resolved, ".dsh"))) {
+    throw new Error(
+      `refusing to use ${resolved} as the harness home: it CONTAINS a harness home (${join(resolved, ".dsh")}).\n` +
+      `  This is the "path missing its last segment" shape that wrote profiles into the user's home on\n` +
+      `  2026-09-26. Use ${join(resolved, ".dsh")} instead, or pass --any-home to override deliberately.`
+    );
+  }
+}
+
 function resolveDshHome(options) {
   const raw = options.dshHome || process.env.DSH_HOME || join(homedir(), ".dsh");
+  assertHarnessHome(raw, options.anyHome === true || process.env.DSH_ALLOW_ANY_HOME === "1");
   return resolve(raw);
 }
 

@@ -1,11 +1,11 @@
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // Aliased: this file already has a local `writeManifest` helper (a fixture that writes an owner marker).
-import { verifyPostureDigests, ensurePresetDeclaration, stripPresetDeclaration, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
+import { verifyPostureDigests, ensurePresetDeclaration, stripPresetDeclaration, assertHarnessHome, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
 // The contract is the source for "what a profile needs" — assertions below derive from it instead of
 // hardcoding counts that rot the moment a file is added (2026-09-26).
 import { PROFILE_SCAFFOLD_FILES, PRESET_BODY_FILES } from '../dsh/preset/profile-contract.mjs';
@@ -134,6 +134,72 @@ const check = (label, cond, detail = '') => {
     }
   } finally {
     rmSync(forceHome, { recursive: true, force: true });
+  }
+}
+
+// 0d. the harness-home guard (S0, 2026-09-26).
+//
+// WHY THIS EXISTS. Two of the four `.dsh` incidents have `installedAt` timestamps coinciding to the
+// MILLISECOND with a `install.mjs --direct` write, and the artefact is the tell: the profile landed at
+// `~\profiles\notes-assistant` and the skin at `~\skins\orca-link` — the home path was missing its
+// final `\.dsh`. Root cause (documented): a swallowed assignment where `$HOME` is read-only, leaving
+// the variable at `C:\Users\<user>`.
+//
+// The guard must catch that shape and NOTHING ELSE — it must not fire for a legitimate temp dir (every
+// install in this file uses one) and it must always yield to an explicit override.
+{
+  // (a) the incident shape: the given path is the PARENT of a real harness home.
+  const parent = mkdtempSync(join(tmpdir(), 'dsh-home-parent-'));
+  try {
+    mkdirSync(join(parent, '.dsh', 'profiles'), { recursive: true });
+    const refused = runCapture(['install', '--direct', '--dsh-home', parent, '--quiet']);
+    const output = `${refused.stdout}${refused.stderr}`;
+    check('a home that CONTAINS a harness home is refused (the "missing a segment" shape)',
+      refused.status !== 0 && /CONTAINS a harness home/.test(output), `status=${refused.status}`);
+    check('...and the refusal names both the wrong path and the right one',
+      output.includes(parent) && output.includes(join(parent, '.dsh')));
+    // The decisive part: nothing may have been written into the wrong (parent) directory.
+    check('...and nothing was written beside the real harness home',
+      !existsSync(join(parent, 'profiles')) && !existsSync(join(parent, 'skins')));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+
+  // (b) the explicit escape hatch still works — otherwise every sandbox/probe would be blocked.
+  const sandbox = mkdtempSync(join(tmpdir(), 'dsh-home-hatch-'));
+  try {
+    mkdirSync(join(sandbox, '.dsh'), { recursive: true });
+    const allowed = runCapture(['install', '--direct', '--dsh-home', sandbox, '--any-home', '--quiet']);
+    check('--any-home overrides the guard deliberately',
+      allowed.status === 0, `status=${allowed.status} ${`${allowed.stdout}${allowed.stderr}`.slice(-80)}`);
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+
+  // (c) a plain temp dir (no `.dsh` child) is NOT refused — this is what keeps every other case in
+  // this file working, so it is asserted rather than assumed.
+  const plain = mkdtempSync(join(tmpdir(), 'dsh-home-plain-'));
+  try {
+    const ok = runCapture(['status', '--dsh-home', plain, '--quiet']);
+    check('an ordinary directory is not refused (the guard is narrow on purpose)',
+      ok.status === 0, `status=${ok.status}`);
+  } finally {
+    rmSync(plain, { recursive: true, force: true });
+  }
+
+  // (d) the OS-home branch, exercised DIRECTLY because the default path cannot reach it: the default is
+  // `join(homedir(), ".dsh")`, which never EQUALS the OS home. It only fires when a caller sets
+  // `DSH_HOME` (or `--dsh-home`) to a home directory itself — the shell accident this guard targets.
+  {
+    let osHomeRefusal = null;
+    try { assertHarnessHome(homedir(), false); } catch (error) { osHomeRefusal = error; }
+    check('using the OS home directory itself as the harness home is refused',
+      osHomeRefusal !== null && /OS home directory/.test(String(osHomeRefusal.message)),
+      String(osHomeRefusal?.message ?? 'NO THROW').split('\n')[0]);
+    // ...and the hatch releases it, so the guard cannot become an unconditional blocker.
+    let hatchThrew = null;
+    try { assertHarnessHome(homedir(), true); } catch (error) { hatchThrew = error; }
+    check('...while the explicit override releases it', hatchThrew === null, String(hatchThrew?.message ?? ''));
   }
 }
 
