@@ -198,11 +198,27 @@ dsh plugin --profile <id> add file:<绝对路径>/.dsh-math-memory
   在形状 B（手工把平铺文件摆上）里 workspace 才真的激活，而 **panel 那行仍然 import 失败**，所以路由始终只有
   一份，`duplicate prefix route` 也就**不可能**触发。
 
-  **这对本方案意味着什么（必须如实说）**：S3 的"剥掉那两行"**仍然是对的**（避免死行、避免将来平铺文件在场时
-  撞车、让组合树只声明一份），但**它的紧迫性被高估了** —— 在"纯 bundle"形态下那些行是**死行**而不是**冲突源**。
-  真正的撞车条件是**"bundle 已装 且 平铺文件也在 profile 根"**（混合形态），而这恰好是 **S4/S5 迁移期**会出现的
-  状态（从 `--direct` 升到 bundle 时旧平铺文件还在）。⇒ 那两条守卫应当**在 S4/S5 的混合形态用例里**复现，
-  而不是在纯 bundle 形态里。**原文第 ② 条预测的证据我没能取得，已按实测记为"未复现"，不是"已验证"。**
+  **决定性的一次（把"必要条件"补齐后）**：上面形状 B 里 panel 行仍 `failed to import`，所以它**没真的挂载**，
+  撞车自然不成立 —— 那是我的探针缺文件，不是 dsh 的行为。补齐 flat 行的**完整依赖链**
+  （`math-memory-panel.mjs` 需要同级的 `memory-admin.mjs` 与 `hook-frontmatter.mjs`，后者又需要 `engine-shared.mjs`）
+  之后再测：
+
+  | 形状 | 组合树里的行 | panel 行 import | 结果 |
+  |---|---|---|---|
+  | 纯 bundle（无 overlay） | `math-memory-host`, `math-memory` | — | 启动成功，**0 条诊断** |
+  | 混合 + overlay 已剥（S3 输出） | + `math-memory-client-panel` | — | 启动成功，仅 client-panel 未激活 |
+  | **混合 + overlay 仍声明（变异）** | + `math-memory-workspace`, `math-memory-panel` | **成功**（该行不再出现在 `failed to import` 里） | **启动成功，仍然没有任何 `duplicate prefix route`** |
+
+  ⇒ **在最有利于它的条件下，第 ② 条预测依然没有复现**：panel 行确实 import 成功并尝试挂载，而
+  dsh **0.1.7-rc.2 并不会因为同一个 `/memory-panel` 前缀被注册两次而拒绝启动整个 profile**。也就是说，
+  **原文第 ② 条所依据的"dsh 会硬失败"这一前提，在本机版本上不成立**（`install-into-profile.mjs` 注释里记的那次
+  `duplicate prefix route` 故障想必另有条件，本次没能复现，**不要再把它当作既定事实引用**）。
+
+  **这对本方案意味着什么（必须如实说）**：S3 的"剥掉那两行"**仍然是对的**（它们否则是**死行**或至少是**重复声明**，
+  组合树应当只声明一份），但**它的紧迫性远低于原文的估计** —— 原文把它当成"没有这两条守卫就不能合"的**硬约束**，
+  而实测表明在本机 dsh 上**不会因此起不来**。因此 S3 **不应**再被当作阻断性风险；它是**正确性/整洁性**的改进。
+  真正需要警惕的是**混合形态**（bundle 已装 + 平铺文件仍在 profile 根，正是 S4/S5 迁移期的状态）：那时两边的行
+  **都会真的挂载**，行为取决于 dsh 对重复前缀的容忍度（本机：容忍），但这属于**要实测**的问题，不是可以假定的。
 
 ### S4 · 两条调用路径接线
 - **改**：CLI `dsh/install.mjs` 在 `directInstallProfile()`（`:364-415`）里追加"物化 → `localBundleAddArgs` → spawn（`dsh plugin --profile <id> add file:<abs>`）→ 文件系统核验 → 写 owner(含 bundle 来源) → 写 overlay"；Obsidian `bootstrapDshConfig()`（`:1876-1945`）同序（spawn 形状照抄 `:1788-1795`，成败判据照抄 `:1802-1811` 的"以文件系统为准"）。若 `dsh`/`pnpm` 不可用或核验失败 ⇒ **回落平铺并明确报告**（不静默）。新增 `--flat` 强制旧形态（D1）。
