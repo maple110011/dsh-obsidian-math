@@ -117,8 +117,23 @@ if (failures.length > 0) {
     }
     const lines = r.output.split('\n').filter((l) => l !== '');
     const tail = lines.slice(-25);
-    if (lines.length > tail.length) console.log(`  … ${lines.length - tail.length} earlier lines omitted`);
-    for (const l of tail) console.log('  ' + l);
+    // Report the FAILING ASSERTIONS first, then the tail. Printing only the last 25 lines hid the one
+    // failing assertion behind ~470 passing ones (2026-09-27: three Ubuntu runs in a row said only
+    // "installer: 1 check(s) failed" while the actual `[FAIL] …` line was structurally invisible —
+    // including to the CI annotation, which can only show what reached stdout). A failure report that
+    // cannot name the failure is the defect, not the truncation.
+    const failLines = lines.filter((l) => l.includes('[FAIL]') || /(^|\s)FAIL(\s|$)/.test(l));
+    const shown = new Set(failLines);
+    if (failLines.length > 0) {
+      console.log(`  ${failLines.length} failing assertion line(s):`);
+      for (const l of failLines.slice(0, 40)) console.log('  ' + l);
+      if (failLines.length > 40) console.log(`  … and ${failLines.length - 40} more failing lines`);
+    }
+    const omitted = lines.filter((l) => !shown.has(l));
+    const rest = omitted.slice(-25);
+    if (failLines.length > 0) console.log('  … tail:');
+    if (omitted.length > rest.length) console.log(`  … ${omitted.length - rest.length} earlier lines omitted`);
+    for (const l of rest) console.log('  ' + l);
   }
   process.exitCode = 1;
 }
