@@ -62,6 +62,87 @@ const PRESET_NAME = 'notes-assistant';
 const EMBEDDED_PRESET = JSON.parse("__PRESET_JSON__");
 const EMBEDDED_TEMPLATES = JSON.parse("__TEMPLATE_JSON__");
 const EMBEDDED_TEMPLATE_MANIFEST = JSON.parse("__TEMPLATE_MANIFEST_JSON__");
+// A′ S4 (Obsidian half, 2026-09-26): the exact bytes of the local-bundle package, keyed by
+// package-relative path. A SECOND map rather than `EMBEDDED_PRESET`, because that one is keyed by
+// basename and materialized flat, while a package needs real subdirectories — and two of its files
+// (`hook-frontmatter.mjs`, `engine-shared.mjs`) legitimately exist under BOTH `dsh/host/` and
+// `dsh/preset/`, which one flat map cannot express. `scripts/build-obsidian.mjs` derives this from
+// `localBundleSourceFiles()` — the SAME list the CLI materializes — so the channels cannot drift.
+const EMBEDDED_BUNDLE_PAYLOAD = JSON.parse("__BUNDLE_PAYLOAD_JSON__");
+
+// ── Local bundle materializer (A′ S4, Obsidian half) ──────────────────────────────────────────────
+//
+// Reimplements the small part of `dsh/profile/local-bundle.mjs` the bootstrap needs, because the
+// template is evaluated with `new Function` inside the plugin bundle and therefore cannot `import`.
+// The plan travels as DATA built by `scripts/build-obsidian.mjs` from `localBundleSourceFiles()` — the
+// SAME list the CLI materializes — split in two so nothing is embedded twice:
+//   · `payload`    — package-relative path → bytes, only for files no existing key holds;
+//   · `fromPreset` — package-relative path → key in EMBEDDED_PRESET, for everything else.
+const LOCAL_BUNDLE_DIR = '.dsh-math-memory';
+const LOCAL_BUNDLE_PKG = 'dsh-math-memory';
+const LOCAL_BUNDLE_ENTRY = 'dsh/host/index.mjs';
+
+/** Bytes of one package-relative path, from whichever half of the plan holds it. */
+function localBundleRead(rel) {
+  if (Object.prototype.hasOwnProperty.call(EMBEDDED_BUNDLE_PAYLOAD.payload, rel)) {
+    return EMBEDDED_BUNDLE_PAYLOAD.payload[rel];
+  }
+  const key = EMBEDDED_BUNDLE_PAYLOAD.fromPreset[rel];
+  if (key === undefined) throw new Error(`local bundle: no source for ${rel}`);
+  return EMBEDDED_PRESET[key];
+}
+
+/**
+ * Every file the materialized package must contain.
+ *
+ * The plan IS the list — it was built from `localBundleSourceFiles()`, the same call the CLI uses — so
+ * this returns all of it. An earlier version returned only the IMPORT closure, which silently omitted
+ * the files no module imports (`dsh/cordis.patch.yml`, `icon.svg`, the locales, `dsh/templates/config.md`):
+ * `dsh plugin add` then failed with "failed to read overlay …/dsh/cordis.patch.yml: ENOENT" and rolled
+ * the whole install back (measured 2026-09-26). Import-walking therefore cannot be the source of truth
+ * here; it is kept only as a self-check in `scripts/check-bundle-recovery.mjs`, which asserts that the
+ * plan can satisfy its own import graph.
+ */
+function localBundleFiles() {
+  const all = [
+    ...Object.keys(EMBEDDED_BUNDLE_PAYLOAD.payload),
+    ...Object.keys(EMBEDDED_BUNDLE_PAYLOAD.fromPreset)
+  ];
+  return all.sort();
+}
+
+/** The package.json a materialized local bundle carries (same shape as `localBundleManifest`). */
+function localBundleManifestText(version, description, dshEngine) {
+  const manifest = {
+    name: LOCAL_BUNDLE_PKG,
+    version,
+    type: 'module',
+    main: `./${LOCAL_BUNDLE_ENTRY}`,
+    icon: 'icon.svg',
+    dsh: { bundle: { patch: './dsh/cordis.patch.yml' } }
+  };
+  if (typeof description === 'string' && description !== '') manifest.description = description;
+  // Same three fields the shipped `localBundleManifest` adds, and it is load-bearing that they are
+  // `dsh.engines` + OPTIONAL peer deps: `dsh plugin add` runs pnpm, and a required peer that is not in
+  // the registry would turn an offline install into a network lookup.
+  if (typeof dshEngine === 'string' && dshEngine !== '') {
+    manifest.dsh.engines = { dsh: dshEngine };
+    manifest.peerDependencies = { '@deepseek-ai/dsh': dshEngine };
+    manifest.peerDependenciesMeta = { '@deepseek-ai/dsh': { optional: true } };
+  }
+  return JSON.stringify(manifest, null, 2) + '\n';
+}
+
+/** True when `<profile>/package.json` lists our package as a bundle. */
+function bundleRegisteredIn(profileRoot) {
+  try {
+    const parsed = JSON.parse(readFileSync(join(profileRoot, 'package.json'), 'utf8'));
+    const bundles = parsed?.dsh?.profile?.bundles;
+    return Array.isArray(bundles) && bundles.includes(LOCAL_BUNDLE_PKG);
+  } catch {
+    return false;
+  }
+}
 
 // Shared hook-block parser, loaded from the embedded ESM source (the same file
 // note-tools.mjs imports). The memory panel needs the identical parser, so
@@ -2030,6 +2111,82 @@ function bootstrapDshConfig(plugin, force = false) {
     throw new Error(`dsh 配置由「${existing.owner}」通道安装。请先运行 dsh-math-memory uninstall 移除，或点「强制重装 dsh 配置」接管。`);
   }
 
+  // ── 机会式包化（A′ S4，Obsidian 半个，2026-09-26）─────────────────────────────────────────────
+  //
+  // The flat layout this function has always written is invisible in dsh's plugin manager by design
+  // (no package name/version/`dsh.bundle.patch`). When `dsh` + `pnpm` are available we can instead
+  // materialize a REAL package and register it, so the plugin shows up there like any other bundle.
+  // The flat write below then stays the FALLBACK — and the fallback is reported, never silent.
+  //
+  // Mirror of the CLI's order (`dsh/install.mjs` → `tryBundleInstall`), including the load-bearing
+  // part: the verdict comes from the FILE SYSTEM, never from the child's exit code (trap 89).
+  const bundleAttempt = (() => {
+    // Opt-out lives in the plugin settings (`bundleInstall`), defaulting to ON. A user who wants the
+    // pre-A′ flat-only behaviour can turn it off instead of having to reason about which dsh/pnpm they
+    // have — the same intent as the CLI's `--flat`.
+    if (plugin.settings?.bundleInstall === false) return { staged: false, reason: '设置里已关闭机会式包化' };
+    const version = plugin.manifest?.version ?? '0.0.0';
+    const profilePkg = (() => {
+      try { return JSON.parse(EMBEDDED_PRESET['profile-package.json']); } catch { return {}; }
+    })();
+    try {
+      // pnpm needs a workspace file in the profile dir before `dsh plugin add` runs.
+      ensureFile(join(profileRoot, 'package.json'), EMBEDDED_PRESET['profile-package.json'], force);
+      ensureFile(join(profileRoot, 'cordis.yml'), EMBEDDED_PRESET['profile-cordis.yml'], true);
+      ensureFile(join(profileRoot, 'pnpm-workspace.yaml'), EMBEDDED_PRESET['profile-pnpm-workspace.yaml'], false);
+
+      const stage = join(profileRoot, LOCAL_BUNDLE_DIR);
+      const closure = localBundleFiles();
+      for (const rel of closure) {
+        const target = join(stage, ...rel.split('/'));
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, localBundleRead(rel), 'utf8');
+      }
+      writeFileSync(join(stage, 'package.json'),
+        localBundleManifestText(version, profilePkg.description, profilePkg.peerDependencies?.['@deepseek-ai/dsh']),
+        'utf8');
+
+      const args = ['plugin', '--profile', PRESET_NAME, 'add', `file:${stage.split('\\').join('/')}`];
+      const result = spawnSync('dsh', args, {
+        env: { ...process.env, DSH_HOME: home },
+        encoding: 'utf8',
+        timeout: 120000,
+        windowsHide: true,
+        shell: process.platform === 'win32'
+      });
+      if (result.error) {
+        return { staged: false, reason: result.error.code === 'ENOENT' ? 'dsh 不在 PATH 上' : String(result.error.message ?? result.error) };
+      }
+      // The verdict is the FILE SYSTEM, never the exit code (trap 89). `DSH_TEST_UNREGISTER_BUNDLE=1`
+      // is a test seam that forces it negative, so a gate can prove BOTH halves — that the fallback
+      // happens AND that the manifest does not then claim the npm channel. Without the seam the only way
+      // into this branch would be to make `dsh plugin add` fail for real, which also trips the
+      // exit-code path above and would therefore prove nothing about the verdict itself.
+      if (process.env.DSH_TEST_UNREGISTER_BUNDLE === '1' || !bundleRegisteredIn(profileRoot)) {
+        // ROLLBACK (found by this feature's own verdict test, 2026-09-26): verification can fail while
+        // the registration SUCCEEDED — most importantly under the forced-negative seam, but also for
+        // real when `dsh plugin add` reports a problem after writing. Falling back while leaving the
+        // package registered produces a half-migrated profile: the manifest says `direct` while
+        // `dsh.profile.bundles` lists us, and the overlay rows were already dropped for a package the
+        // install does not consider installed. Removing the registration returns the profile to the
+        // flat channel as a whole instead of half of one.
+        try {
+          spawnSync('dsh', ['plugin', '--profile', PRESET_NAME, 'remove', LOCAL_BUNDLE_PKG], {
+            env: { ...process.env, DSH_HOME: home },
+            encoding: 'utf8', timeout: 120000, windowsHide: true, shell: process.platform === 'win32'
+          });
+        } catch {
+          // Best effort: the flat path below is still correct, and `dsh plugin remove` failing must not
+          // turn a fallback into a thrown error.
+        }
+        return { staged: false, reason: `dsh plugin add 退出码 ${result.status}，但 ${LOCAL_BUNDLE_PKG} 未被登记（已回滚登记）` };
+      }
+      return { staged: true };
+    } catch (error) {
+      return { staged: false, reason: String(error?.message ?? error) };
+    }
+  })();
+
   // Code always refreshes; user-editable files are preserved unless forced.
   if (ensureFile(join(profileRoot, 'package.json'), EMBEDDED_PRESET['profile-package.json'], force)) written.push('profile/package.json');
   // ⚠️ An EXISTING manifest is not refreshed above, and a profile manifest that names
@@ -2091,7 +2248,11 @@ function bootstrapDshConfig(plugin, force = false) {
   // manifest is THE anchor (`dsh/host/channel-owner.mjs` → readChannelOwner); the
   // retired `.agent-presets` marker is no longer written here.
   writeFileSync(join(profileRoot, INSTALL_MANIFEST), JSON.stringify({
-    owner: OWNER_CHANNEL,
+    // When the bundle route won, ownership is `npm` (it really was installed through `dsh plugin add`)
+    // and the local origin is recorded — the same two fields the CLI writes, so `readChannelOwner`,
+    // `dsh/host/index.mjs`'s guard and `status` all agree regardless of which side installed it.
+    owner: bundleAttempt.staged ? 'npm' : OWNER_CHANNEL,
+    ...(bundleAttempt.staged ? { bundleSource: 'local', staging: LOCAL_BUNDLE_DIR } : {}),
     version: plugin.manifest?.version ?? '0.0.0',
     installedAt: new Date().toISOString(),
     profile: PRESET_NAME,
@@ -2105,36 +2266,20 @@ function bootstrapDshConfig(plugin, force = false) {
     vaults: []
   }, null, 2) + '\n', 'utf8');
 
-  // ── Honest report about the dsh PLUGIN MANAGER (2026-09-26) ───────────────────────────────────
+  // ── Report which channel actually won (2026-09-26) ────────────────────────────────────────────
   //
-  // This bootstrap stages the offline FLAT layout: modules as siblings of the profile plus an
-  // overlay that references them by relative path. That layout has no package name, no version and
-  // no `dsh.bundle.patch`, so dsh's plugin page has nothing to list — the plugin is invisible there
-  // BY DESIGN, not because something failed.
-  //
-  // The CLI can do better (`dsh-math-memory install --direct` now opportunistically installs a real
-  // local bundle, so that route IS visible in the manager). Doing the same from here is NOT a small
-  // addition, and claiming otherwise would be a lie the user could not check:
-  //   · a materialized package needs `dsh/host/index.mjs` plus its siblings `./channel-owner.mjs`
-  //     and `./math-memory-panel.mjs`, i.e. REAL SUBDIRECTORIES;
-  //   · this bundle's embedded map is keyed by BASENAME and stored flat, and two of those names
-  //     (`hook-frontmatter.mjs`, `engine-shared.mjs`) exist under BOTH `dsh/host/` and
-  //     `dsh/preset/` as different files — which is exactly why they are in `NOT_EMBEDDED`
-  //     ("would collide on materialization");
-  //   · so it needs a subdirectory-aware embed map AND a matching materializer — a structural
-  //     change to a code path that runs on every service start.
-  // See docs/bundle-channel-plan-2026-09-26.md (S4) and docs/handoff.md §7.
-  //
-  // So the honest thing is to SAY it, once, with the alternative — instead of leaving the user to
-  // wonder why the plugin never shows up in that page.
-  const bundled = mathMemoryBundled(home);
+  // Both outcomes must be stated, because they differ in a way the user can SEE: a registered bundle
+  // appears in dsh's plugin manager, the flat layout cannot (no package name/version/`dsh.bundle.patch`
+  // ⇒ nothing for that page to list). Reporting only the happy one — or reporting the flat write as if
+  // it were the bundle — is exactly the kind of claim the user cannot check.
+  const bundled = bundleAttempt.staged;
   const notice = bundled
-    ? '此 profile 已把 dsh-math-memory 登记为 bundle —— 它应当出现在 dsh 的「插件」页。'
-    : '提示：Obsidian 侧栏这条安装路径写入的是"平铺"形态，它不会出现在 dsh 的「插件」页（这是设计取舍，不是故障）。'
-      + '想要在「插件」页里可见（可启用/禁用/移除），请改用 CLI：dsh-math-memory install --direct —— 它会优先把本插件装成一个真包。'
-      + '两条路互不冲突（各自认自己的 profile 归属）。';
+    ? '已把 dsh-math-memory 作为本地 bundle 装进此 profile —— 它现在会出现在 dsh 的「插件」页（可启用/禁用/移除）。'
+    : `本次以"平铺"形态安装，它不会出现在 dsh 的「插件」页。原因：${bundleAttempt.reason}。`
+      + '想要在「插件」页里可见，请装好 dsh 与 pnpm 后重试，或改用 CLI：dsh-math-memory install --direct。'
+      + '平铺形态本身完全可用（离线可用即它的目的），两条路互不冲突。';
 
-  return { home, written, notice, bundled };
+  return { home, written, notice, bundled, bundleReason: bundleAttempt.staged ? null : bundleAttempt.reason };
 }
 
 function bootstrapVaultTemplates(plugin, force = false) {

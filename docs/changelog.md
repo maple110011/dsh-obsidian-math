@@ -3,6 +3,54 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-09-26 · A′ S4 的 Obsidian 半个：**已实现**（并纠正上一轮"结构性不可行"的错判）
+
+**先纠正我自己的错**：上一轮我写下"从 `main.js` 物化一个完整包**结构性不可行**"，理由是内嵌表以
+basename 为键、且 `hook-frontmatter.mjs` / `engine-shared.mjs` 在 `dsh/host/` 与 `dsh/preset/` 下**同名不同文件**。
+**这个结论是错的**，两处都错：
+1. **同名不等于同内容冲突**：那两处 host 文件是**一行 re-export shim**，可以**生成**，根本不需要内嵌两份；
+2. **代价我算错了**：真正缺失的只有 **9 个文件 / 24 KB**（`dsh/cordis.patch.yml`、`dsh/host/{index,channel-owner}.mjs`、
+   `dsh/templates/config.md`、`icon.svg`、`locale/{en,zh}.json` + 两个生成的 shim），其余 7 个文件**本来就在内嵌表里**。
+   我上一轮用"文件内容比对"判定缺失，但内嵌值是**双重转义**的，比较因而失败 —— 于是把已内嵌的文件也算成了缺失。
+
+**做法**：`scripts/build-obsidian.mjs` 从**与 CLI 同一个函数** `localBundleSourceFiles()` 派生一份
+**按包内相对路径**编键的两半计划（`payload` = 现有键装不下的；`fromPreset` = 复用现有 basename 键），
+注入模板；模板用自己的一小段代码物化它（模板是 `new Function` 求值的 bundle，不能 `import`）。
+**关键设计**：不重复内嵌。第一版把 16 个文件全塞进 payload ⇒ `main.js` **780 KB → 1.28 MB**；
+改成两半后 **814 KB**（真正的成本只有那 24 KB）。
+
+**接线序与 CLI 完全一致**：物化 → `dsh plugin add file:<abs>`（不联网）→ **按文件系统核验**（不看退出码）→
+**最后**才翻转 `owner: npm` + `bundleSource: local`；失败 ⇒ 打印**具体原因**并回落平铺。另加
+**回滚**（见下）。设置页按钮的回执会说明最终是哪条通道。
+
+**本轮实测抓到的两个真 bug**（都不是猜测）：
+1. **物化清单不能只用 import 闭包**：第一版让模板走 import 闭包，于是**没有任何模块 import 的 7 个文件**
+   （首当其冲 `dsh/cordis.patch.yml`）被静默丢掉，`dsh plugin add` 直接报
+   `failed to read overlay …/dsh/cordis.patch.yml: ENOENT` 并**整体回滚**。已改为**以计划为准**
+   （`localBundleFiles()` 返回全部 16 个），import 闭包只留作门禁里的自检。**这一条是端到端跑真 dsh 才发现的** ——
+   只检查 payload 内容的门禁会放过它。
+2. **核验失败但登记成功 ⇒ 半迁移**：核验为假时若直接回落，包可能**已经**登记好了，于是 profile 处于
+   "manifest 说 direct、`dsh.profile.bundles` 里有我们、而 overlay 已为它剥掉两行"的分裂状态。已加
+   **回滚**：核验失败时执行一次 `dsh plugin --profile <id> remove dsh-math-memory`（best-effort），让 profile
+   整体回到平铺通道。这条是**变异验证的副产物**：为了能确定性地测"核验"这一行，我加了测试缝
+   `DSH_TEST_UNREGISTER_BUNDLE=1`，它恰好构造出上面那个状态。
+
+**门禁与变异**：`check: plugin rebuilds a wiped $DSH_HOME` 从 22 条扩到 **40 条**，包含
+① "计划必须含**没有模块 import** 的文件"（专门钉住 bug 1）、② 计划覆盖出厂 import 闭包、
+③ 同名 basename 解析到 **host shim / preset 原文件各自**（不是同一个文件两次）、
+④ **端到端**：真跑 `bootstrapDshConfig` + 真 `dsh plugin add`，断言 `bundles` 含本包、`owner=npm`+`bundleSource=local`、
+16 个文件全部落盘、overlay 剥掉包提供的两行而**保留 client-panel 行**；⑤ 核验-失败路径的 4 条。
+**变异验证**：
+| 变异 | 结果 |
+|---|---|
+| 计划退回"只含 import 闭包" | **7 条红**（含真 `dsh plugin add` 失败、`owner=direct` 时仍报成功） |
+| 核验退回 `exit code == 0` | **4 条红**（含 `manifest does NOT claim the npm channel \| npm`） |
+
+**证据边界**：本轮跑的是**真 dsh + 真 pnpm**（本机），终态 `owner=npm` + `bundleSource=local`、`bundles` 含
+`dsh-math-memory`、`node_modules/dsh-math-memory/package.json` 存在。**没有**验证"装完之后 dsh 能冷启动这个
+profile"——那条由 `test: self-provisioned profile accepts a session` 负责（同一套物化模块，S2 实测 10/10）。
+
+
 ## 2026-09-26 · A′ 的 Obsidian 侧：**判定结构性不可行**，改为"诚实告知"（含根因实测）
 
 **背景**：A′ 的 S4 只做完了 CLI 那一半。剩下的"让 Obsidian 侧栏那条安装路径也产出管理页可见的包"看起来只是

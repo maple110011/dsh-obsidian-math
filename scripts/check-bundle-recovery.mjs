@@ -20,8 +20,10 @@
 // It does NOT start dsh on the result — `test: self-provisioned profile accepts a session` owns
 // "does a bundle-shaped profile cold-start", and `test-installer` owns the CLI's flat shape.
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, renameSync, rmSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as acorn from 'acorn';
+import { collectDshImportClosure } from '../dsh/client-panel/install-into-profile.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 
@@ -36,10 +38,9 @@ const check = (name, condition, detail = '') => {
 };
 
 // ── extract the embedded preset map (same technique as check-embedded-writers.mjs) ──────────────
-function embeddedPresetMap() {
-  const marker = 'const EMBEDDED_PRESET = JSON.parse("';
+function embeddedJsonLiteral(marker) {
   const at = main.indexOf(marker);
-  if (at < 0) throw new Error('cannot locate the embedded preset map in main.js');
+  if (at < 0) throw new Error(`cannot locate ${marker.trim()} in main.js`);
   let i = at + marker.length;
   let out = '';
   while (i < main.length) {
@@ -51,7 +52,11 @@ function embeddedPresetMap() {
   }
   return JSON.parse(JSON.parse('"' + out + '"'));
 }
+const embeddedPresetMap = () => embeddedJsonLiteral('const EMBEDDED_PRESET = JSON.parse("');
 const EMBEDDED_PRESET = embeddedPresetMap();
+// A′ S4 (Obsidian half): the two-part local-bundle plan. Read from the bundle, never re-derived here,
+// so this gate exercises the SAME bytes the plugin ships.
+const BUNDLE_PLAN = embeddedJsonLiteral('const EMBEDDED_BUNDLE_PAYLOAD = JSON.parse("');
 
 /**
  * Slice a top-level `function NAME(…)` out of a source text, using a REAL PARSER.
@@ -113,10 +118,18 @@ function embeddedContractText() {
 }
 const CONTRACT_JSON = embeddedContractText();
 const buildNotesAssistantPatch = sliceFunction(main, 'buildNotesAssistantPatch');
+const stripBundleOwnedRows = sliceFunction(main, 'stripBundleOwnedRows');
 const writeNotesAssistantPatch = sliceFunction(main, 'writeNotesAssistantPatch');
 const ensureProfileDeclaration = sliceFunction(main, 'ensureProfileDeclaration');
 const repairProfileManifestFile = sliceFunction(main, 'repairProfileManifestFile');
 const bootstrapDshConfig = sliceFunction(main, 'bootstrapDshConfig');
+// A′ S4 (Obsidian half): the three helpers the bootstrap's bundle attempt calls. Sliced (not
+// re-implemented) for the same reason as everything else here — this gate must exercise the SHIPPED
+// code, and a local re-implementation would happily agree with itself.
+const localBundleFiles = sliceFunction(main, 'localBundleFiles');
+const localBundleRead = sliceFunction(main, 'localBundleRead');
+const localBundleManifestText = sliceFunction(main, 'localBundleManifestText');
+const bundleRegisteredIn = sliceFunction(main, 'bundleRegisteredIn');
 
 // ⚠️ The body is built by CONCATENATION, not as one template literal: the extracted functions contain
 // backticks and `${` of their own (12 and 44+2 respectively, measured), which would terminate a
@@ -174,34 +187,101 @@ const HARNESS_PRELUDE = [
   '    return [];',
   '  }',
   '}',
-  "function mathMemoryBundled(home) { return profileBundles(home).includes('dsh-math-memory'); }"
+  "function mathMemoryBundled(home) { return profileBundles(home).includes('dsh-math-memory'); }",
+  // S3's overlay strip. `writeNotesAssistantPatch` -> `buildNotesAssistantPatch` -> this, so the
+  // bootstrap cannot complete without it. Sliced from the shipped bundle rather than re-implemented —
+  // a copy here could agree with itself while the real one drifted.
+  stripBundleOwnedRows,
+  "const BUNDLE_ROWS_BEGIN = '# >>> bundle-owned rows (see buildNotesAssistantPatch) >>>';",
+  "const BUNDLE_ROWS_END = '# <<< bundle-owned rows <<<';"
 ].join('\n');
 
 const harness = new Function(
   'existsSync', 'mkdirSync', 'writeFileSync', 'readFileSync', 'createHash', 'join', 'dirname',
   'EMBEDDED_PRESET', 'PRESET_NAME', 'PROFILE_CONTRACT_JSON',
+  // A′ S4 (Obsidian half): the bootstrap now also tries to materialize + register a REAL local bundle,
+  // so its scope reaches `spawnSync`, `rmSync`, `dirname` and the injected payload plan. They must be
+  // provided here for the same reason as the rest: this harness runs the SHIPPED function, not a copy.
+  'spawnSync', 'process', 'EMBEDDED_BUNDLE_PAYLOAD',
   [
     HARNESS_PRELUDE,
     buildNotesAssistantPatch,
     writeNotesAssistantPatch,
     ensureProfileDeclaration,
     repairProfileManifestFile,
+    // The constants the bundle attempt reads (they live at template scope, outside the sliced functions).
+    "const LOCAL_BUNDLE_DIR = '.dsh-math-memory';",
+    "const LOCAL_BUNDLE_PKG = 'dsh-math-memory';",
+    "const LOCAL_BUNDLE_ENTRY = 'dsh/host/index.mjs';",
+    localBundleRead,
+    localBundleFiles,
+    localBundleManifestText,
+    bundleRegisteredIn,
     bootstrapDshConfig,
-    'return { bootstrapDshConfig, DIRECT_PROFILE_FILES };'
+    'return { bootstrapDshConfig, DIRECT_PROFILE_FILES, localBundleFiles, localBundleRead, bundleRegisteredIn };'
   ].join('\n')
 );
-const { bootstrapDshConfig: bootstrap, DIRECT_PROFILE_FILES } = harness(
+// `shipped*` names: the module already binds `localBundleClosure` etc. to the EXTRACTED source text,
+// so re-using those names here would shadow them (SyntaxError: already declared).
+const {
+  bootstrapDshConfig: bootstrap,
+  DIRECT_PROFILE_FILES,
+  localBundleFiles: shippedBundleFiles,
+  localBundleRead: shippedBundleRead,
+  bundleRegisteredIn: shippedBundleRegisteredIn
+} = harness(
   existsSync, mkdirSync, writeFileSync, readFileSync, createHash, join, dirname,
-  EMBEDDED_PRESET, PRESET_NAME, CONTRACT_JSON
+  EMBEDDED_PRESET, PRESET_NAME, CONTRACT_JSON,
+  spawnSync, process, BUNDLE_PLAN
 );
 check('the shipped bootstrap was extracted and is callable', typeof bootstrap === 'function');
+// ── The materializer must agree with the SHIPPED module (A′ S4, Obsidian half) ────────────────────
+//
+// The template cannot `import` (it is evaluated with `new Function`), so it carries its own copy of the
+// package plan. Two implementations of one rule is exactly how this repo has been burned before, so the
+// agreement is asserted over the REAL injected plan rather than spot-checked.
+{
+  const plan = shippedBundleFiles();
+  const shippedClosure = collectDshImportClosure('dsh/host/index.mjs', process.cwd()).map((r) => r.split('\\').join('/'));
+  // ASSERT THE TRAP DIRECTLY (found by this gate's own first run, 2026-09-26): the plan must be the
+  // LIST, not just the import closure. When it was the closure, the seven files nothing imports —
+  // `dsh/cordis.patch.yml` above all — were silently absent, and `dsh plugin add` failed with
+  // "failed to read overlay …/dsh/cordis.patch.yml: ENOENT" and rolled the install back.
+  check('the plan contains files that no module imports (the ones an import-walk would drop)',
+    plan.some((rel) => !shippedClosure.includes(rel)),
+    `${plan.length} planned vs ${shippedClosure.length} imported`);
+  check('...specifically the bundle patch dsh reads at install time',
+    plan.includes('dsh/cordis.patch.yml'));
+  check('every planned file has bytes the plugin can supply',
+    plan.every((rel) => { try { return typeof shippedBundleRead(rel) === 'string' && shippedBundleRead(rel) !== ''; } catch { return false; } }),
+    plan.filter((rel) => { try { return typeof shippedBundleRead(rel) !== 'string'; } catch { return true; } }).join(', ') || 'all supplied');
+  check('the plan covers the shipped import closure (nothing it imports is unplanned)',
+    shippedClosure.every((rel) => plan.includes(rel)),
+    shippedClosure.filter((rel) => !plan.includes(rel)).join(', ') || 'complete');
+  // The two files that exist under BOTH dsh/host/ and dsh/preset/ are why the plan is split in two.
+  // Pin that they resolve to the SHIM (host) and the CANONICAL file (preset), not one file twice.
+  check('the colliding basenames resolve to the host shim and the preset original, not one file twice',
+    shippedBundleRead('dsh/host/hook-frontmatter.mjs') !== shippedBundleRead('dsh/preset/hook-frontmatter.mjs')
+    && shippedBundleRead('dsh/host/engine-shared.mjs') !== shippedBundleRead('dsh/preset/engine-shared.mjs'));
+}
+
 check('the extracted write list matches the injected contract (the single source)',
   DIRECT_PROFILE_FILES.length === new Set(DIRECT_PROFILE_FILES).size && DIRECT_PROFILE_FILES.length > 8,
   `${DIRECT_PROFILE_FILES.length} names`);
 
-const fakePlugin = (home, version = '0.7.8') => ({
+/**
+ * A plugin stand-in.
+ *
+ * `bundleInstall: false` is the DEFAULT here (A′ S4, 2026-09-26): this gate is about the FLAT recovery
+ * path — "does the plugin rebuild a wiped `$DSH_HOME` from its embedded copy" — and on a machine that
+ * happens to have dsh + pnpm the bootstrap would otherwise bundle instead and change every assertion
+ * below into a statement about the other channel. The bundle route has its own case further down.
+ * (The CLI's tests make the same split with `--flat`.)
+ */
+const fakePlugin = (home, version = '0.7.8', settings = { bundleInstall: false }) => ({
   service: { location: () => ({ home }) },
-  manifest: { version }
+  manifest: { version },
+  settings
 });
 
 // ── 1. the wipe itself: NOTHING exists under $DSH_HOME ─────────────────────────────────────────
@@ -219,11 +299,13 @@ const fakePlugin = (home, version = '0.7.8') => ({
     // doc) because it is a user-visible promise that is easy to delete by accident.
     check('bootstrap reports whether this profile registers the package as a bundle',
       res.bundled === false, `bundled=${res.bundled}`);
-    check('bootstrap explains the plugin will NOT appear in dsh\'s plugin page',
+    check('bootstrap says the flat layout will NOT appear in dsh\'s plugin page',
       typeof res.notice === 'string' && /不会出现在 dsh 的「插件」页/.test(res.notice),
       String(res.notice).slice(0, 80));
-    check('...and it names the CLI alternative that DOES make it visible',
-      typeof res.notice === 'string' && /dsh-math-memory install --direct/.test(res.notice));
+    check('...and it gives the REASON it fell back, rather than a silent success',
+      typeof res.bundleReason === 'string' && res.bundleReason !== '', String(res.bundleReason));
+    check('...and it names the alternative that DOES make it visible',
+      typeof res.notice === 'string' && /install --direct/.test(res.notice));
     const profileRoot = join(home, 'profiles', PRESET_NAME);
     const missing = DIRECT_PROFILE_FILES.filter((n) => !existsSync(join(profileRoot, n)));
     check('every contracted profile file exists after recovery from nothing',
@@ -356,6 +438,86 @@ const fakePlugin = (home, version = '0.7.8') => ({
     check('the conflict-guard case did not throw unexpectedly', false, String(error?.message ?? error));
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+}
+
+// ── 7. A′ S4, Obsidian half: the bootstrap really does install a local bundle ─────────────────────
+//
+// This is the feature's acceptance test, and it is deliberately END-TO-END: it runs the shipped
+// `bootstrapDshConfig` with the shipped materializer against a real `dsh plugin add`. A gate that only
+// inspected the payload would have passed while the package was missing `dsh/cordis.patch.yml` — which
+// is exactly what happened on the first run of this section.
+//
+// Skipped (loudly) when this machine has no dsh/pnpm: the fallback shape is covered by section 1–6 with
+// `bundleInstall:false`, so a skip here is not a silent pass of the same claim.
+{
+  const probe = spawnSync('pnpm', ['--version'], { encoding: 'utf8', shell: process.platform === 'win32' });
+  const haveToolchain = !probe.error && probe.status === 0;
+  if (!haveToolchain) {
+    check('S4 (Obsidian) bundle route: SKIPPED — no pnpm on this machine; the flat fallback is covered above', true);
+  } else {
+    const home = mkdtempSync(join(tmpdir(), 'wipe-bundle-'));
+    try {
+      const res = bootstrap(fakePlugin(home, '0.7.8', { bundleInstall: true }), false);
+      const profileRoot = join(home, 'profiles', PRESET_NAME);
+      const manifest = JSON.parse(readFileSync(join(profileRoot, '.install-manifest.json'), 'utf8'));
+      const bundles = JSON.parse(readFileSync(join(profileRoot, 'package.json'), 'utf8')).dsh?.profile?.bundles ?? [];
+      const overlay = readFileSync(join(profileRoot, 'notes-assistant.patch.yml'), 'utf8');
+
+      check('S4 (Obsidian): the bootstrap reports the package as registered', res.bundled === true,
+        `bundled=${res.bundled} reason=${res.bundleReason}`);
+      check('S4 (Obsidian): the profile lists dsh-math-memory as a bundle',
+        bundles.includes('dsh-math-memory'), bundles.join(', '));
+      check('S4 (Obsidian): ownership flipped to npm + bundleSource=local (same shape as the CLI)',
+        manifest.owner === 'npm' && manifest.bundleSource === 'local',
+        `owner=${manifest.owner} source=${manifest.bundleSource}`);
+      // The whole plan must be on disk — the seven non-imported files included.
+      const planned = shippedBundleFiles();
+      const missing = planned.filter((rel) => !existsSync(join(profileRoot, '.dsh-math-memory', ...rel.split('/'))));
+      check('S4 (Obsidian): every planned file was materialized', missing.length === 0,
+        missing.join(', ') || `${planned.length} files`);
+      check('S4 (Obsidian): the install-time bundle patch is there (the file dsh reads first)',
+        existsSync(join(profileRoot, '.dsh-math-memory', 'dsh', 'cordis.patch.yml')));
+      check('S4 (Obsidian): the rows the package provides are stripped from the overlay',
+        !overlay.includes('name: ./math-memory-panel.mjs') && !overlay.includes('name: ./math-memory-workspace.mjs'));
+      check('S4 (Obsidian): the client-panel row SURVIVES (nothing else declares it)',
+        overlay.includes('client-ui-memory-panel'));
+      check('S4 (Obsidian): the notice says the plugin WILL appear in dsh\'s plugin page',
+        typeof res.notice === 'string' && /会出现在 dsh 的「插件」页/.test(res.notice));
+    } catch (error) {
+      check('S4 (Obsidian): the bundle bootstrap did not throw', false, String(error?.message ?? error));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+
+    // The VERDICT half: `dsh plugin add` really runs and really succeeds, but the verification is
+    // forced negative. The bootstrap must then treat it as NOT installed — fall back to flat, and not
+    // claim the npm channel. This is the assertion that would catch a verdict weakened to "exit code 0".
+    const vHome = mkdtempSync(join(tmpdir(), 'wipe-verdict-'));
+    try {
+      const prev = process.env.DSH_TEST_UNREGISTER_BUNDLE;
+      process.env.DSH_TEST_UNREGISTER_BUNDLE = '1';
+      let res;
+      try {
+        res = bootstrap(fakePlugin(vHome, '0.7.8', { bundleInstall: true }), false);
+      } finally {
+        if (prev === undefined) delete process.env.DSH_TEST_UNREGISTER_BUNDLE;
+        else process.env.DSH_TEST_UNREGISTER_BUNDLE = prev;
+      }
+      const profileRoot = join(vHome, 'profiles', PRESET_NAME);
+      const manifest = JSON.parse(readFileSync(join(profileRoot, '.install-manifest.json'), 'utf8'));
+      const overlay = readFileSync(join(profileRoot, 'notes-assistant.patch.yml'), 'utf8');
+      check('S4 (Obsidian) verdict: a failed verification does NOT report the package as registered',
+        res.bundled === false, `bundled=${res.bundled}`);
+      check('S4 (Obsidian) verdict: ...and the manifest does NOT claim the npm channel',
+        manifest.owner === 'direct', String(manifest.owner));
+      check('S4 (Obsidian) verdict: ...and the flat layout is written instead (overlay keeps its rows)',
+        overlay.includes('name: ./math-memory-panel.mjs') && overlay.includes('name: ./math-memory-workspace.mjs'));
+      check('S4 (Obsidian) verdict: the reason names the unregistered package',
+        /未被登记/.test(String(res.bundleReason)), String(res.bundleReason).slice(0, 90));
+    } finally {
+      rmSync(vHome, { recursive: true, force: true });
+    }
   }
 }
 
