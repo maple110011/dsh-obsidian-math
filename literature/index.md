@@ -41,6 +41,10 @@
 | 已蒸馏 | [LeanTutor: Towards a Verified AI Mathematical Proof Tutor](cards/patelLeanTutorVerifiedAI2026.md) | Patel, Manooshree 等 | 2026 | — |
 | 已蒸馏 | [Safe: Enhancing Mathematical Reasoning in Large Language Models via Retrospective Step-aware Formal Verification](cards/liuSafeEnhancingMathematical2025.md) | Liu, Chengwu 等 | 2025 | — |
 | 已蒸馏 | [LeanDojo: Theorem Proving with Retrieval-Augmented Language Models](cards/yangLeanDojoTheoremProving2023.md) | Yang, Kaiyu 等 | 2023 | — |
+| 未读 | [Useful Memories Become Faulty When Continuously Updated by LLMs](cards/zhangUsefulMemoriesBecome2026.md) | Zhang, Dylan 等 | 2026 | Computer Science - Artificial Intelligence |
+| 未读 | [How Memory Management Impacts LLM Agents: An Empirical Study of Experience-Following Behavior](cards/xiongHowMemoryManagement2026.md) | Xiong, Zidi 等 | 2026 | — |
+| 未读 | [From Untrusted Input to Trusted Memory: A Systematic Study of Memory Poisoning Attacks in LLM Agents](cards/dashUntrustedInputTrusted2026.md) | Dash, Pritam 等 | 2026 | Computer Science - Artificial Intelligence |
+| 未读 | [Securing LLM-Agent Long-Term Memory Against Poisoning: Non-Malleable, Origin-Bound Authority with Machine-Checked Guarantees](cards/louckSecuringLLMAgentLongTerm2026.md) | Louck, Yedidel | 2026 | Computer Science - Cryptography and Security |
 <!-- END AUTO-INDEX -->
 
 ## 使用

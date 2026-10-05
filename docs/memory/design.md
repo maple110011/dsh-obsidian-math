@@ -1,6 +1,6 @@
 # 记忆系统当前设计（实现规格）
 
-> 当前版本：0.8.0
+> 当前版本：0.8.1
 > （本文件描述**当前**实现；它与 `package.json` 的一致性由 `check-version-consistency.mjs` 守卫）
 >
 > 本文档描述**代码里真实存在**的记忆系统，不是愿景。对应文件：
@@ -165,6 +165,7 @@
 | `hook.uses` / `success_rate` / `last_used` / `harmed` | **插件** | **不可写** | `note_recall` 命中计数 → `cache/retrieval-stats.json` → 每日体检回写 |
 | `hook.gain` | **插件** | **不可写** | **结果裁决**（−1/0/+1），只由显式 ✅/❌ 推出；**不受 `maintainHookStats` 开关影响**（它是结果不是使用统计）。缺席＝0＝「尚无裁决」 |
 | `hook.verified_by` | **插件（仅 ✅ 反馈路径）** | **不可写** | 升级凭据；**唯一写入者**是用户点 ✅（`memory-admin.mjs` 的 feedback 路径） |
+| `origin`（**顶格**，不在 hook 块内） | **插件（每日体检）** | **不可写** | **来源**：谁写了这张卡（`agent` / `user` / `imported`；缺席＝来源未知）。见 §5.2 |
 | `needs_review` | **插件（❌ 反馈路径）** | **不可写** | ❌ 置 `true`、✅ 清 `false` |
 
 **数据流**：`note_recall` 命中 → 写 `cache/retrieval-stats.json`（`note-tools.mjs`）→ 每日体检合并进卡片的 `uses`/`last_used`（`math-memory.mjs`）→ 体检**读回文件校验回写是否落地**，未落地则记入 `structural.usesMismatch`（事后校验，**不自动重试**：静默改写用户的文件比报出来更糟）→ 排序时由 `hookPrior` 消费。
@@ -173,6 +174,19 @@
 
 1. **越权升级**：`verified` 高于 `single-source` 却缺 `verified_by: user` ⇒ 记入 `structural.unjustifiedUpgrade`。
 2. **脏值免疫**：插件专有字段尽管「模型不可写」，仍是从**用户可编辑的 markdown** 里解析出来的文本，因此是**不可信输入**。`hookPrior` 对 `success_rate`/`uses`/`gain`/`last_used` 每项钳制取值、并对最终结果整体钳制到 `[0,1]`——手改 `success_rate: 5`、`uses: -3` 或 `gain: 99` 不能把先验推出 BM25 混合所假设的量纲（`scripts/test-memory.mjs` 有断言，且做过变异验证）。量纲内的取值行为不变，因此既有排序不会移动。
+
+### 5.2 来源（`origin`）与验证等级是**两件事**（2026-10-01 新增，C7/N1）
+
+> **来源与理由**：Louck（arXiv:2606.34591）机检证明「以内容、或以内容可导出的血缘边为判决依据的可信度信号可被洗白」（T1），要求「写入时绑来源 + 独立共证」（T3）。我们的 `hook.verified` 是**标签**——任何人（含模型）都能打；它回答的是「验过没有」，而用户真正需要的另一半「**这话是谁说的**」此前根本没有被记录。四篇文献的跨论文评估见 [`../../literature/notes/memory-fidelity-papers-2026-10-01.md`](../../literature/notes/memory-fidelity-papers-2026-10-01.md)，决策见 [`../pending-decisions-2026-09-26.md`](../pending-decisions-2026-09-26.md) §3.1 的 **C7=A**（只加字段 + 只显示不排序）。
+
+- **字段**：卡片 frontmatter **顶格** `origin: agent | user | imported`；**缺席＝来源未知**（老卡不静默降级，照 §4.2 那条纪律）。
+- **谁写**：**只有每日体检写**（开关 `auditMaintainOrigin`，默认开，与 `auditMaintainLedger` 同形）。模型不可写、不可改；用户手改会被**报告**（见下）而不会被覆盖——`verified_by` 那条「静默改写用户手写值是最忌」的规则在这里同样适用。
+- **凭据在台账里**：`.deepseek/cache/card-origin.jsonl`，**只追加、只有体检写**，每行 `{ v, rel, firstSeen, origin, evidence, updated }`。`firstSeen` 是**宿主自己第一次见到这张卡的日期**——它是模型与文件都无法伪造的那一半（内容可以编，日期不行）。`evidence` 记这次判定从哪来：`memory-layer-path`（路径判定）/ `declared`（字段已在磁盘上）/ `external-edit`（与宿主记录不符）。写入是**幂等**的：值与原记录一致时不更新 `firstSeen`、也不改 `updated`（否则每天都会重写一遍，`updated` 会把"卡变过没有"这个信息抹掉）。
+- **取值从哪来**：`AUDIT_CARD_DIRS` 扫的三层（`records/` / `templates/` / `strategy/`）是协议**保留给 agent** 的层，所以路径判定只会得出 `agent`；`imported` 与 `user` **不会被路径判出**。这不是遗漏：本库没有任何通道能区分"剪藏的文章"与"用户自己的散文"，硬猜就是 T1 点名的"用内容派生可信度"。
+- **为什么永远不写 `user`**：本地 vault 是纯文本、无认证通道，Louck 的前提 A1（已认证通道）在这里**只能降级为通道推断**（该文献 §5.2 自己写明）。所以「这是用户原话」这种声明**无法被证实**，只能由用户本人确认——与 `verified` 的处理完全同形（`user-confirmed` 也只能由 ✅ 写入）。任何 `origin: user` 的声明进 `structural.unauthorizedOrigin`（照 `unjustifiedUpgrade` 的形状：**只报不改**）。
+- **不改排序**：`origin` **不参与** `hookPrior`／`note_recall` 排序（C7=A 的明确定义）。理由与 P5②「单源老化降权」相同：排序是全局量，动它要过 `engine-probe` 的门槛，而加字段是纯增量；先把"谁说的"记下来，才谈得上按它调权。
+- **它**不**解决的**：`origin` 只覆盖**体检扫得到的层**（即 AI 自己写的那些卡）。用户手写的笔记不在 `AUDIT_CARD_DIRS` 里，因此系统无法给用户的笔记盖来源章——**"你的笔记"这一侧仍然是靠层来区分的**，这条边界不要过度声称。
+
 
 **为什么需要 `gain`（而 `uses` 不够）**：`uses` 数的是**被检索出来**的次数，不是**帮上忙**的次数——被检索 20 次、其中 18 次读了就弃用的卡，和一个真解决了 20 个问题的卡，在 `uses` 上完全一样。`harmed` 只进体检报告、**不参与排序**，且是单侧计数（表达不了净收益）。`gain` 补上这一格：**带符号**的裁决，且**负值会把卡压到未评级卡之下**。它只由用户显式反馈推出（❌ ⇒ −1、✅ ⇒ +1、无反馈或缺席 ⇒ 0 中性），**刻意不把「用户继续追问」当负分**（追问可能只是好奇，噪音负分比没有负分更糟）。权重从「使用次数」里划出（`0.25 → 0.15 + 0.10`），总量不变、可回退。
 
@@ -258,6 +272,26 @@
 - **状态**：**已实现**（`scanNoteClaims` + `counts.noteClaims` / `counts.noteIndexUnresolved` / `sections.noteClaims` / `sections.noteIndexUnresolved` + `decisions.noteClaimCards`，进体检清单与人类摘要、进体检台账）。断言 335 → **345**（含变异验证：让 `contradictions` 恒为空 ⇒ 4 条断言红）。
 - **未做（有意）**：不做 claim 级台账与内容指纹作废、不做数值反例、不做形式化——理由与方案见 `literature/notes/verification-framework-2026-09-18.md`（待拍板）。
 
+#### 8.5.1 混写笔记：AI 补全段落（**已实现**，2026-10-01，N-a）
+
+> **来源与理由**：用户问「如果有一些笔记是 AI 和用户混写的呢，比如 AI 在某篇用户笔记中补全了一些内容」。**文件级的 `origin`（§5.2）描述不了它**——一个 frontmatter 字段表达不了"同一篇笔记里第 3 段是 AI 补的、第 5 段是用户写的"。而按段**自动判定归属**不可行：那是语义判断（本模块红线：插件不调模型），且必然误报。**唯一出路是把协议早就要求的那件事接进系统**：`vault-AGENTS.md` §3 从 0.x 起就要求助手用 `<!-- AI 补全 -->` 标注自己补的内容，真实库实测**确实有人标**（`统计学/方法论/数据压缩.md`），但这个标记此前只在 §8.5 那条窄路（索引说已证 × 载体自认 AI 补全）上被消费过。
+
+- **体检侧**：`scanNoteHygiene` 新增 `aiMarked` / `aiMarkedTotal`，**与 `noteGaps` 分开报**——未闭合是"待做的活"，AI 补全是"不是用户说的话"，动作不同；合在一处会让后者消失在"TODO 计数"里。识别用**一条**交替正则（`<!--\s*AI\s*补全\s*-->|AI\s*补全`，注释式在前）⇒ 字面 `<!-- AI 补全 -->` **只计一次**，裸写仍认得（与 `AUDIT_OPEN_MARKERS` 的词表一致）。
+- **检索侧**：`buildRecallDoc` 给 `kind === "note"` 记 `aiCompletions`；`note_recall` 把 `［含 N 处 AI 补全·非用户原话］` **前缀到 snippet**。两条约束决定了这个落点：① **不能加字段**——match 项是 `additionalProperties: false`，多一个键会被 dsh 严格校验拒绝并打死整次调用（2026-09-14 的 `hook`/`boundary` 事故）；② **放 snippet 不放元数据行**——标记的含义是"**这段文字**里有不是用户写的部分"，读者看的正是 snippet。这与既有"归档"标签用同一条通道。
+- **协议侧**：`vault-AGENTS.md` §3 把标记从一行注释扩成读写纪律（一段一个标记、放在段落**之前**；读到标记覆盖的段落按"笔记里的说法"引用；**用户删标记＝认可**，模型不得替用户删）。模型可见的工具描述只说一句行为，**不写标记语法**（`agent-experience` skill：描述行为而非实现）。
+- **刻意不做**：**不检测"未标记的补全"**。检测风格突变属语义判断（红线）且会误报；漏标的责任写在协议里（"漏标就等于把 AI 写的话伪装成用户原话"）。
+- **状态**：**已实现**（`scanNoteHygiene` 的 `aiMarked` + `sections.noteAiCompletions` / `counts.noteAiCompletions`；`note-tools.mjs` 的 `AI_COMPLETION_MARKER` / `aiCompletionCount` + `buildRecallDoc` 的 `aiCompletions`）。断言 **440 → 452**（12 条），含成对否定性断言（混写笔记有计数 / 全自写笔记不报；有前缀 / 干净笔记无前缀）与"match 项没有多出未声明字段"。变异验证：删掉 snippet 前缀 ⇒ 1 条红。
+
+##### 8.5.1.1 检索侧的**临时标记**：`［…·不宜当结论］`（2026-10-01 追加）
+
+> **来源与理由**：用户在 N-a 之后指出**真实症状**——"当我用插件助手讨论和这篇笔记相关的问题时，agent 的回复**总是极大地受这篇笔记影响，每次都给出差不多的回答**"。这不是排序错误（`note-interference-probe` 实测：它在 5/5 相关查询里 rank 1–2、**0/5 无关查询侵入**，排得准），而是 **experience-following**：高分命中被当成结论复述。仓库里其实早有这条失效形态的名字（`note_recall` 的描述写着 "a previously-successful technique can be a **fixation trap** on a slightly-different instance"），也早有针对**卡片层**的防御（`inbox/` 注入带「待打磨」、记录层被当作已沉淀）——**但用户自己的笔记两边都不占**，于是全库影响最强的文档不带任何"未定"标记。
+
+- **做法**：`buildRecallDoc` 给 note 记 `aiCompletions` **与** `openMarkers`（`待核对`/`待补`/`待证明`/`存疑`，与体检既有的 gap 词表一致），`note_recall` 把两者**合并成一个**括号前缀到 snippet：`［AI 补全 ×11·待核对 ×14·不宜当结论］`。
+- **为什么合并成一个括号**：两个计数给读者的裁决是同一句（"别当结论"），两个前缀会在 snippet 窗口里收两次费——第一版的长前缀（58 字符）吃掉约 19% 的窗口。**标记语法与判据写到工具描述／vault 协议，不写在结果里**（`agent-experience`：描述行为而非实现、同一事实说一次）。
+- **工具描述同步一条行为**：见到该前缀 ⇒ 那些内容不是已沉淀知识，**重新推导而不是复述笔记**，也不得说成用户原话。
+- **实测（真实库）**：那篇 61K 字符的笔记 `aiCompletions=11`、`openMarkers=14`，前缀现在出现在**每一次**取回它的结果里——**它自己第 6 行就写着的"不是我的原稿、两处待核对"，过去从不进检索语料（passage 只取正文前 1500 字符），现在在检索那一刻就被看到**。
+- **不声称的**：这只**降低**"被复述为结论"的概率，不保证模型一定重新推导（模型行为不可由确定性层保证）。要彻底解决，仍需把"讨论存档"与"可引用的知识"分开（用户那篇的本质是**逐次追加型活文档**：§3.6/§3.7/§2.7/§1.6/§2.1.1 全是过去讨论的存档）。
+
 ### 8.6 `cross-referenced` 由插件确定性写入（**已实现**，2026-09-18）
 
 > **来源与理由**：`cross-referenced`（与别处互证）的含义是「这份 vault 里另有一处说了同一件事」——**这是关于文件的事实，不是用户的口味**，所以要求用户点 ✅ 才给这一级，等于让用户做记账。代价是**结构性**的：每张新卡都从 `single-source` 起步，而**没有任何东西能把它升上去**，于是「单源超过 60 天」清单永远报同一批卡、唯一出路是逐张点 ✅。实测（2026-09-10 复查真实 vault）该字段全为 0，说明这条路没人走。
@@ -269,6 +303,18 @@
 - **证据进报告、不进卡片**：`sections.corroborated` 列出「哪张卡 ← 依据哪份文档」，但不往卡里写指针——存指针会在改名后腐烂，而凭据字段已经足够让体检判真伪。报告同时进体检清单与人类摘要（**自动改等级必须可见可争议**）。
 - **失败要报**：写入未确认时进 `warnings`（与归档失败同形），并作为一个建议进体检台账。
 - **状态**：**已实现**（`findCorroboration` + `rewriteHookStats` 的 verification 参数 + `syncHookStatsToCard` 的读回校验）。断言 345 → **353**（本项 10 条，其余见 §8.6）（含"没被别处提到的卡不动""README 不算证据""第二遍是 no-op（幂等）"三条否定性断言；变异验证：让 `via` 恒为 `null` ⇒ 5 条断言红）。
+
+#### 8.6.1 判据收紧：**共享上游不算第二票**（2026-10-01，C8/N4）
+
+> **来源与理由**：本节的判据此前只问"别处有没有出现同一个 pattern"。Louck 的 L-c「制造共证」与 Dash 的 Salience 脆弱性（**重复 ≥3 次就被当成重要性**）说明：「重复出现」是**可以被制造**出来的信号——把同一次对话的结论抄进两份文档，就能从零铸出 `cross-referenced`。既有文 [`note-noise-and-memory-fidelity-2026-09-26.md`](../note-noise-and-memory-fidelity-2026-09-26.md) §5 曾把"自动互证升级"算作**系统自己能降噪**，这条**改口**：它需要更严的判据才成立。文献依据见 [`../../literature/notes/memory-fidelity-papers-2026-10-01.md`](../../literature/notes/memory-fidelity-papers-2026-10-01.md) §3 修正项 1。
+
+- **新增判据**：匹配到的文档若与本卡**共用同一个 `source` / `depends_on` 出处**，则它是**同一来源的复述**，不是独立见证 ⇒ **不升级**，并进 `sections.corroborationRepetitions`（“相关重复、不计票”）+ 人类摘要一行。
+- **`import` 语义**：独立性的观测用的是**候选文档自己声明的链接**，不是"卡链到了它"（后者是这对匹配得以成立的原因，不能当独立性证据）。
+- **继续搜索，不在第一份命中处停下**：一份被污染的文档**不否决**后面那份独立文档——第一版实现会在第一个名字命中处 `return`，于是一处同源就足以干掉一次本来成立的升级（这个 bug 在实现时被自己的新测例抓到）。
+- **同源集合由 `extractLinks` 取**：它此前是 `buildAuditReport` 里的**闭包**，而喂给 `findCorroboration` 的访问器只读 `source`/`related`——于是 `depends_on` 在这条路径上**根本看不见**。现已提为模块级函数，两处共用同一提取（`depends_on` 一并纳入）。
+- **候选文档的出处此前**根本没被读**：证据池条目是 `{ rel, text }`，所以把 `other.source` 传进访问器永远是 `""`——这条新判据当时**结构上不可能**发现同源，而它还能"通过自己的测试"。已补 `provenanceOfDocument`。**这是本仓库反复出现的同一形态：守卫看不见自己的输入。**
+- **不声称的**：两个**没有**共享链接的文档被当作独立，这是**推断不是证明**（vault 没有认证通道，Louck 的 A1 在这里不成立）。引用这项能力时不要说"已保证独立"。
+- **状态**：**已实现**（`findCorroboration` 的返回值由 `path|null` 改为 `{ origin, evidence, sharedWith }`；`sections.corroborationRepetitions` / `counts.corroborationRepetitions`）。断言 427 → **440**（本项 5 条 + 来源项 8 条，见 §5.2）。
 
 ## 9. 安全边界（fail-closed）
 

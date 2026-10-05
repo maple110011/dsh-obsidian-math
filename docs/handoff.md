@@ -1,7 +1,7 @@
 # 交接文档（Handoff for the next agent）
 
 > 目的：让下一个接手本项目的 agent 在**不翻聊天记录**的情况下，完整掌握现状、决策、已修坑、未做事项与工作约定。
-> 当前版本：0.8.0
+> 当前版本：0.8.1
 > （本文件描述**当前**状态；它与 `package.json` 的一致性由 `check-version-consistency.mjs` 守卫）
 >
 > ⚠️ **"当前版本 0.8.0" = 仓库工作区的版本号。** 已发布的 **0.7.8 及更早**是 dsh 0.1.7 适配**之前**的形态（bundle 补丁里没有 preset 声明），装它之后**每次新建会话都会失败**——用户侧警告见 [`docs/installation.md`](installation.md) 的"0.7.8 及更早不要用"。**0.8.0（2026-09-27 发布）起已修**，本文件描述的修复都在其中。
@@ -42,7 +42,7 @@
 | **`docs/drag-to-mention-progress-2026-09-25.md`** | **拖拽引用的接续入口（未完成）**：已修好并实测证实的缺陷（客户端半个从未被加载）、**已复现但尚未判定**的那一环（页面收到了投递、草稿却为空）、四个分层探针各自的量法与最近结果、自述诊断的日志格式、夹具坑、以及"探针会改用户持久状态"的教训。**接手拖拽这件事先读它。** |
 | `obsidian/main.template.js` | Obsidian 插件源码：服务管理、LinkServer（/open + /feedback）、MemoryView 面板、全局皮肤 patch 兜底、bootstrap、**命令「在 dsh web 打开记忆面板」+ `memoryPanelUrl` 设置** |
 | `scripts/build-obsidian.mjs` | 把模板 + dsh 文件嵌入 `main.js`（**改共享文件后必跑**） |
-| `scripts/test-memory.mjs` | 零 token 记忆回归（427 项断言，进 `npm test`） |
+| `scripts/test-memory.mjs` | 零 token 记忆回归（455 项断言，进 `npm test`） |
 | `scripts/test-panel-routes.mjs` | `/memory-panel` 路由信任边界回归（62 项断言：跨源拒绝、root 锚定（含**未配置**时拒绝调用方 root）、token、字段校验、写入型端点；进 `npm test`） |
 | `scripts/test-panel-proxy.mjs` | 侧栏反代回归（32 项：权威 cookie、Host 保真、401 透传、升级转发、接线断言 + 11 项侧栏性能注入/皮肤脚本改写回归） |
 | `scripts/test-panel-auth.mjs` | 侧栏握手端到端（8 项，对真实 dsh；未装 dsh 或环境不允许子进程写自身状态时 SKIP） |
@@ -89,7 +89,7 @@
 
 ## 4. 必须知道的坑（勿重蹈覆辙）
 
-> 陷阱条数：107
+> 陷阱条数：115
 
 **为什么这里要写一个数字**：别的文档（`AGENTS.md` §1/§6）要引用"这个仓库有多少条历史陷阱"。**手写的数字会腐烂**——它曾长期写着「69 条」而实际已到 81，读者无法判断该信哪一份。现在这个数字是**机器可读的单一事实源**：`scripts/check-trap-count.mjs` 从本节的编号里数出真值，比对这一行、以及其它引用它的文档；任一处对不上就红。**加一条陷阱 = 同时改这一行**（改完跑那条守卫即可知道自己漏没漏）。
 
@@ -486,6 +486,105 @@
       `continue-on-error`，真正的判据是 `Confirm the registry state`（本次正是它抓住"npm 拒绝了"，并把 npm 的原话写进 issue #7）。
     - **顺带一条可复用的手法**：npm 的失败原文会进 **issue**（job 日志要 admin 权限才能读，issue 不需要）——排查发布问题时**先读 issue**。
 
+108. **★ 只冻结"只有我们会写"的文件的字节**——把别人也会写的文件做哈希冻结，等于**按插件自己的指示操作就会永久飘红**（2026-10-01 实测）。
+    - **怎么撞上的**：安装清单给**每一个** posture 文件记 sha256 并当硬校验。其中 `cordis.patch.yml` 被同一个安装器
+      在 650 行之外定义为"用户的层、永不重写"，而 **dsh 自己的设置面板按设计就重写它**：
+      `@deepseek-ai/dsh-config-editor` 把整份文件重新序列化后追加自己那一行（`:23-26` / `:105-109` / `:123`）。
+      本机记录 `733715c9…`、现存 `69ea710a…`，13 个文件里**只此一个**不符 ⇒ 门禁 53 唯一那条红。
+    - **形态特征（认得出来就能立刻定性）**：不是人手编辑的样子 —— 安装器写的 `3738 B` 被 YAML 重新序列化成 `3749 B`
+      （只有 2 条长 `!!js` 标量在默认 80 列处折成 4 行），再加 `774 B` 的 3 行新配置。
+      **同类但更隐蔽的一条**：`cordis.yml` 由 dsh **每次**组合 profile 都重写成 `[]`（`--dump-config` 就会写）——
+      **字节相同所以摘要不红**，但字节归 dsh 所有，一旦上游改一次排版就会红成同一形态。
+    - **纪律**：判据是**"谁还会写这个文件"**，不是"谁创建了它"。共享清单住在
+      `dsh/preset/profile-contract.mjs` 的 `POSTURE_SHARED_FILES`，**每条必须带实测到的第二写入方**，
+      没有第二写入方的文件**不许进来**。共享文件不冻结摘要、卸载时**无条件保留**
+      （"仅在漂移时保留"会在**未改动**时把它们删掉 —— 那正是 2026-09-26 丢配置的同一类）。
+    - **守卫形态**：两个 manifest 写入方（CLI 与 Obsidian 模板）此前**没有任何比对**。`check-profile-contract.mjs`
+      的 `PINNED-7` 把模板那个函数**从 `main.js` 里取出来真求值**，拿同一份 profile 与 CLI 实现逐文件比摘要 ——
+      **不要**改成比对源码文本（那只能钉住写法）。
+
+109. **★ dsh 0.2.0 起 `$DSH_HOME/cordis.patch.yml`（home 层）压过 profile 自己的层**（2026-10-01 读源码 + 实测，本机当前无冲突）。
+    - **含义**：home 层与 profile 层若有**同 id** 的行，home 层**静默赢**（`profile-boot`, `:192-198`）。
+      插件把 `permission` / `approval` / `sandbox-policy` / `fs-sandbox` 写在 **profile 层** ——
+      用户在 home 层写同名 id 就会**静默覆盖**它们，而没有任何东西会报错。
+    - **第二条连带**：配置编辑器现在会**拒绝保存**被 home patch 覆盖的行（`dsh-config-editor/lib/index.js:122`，
+      `Configuration for "<id>" is overridden by a home patch or command-line overlay`）。
+      它**堵住了** §7 里那条 C1（把 Obsidian 开关搬到插件 `Config`）——那条本就未拍板，现在多一条反对理由。
+    - **本机现状**：`~/.dsh/cordis.patch.yml` 只有一条 `- insert:` 的 `pretooluse-guard` 行，**不覆盖任何 id**。
+    - **要做的事**：属产品决策（要不要在启动时检测 home 层与插件同 id 的行并提示），已记 §7。
+
+110. **★ 断言被"硬编码路径 + 静默跳过"变成假绿**——门禁报 `9/9`，实际动态校验**整块没跑**（2026-10-01 实测）。
+    - **怎么撞上的**：两个工具套件里**唯一**调用 dsh 校验器的断言，都 gate 在
+      `<DSH_HOME>/profiles/node_modules/@deepseek-ai/dsh-tools/lib/index.js`。本机实测：
+      `~/.dsh/profiles/node_modules/…` **False**、`…/profiles/notes-assistant/node_modules/…` **False**、
+      `%APPDATA%\npm\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\dsh-tools\lib\index.js` **True**
+      ⇒ `npm i -g` 装的 dsh 把内置包放在**全局安装内部**，那些断言全部 `[skip]`。
+    - **为什么危险**：`output.schema` 还能过**宿主自带的**校验器，正是"宿主升级后工具契约仍成立"的**唯一动态证据**。
+      一个会静默跳过的检查**无法为任何宿主版本作证** —— 与坑 98（0/0 断言 + exit 0）同族，
+      但更隐蔽：套件**内部**的分块跳过不会反映到汇总的 `passed/total` 上。
+    - **纪律**：① 解析路径要**按候选顺序试**（含 npm 全局安装内部），并给显式覆盖变量；
+      ② 找不到时**大声 SKIP 并打印试过的路径**，不要让它看起来像通过了；③ 新变量要同步 `docs/env-vars.md`
+      （那条守卫双向，本次先红了一次才补上）。
+    - **修后**：`22/22` + `11/11`（修前各 `9/9` 且动态块跳过），且是拿 0.2.0-rc.2 **自己的**校验器跑的。
+
+111. **★ JS 正则里 `$` 在无 `m` 标志时也匹配"尾随换行之前"，`replace` 会**悄悄吞掉行尾**（2026-10-01 自己踩的，症状很能骗人）。
+    - **怎么撞上的**：写 `migrateRetiredPresetRow` 时用 `/^(\s*)-\s*id:\s*…['"]?\s*(\r?\n)?$/` 去匹配**仍带 `\n` 的行**。
+      `$` 在 `(\r?\n)?` **之前**就匹配成功 ⇒ 那个捕获组不被消费 ⇒ `replace` 的输出**少了换行**。
+      实测症状：断言 detail 打印 `renamed`（函数确实改了文件、`migrated === true`），但
+      **行数从 14 变 12**（该少 1 行却少了 2 行）——只看"改没改"完全看不出来。
+    - **纪律**：**在剥掉终止符的行体上匹配**（先 `line.replace(/\r?\n$/, "")`，改名后再把终止符拼回去）；
+      或者给正则加 `m` 标志并让 `$` 明确落在行体末尾。任何"按行改写文件"的代码都该有一条**行数守恒**的断言。
+    - **顺带**：这条同族的教训是"函数返回 true ≠ 文件正确"，所以新加的迁移测试同时断言
+      **改名成功 / 丢掉失效键 / 其余逐字节保留 / 行数只少 1 / 幂等 / 相似 id 不碰**。
+
+112. **★ dsh 的版本范围不许"顺手整理"成 `>=0.2.0` / `^0.2.0`**——在 prerelease 运行时上它**不匹配**，插件会被**静默停用**（2026-10-01 隔离实测）。
+    - **机制**：兼容门禁只读 `peerDependencies` 里 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*`
+      （`dsh-app-boot/lib/index.js:294`），用 `semver.satisfies(…, { includePrerelease: true })` 比对（`:300`）；
+      **整个 key 不存在 = 完全不检查**（`:289`）；`dsh.engines.dsh` **门禁根本不读**（全库零命中）。
+    - **隔离 `DSH_HOME` 实测**：`>=0.2.0` ✗、`^0.2.0` ✗（都跳过）、`>=0.2.0-rc.2` ✓、`>=0.1.7-rc.2` ✓。
+    - **失败信号很弱，必须认得**：不兼容**不会**让 dsh 非零退出 —— 它是 **exit 0 + stderr 一行**
+      （`dsh: skipping profile bundle …`）**+ 组合结果被掏空**。只有 `--dump-config-schema` 会 exit 1。
+      真实启动时还有**第二道更严的按行门禁**（`dsh: disabling profile plugin row …`），
+      **`--dump-config` 看不到它**（dump 从不挂 Loader）。
+    - **例外通道**：`dsh plugin --profile <p> allow-version <pkg>@<ver> --dsh-version <exact> --accept-risk`
+      写 `<profile>/compatibility.json` 后即可放行（实测无需联网、无交互）。
+
+113. **★ 判据"看不见自己的输入"，于是它永远发现不了它要抓的东西**——新加的"共享上游不算共证"判据**跑得通、测得过**，却**结构上不可能**命中（2026-10-01，C8）。
+    - **两个同时存在的缺陷**：① 证据池条目建成 `{ rel, text }`，而判据要读候选文档的 `source`/`related`
+      ⇒ `other.source` 永远是 `""`；② 计算"共享上游"用的链接访问器只读 `source`/`related`，而 `extractLinks`
+      当时是 `buildAuditReport` 里的闭包 ⇒ `depends_on` 在这条路径上**根本看不见**。
+    - **为什么危险**：它不会报错、不会红，只会**恒返回"没有共享上游"**——即"两层防御都不会打架"，
+      而人的直觉会认为"我加了这条判据，所以它被守住了"。这正是本仓库"断言在变异下照样通过"那一族：
+      **守卫看不见自己的输入**（同族：`cardRef` 少带 `uses`/`successRate` 导致 weak 自检每张卡都触发）。
+    - **纪律**：加**任何**"读某字段做判断"的逻辑，先写一句**断言这个字段真的被读到了**——
+      最省事的形态是**成对测例**（同源必须不升级 + 独立来源必须升级），因为只写"同源不升级"的话，
+      "判据根本没跑"和"判据跑了并拒绝"给出**完全一样**的结果。
+    - **顺带**：`extractLinks` 已提为模块级（两处共用同一提取，`depends_on` 一并纳入），
+      证据池补 `provenanceOfDocument`。
+
+114. **★ 收集结果的数组在"收集之前"就绑定了，于是发现被静默丢弃**（2026-10-01，C7）。
+    - **形状**：`origin` 的越权声明先由 `originBlocked` 收集，`structural` 对象**稍后**才 `= { …, unauthorizedOrigin: [] }`
+      ⇒ 那个空数组才是 `structural.unauthorizedOrigin`，收集到的东西**从未接上**，
+      `counts.originUnauthorized` **恒为 0**、`sections.originUnauthorized` 恒为空。
+    - **症状很能骗人**：卡上确实写着 `origin: user`、成员数组里确实有那条字符串，
+      但报告与计数是空的——**"我明明 push 了"**。实测由新测例（断言 `counts.originUnauthorized === 1`）抓出。
+    - **纪律**：**同一个事实不要有两个数组**。要么让后续结构体**引用**那个数组（现在是 `unauthorizedOrigin: originBlocked`），
+      要么在结构体定义之后才收集。写完这类"收集 → 汇总"的两段式代码，**回头看一遍谁指向谁**，
+      并让断言读**最终报告**里的字段（而不是读你刚 push 的那个变量）。
+
+115. **★ `--dry-run` 在"最可能丢数据的文件"上说了反话**（2026-10-01，装 0.8.1 时踩到）。
+    - **形状**：`copyFile(options, src, dst, overwrite = false)` 先判 `dryRun` 再判 `!overwrite && exists`，
+      于是 dry-run 对**每一个**目标都打印 `would copy`，而真跑对已存在目标是
+      `[skip] exists, preserving user edits`。**实测**（临时 vault 里预置 `profile.md`）：
+      dry-run 输出 `would copy … profile.md`，真跑输出 `[skip] exists …`，文件**逐字节未变**。
+    - **为什么这条特别坏**：`--dry-run` 的**唯一用途**就是让人在动手前确认"会不会覆盖我的东西"。
+      它偏偏在 `profile.md`（用户画像）/ `notation.md`（记号表）/ `AGENTS.md`（协议）这几处——
+      **整个安装过程里唯一有丢数据风险的文件**——给出了与真跑相反的承诺。我是**因为部署前先列了目标文件现状**
+      才没被误导；只看 dry-run 会以为要覆盖 19 个文件。
+    - **纪律**：**dry-run 必须与真跑走同一套判定、同一顺序**，只在"动作"那一步分叉。
+      任何"预览/预演"实现都该有一条断言：**模拟与真实对同一输入的结论一致**。
+      修法是把 `!overwrite && exists` 提到 `dryRun` 之前，并打印 `[dry-run] would skip`。
+
 ## 5. 用户决策记录（不要推翻）
 
 - **单仓**（不拆双 git 仓库），两个产物独立分发（npm 包 + Obsidian 插件）+ 仓库内文献库/面板子系统。
@@ -503,11 +602,13 @@
 - **GraphMemix（Li et al. 2026）吸纳范围（2026-09-10 定）**：已吸收「边界门控 / `harmed` / `verified_by` / 声明值与有效值 / `degraded`」（`design-intake-2026-09-10.md` §1）；**多视图 max-pool 实测后不采纳**（探针 A/B：Direct 11→11 不变，目标排名均值 1.73 → 2.27，2 例变差 0 例改善 ⇒ 保持单袋默认，`retrieval-v3.md` §7.2）；查询条件化关系信任 + 锚点槽位、自适应 k、两阶段适用性判定**记录在案不实现**（各带触发条件，`retrieval-v3.md` §7.4）。可达性分层 + 有符号净恢复 Δ 已作为**常驻测量**进引擎探针（`retrieval-v3.md` §7.5）。
 - **侧栏性能模式默认开启**（2026-09-10）：它是**唯一**会改动 dsh 侧栏响应字节的机制，取舍是「皮肤毛玻璃 + 两处热循环的节奏」换「宿主与侧栏动画不再掉帧」。开关在插件设置里，关掉即回皮肤原样；不动 dsh 本体、不动皮肤文件、只作用于侧栏这一份渲染。
 - **侧栏加载皮肤动态装饰默认开启**（2026-09-10，第二轮）：关掉后侧栏不加载皮肤客户端脚本（hero 场景/状态角色/信号芯片消失），换来实测最流畅的一档（帧 >50ms 归零、Task −18%、RecalcStyle ops −34%）。默认保留装饰，把选择权留给用户。
+- **lemmalog（`JordyZomer/lemmalog`，Rust Datalog 记忆引擎）评估结论：不引入**（2026-10-01）。理由：**fit failure 而非质量问题**——四个彼此独立的阻断项（① 要新增一层记忆，在"不做"清单里；② 打破"vault = 唯一持久化 + 纯 Markdown、无数据库"；③ 三条安装通道**没有一条**能交付 `cargo build` 产物；④ 主用法是 MCP 服务，而 preset **刻意不挂** shell/web/subagent，够不着），每条在本仓库都有**书面决定**。它许诺的好处也已被覆盖或**有意拒绝**（传递式级联 `design.md:130` 拒绝；来源链已设计为纯 JS 的 V0–V9 计划；图检索实测 **flat > graph**）。**完整证据、成本与"若坚持要验"的唯一合理形态见 [`lemmalog-assessment-2026-10-01.md`](lemmalog-assessment-2026-10-01.md)。** ⚠️ 本行是**决策记录**：下次再提请先读该文，不要从头再评一遍。
+- **dsh 版本下限保持 `>=0.1.7-rc.2`**（2026-10-01 用户拍板）：0.2.0-rc.2 已实测通过且**没有破坏性变更**，所以**不**把下限提到 0.2.0（那会把还能用的 0.1.7-rc.2 用户挡在门外）。两个 README 已写明"0.2.0-rc.2 已实测"。**反向禁止**：不要把范围"顺手整理"成 `>=0.2.0` / `^0.2.0`——在 prerelease 运行时上不匹配会让插件被静默停用（陷阱 112）。
 
 ## 6. 工作流命令
 
 ```bash
-npm test                        # 427 项零 token 回归 + 62 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
+npm test                        # 455 项零 token 回归 + 62 项路由回归 + 8 项认证 + 32 项反代 + 安装器 e2e + 漂移 + 五守卫 + 文档一致性 + 中英配对 + 语法检查（= node scripts/run-gates.mjs）
 node scripts/build-obsidian.mjs # 改 dsh/ 或模板后重建 main.js
 npm run build:client            # 改 dsh/client-panel/src 后重建 lib/client.js
 node dsh/client-panel/install-into-profile.mjs --dsh-home <home>   # 装面板进 web profile
@@ -527,7 +628,7 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 > （含 4 处"其实已完成/已解决却仍记成欠账"、5 处事实或行号过期、3 份评估文档的过期状态页眉、1 处
 > **我自己上一轮引入的错误引用**、1 处**影响判断被实测推翻**（session 目录编码）、1 处决策未登记）。已核实且**仍然准确**的代表：L398（18000 上限真实）、L403（候选卡
 > `uses` 自锁机制属实，`note-tools.mjs:1719-1724`）、L416（README 四项缺口仍在）、L428（`installation.md:52`
-> 真有）、L430（豁免清单真实且承重）、L433（确无读者）、L452（拖拽引用有专门进展文档）。
+> 真有）、L430（豁免清单真实且承重）、L433（确无读者）、L455（拖拽引用有专门进展文档）。
 > **仍未核实（共 6 条，缺条件而非未查）**：`真实 E2E（用户跑）`、`Obsidian 本机部署验收`（两条都是**用户动作**）、
 > `侧栏性能：两项未量到的原因`、`★ 运行卡顿`（要真机长会话实测）、`检索：关系信任 + 锚点槽位`、
 > `多视图 max-pool 复测`（要真实语料/探针条件）。
@@ -546,6 +647,25 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 
 | 项 | 说明 | 优先级 |
 |---|---|---|
+| **项目重构蓝图（2026-10-01）：前提已置换，等 7 项拍板** | 用户把前提从"**仅 Obsidian 插件 / 极低成本 / 尚未 dsh-Obsidian 解耦**"换成"**dsh 插件家族 / 成本可放宽 / 环境由用户自备、插件只声明+指引**"，并明确**现有笔记插件降级为新项目中的一个功能**，要做一次大型重构。**复审结论（有一手证据）**：`plugin-family-assessment-2026-10-01.md` 把"不调模型/不持库/不引新运行时/不做 Lean/不挂 shell"判成"产品红线、与架构无关"**是错的**——它们多数是"当初约束的产物"：成本曾是一等约束（`docs/archive/cost-benchmark-2026-08.md` 存着 17 万→2.5 万 tokens 的对照，而该文 §4 自陈**当时成本根本量不准**）；**最强的单条证据是项目自己提过又静默降级的 P0-2**（`docs/memory/assessment.md:54`「异步确定性固化流水线：turn/session 结束钩子触发独立固化 pass」→ 第 2 轮改写成同步体检，实现成跑在 preset 每轮路径上）；范围假设的原话是「**我们场景是单用户数学学习**」（`references.md:194`）。**蓝图**：[`refactor-blueprint-2026-10-01.md`](refactor-blueprint-2026-10-01.md)（§1 逐条复审 A–E 分类 + L1–L13 + 代价/验收；§3 **8 条非不变量**；§4 家族协议：能力服务契约 / 数据契约版本化（借 dsh 会话格式"一跳一个迁移包"模型）/ 第三方贡献治理 / 环境声明与指引；§5 分阶段 R0–R5+）。**决策台账**：[`pending-decisions-2026-10-01.md`](pending-decisions-2026-10-01.md)（**P1–P7**：P1 认可 L9/L10 作废 + L2/L3 拆半 + L6 前半反转 + L1 按包拆半 + L12 重写；P3 research profile 放宽程度；P4 派生索引落地为 `node:sqlite`；P5 建可复现质量/成本基准；P6 仓库形态；P7 第三方开放程度）。**未拍板不动代码** | 待决（最高） |
+| **插件家族评估（2026-10-01）：四问已答完，等 8 项拍板** | 用户问：①记忆主体移入 dsh 插件后哪些被舍弃的机制变得可引入；②外部复杂工具该纳入现有插件还是另做插件再组合；③能否做成数学/统计的学习科研插件集合；④还有哪些类型的插件可做。**答：** 上移解锁的是**成本型**限制（引擎三份→一份、每轮路径→宿主侧、宿主权能），**不解锁产品红线**（⚠️ 此判断已被 `refactor-blueprint-2026-10-01.md` §1 修正）；纳入形态的判据是**四条硬边界**（数据契约所有权 / 权限姿态 / 外部依赖 / 版本 cohort），四条都不跨就**优先做 tool/skill 而不是新包**（定量理由：本仓库 54 条门禁里 **30 条**只为防跨边界漂移）；能做，但可行形态是 **1 monorepo × N 个 bundle 包 × 2–3 个 profile**（因为**权限档是闭表**，不同姿态要不同 profile），而"多个模式"应出**多个 preset 行**而非多个包。**报告**：[`plugin-family-assessment-2026-10-01.md`](plugin-family-assessment-2026-10-01.md)（§0–§8 完成）。**卡在**：该文 §8 的 **D0–D7 + N-A/N-B + L12 共 11 项需用户表态**，其 L12（"凡是要新增「每轮必做步骤」的都拒"）是**唯一同时挡掉十来项机制的总闸**；**未拍板前不动代码**。附带产出：本机外部工具链实测（Python 3.14 ✅ / TeX Live ✅ / cargo ✅ / `node:sqlite` 内置 ✅；**R ❌ / Lean ❌**） | 待决 |
+
+
+| ✅ **脏记忆：来源（`origin`）+ 互证判据收紧（C7/C8，2026-10-01）** | **用户拍板 `C7=A` / `C8=A` 后落地**（机制指定为"宿主写 + 首见台账"、字段放卡片 frontmatter）。**C7**：卡片顶格 `origin`（`agent`/`user`/`imported`；缺席＝来源未知），**唯一写入者是每日体检**（`auditMaintainOrigin`），凭据进 `.deepseek/cache/card-origin.jsonl`（只追加、记 `firstSeen`＝宿主首次见到该卡的日期），越权声明进 `structural.unauthorizedOrigin`（**只报不改**）；**`origin: user` 永远进这一列**（本地无认证通道）。**不改排序**（`hookPrior` 未动）。**C8**：`findCorroboration` 的返回值改为 `{ origin, evidence, sharedWith }`，**共享 `source`/`depends_on` 出处的匹配＝相关重复、不计票**（不再升级），进 `sections.corroborationRepetitions` + 人类摘要。断言 **427 → 455**；**变异验证 2 条**（M-C8 ⇒ 4 红；M-origin-idempotence ⇒ 2 红，且第一条变异最初是绿的 ⇒ 补了"第二遍台账逐字节不变"的断言才转红）。**实现时被自己的测例抓出 3 个真缺陷**（陷阱 **113/114**）。细账见 [`changelog.md`](changelog.md)，判据见 [`memory/design.md`](memory/design.md) §5.2 / §8.6.1 | 完成 |
+| **本次改动尚未装到你的 vault / profile** | 代码与生成物（`main.js`）已就绪、门禁全绿，但**部署是单独一步**（仓库纪律：`deploy-local` 不由 agent 自动跑，且本批改了插件产物）。你那边要生效需要：① 重新安装/引导（Obsidian 侧栏或 `install`）或跑既有的 deploy 脚本；② 首次体检会把老卡补上 `origin`（**一次性的批量写入，可逆**：删掉那一行即可，体检会再补）。**在此之前你的库仍是旧行为** | 等你决定何时部署 |
+| ✅ **混写笔记 + 不确定标记在检索里可见（N-a / N-a′，2026-10-01）** | 用户问"如果有些笔记是 AI 和用户混写的呢（AI 在用户笔记里补全内容）？"**查档结论**：协议**早就要求**标注（`vault-AGENTS.md` §3 的 `<!-- AI 补全 -->`），真实库**确实有人在标**（`统计学/方法论/数据压缩.md`），但**三处没接上**：① `scanNoteHygiene` 的 gap 正则只数 `待补/待核对/待证明/TODO/待完成`，**不含** AI 标记 ⇒ 标了也不报；② `note_recall` 把 AI 补全段落与用户原文**同权返回**；③ 该标记只在 `scanNoteClaims`（定理索引用错章）那条窄路上被消费过。**已做**：`scanNoteHygiene` 新增 `aiMarked`/`aiMarkedTotal`（与"未闭合处"**分开报**）；`buildRecallDoc` 给 note 记 `aiCompletions` **与 `openMarkers`**，`note_recall` 把 `［AI 补全 ×N·待核对 ×M·不宜当结论］`**合并成一个**前缀到 snippet（**不能**加字段：match 项是 `additionalProperties: false`，加字段会像 2026-09-14 那样打死整次调用）；清单与人类摘要各一条，含引用规则；`vault-AGENTS.md` §3 把标记扩成读写纪律（一段一个标记、放在段落前；用户删标记＝认可，模型不得替删）。断言 **440 → 455**。**刻意不做**：不检测"未标记的补全"（语义判断、红线、必误报）。细账见 [`changelog.md`](changelog.md) | 完成 |
+| ✅ **固化改成显式动作（2026-10-01，用户拍板；文献处方）** | 用户问"只加个提示会不会太单薄了，文献又指出如何改善吗" ⇒ **问对了**：`［…·不宜当结论］` 属于 P2 那一档（用记忆时降级），文献里的大头在**写路径**。**引原文**：Zhang Table 5 逐档 **43.2（就地改写）→ 50.0（append-only，旧库可见）→ 64.0 → 70.0（旧库隐藏）→ 76.6（原始轨迹）**；处方是「abstraction 应 **opt-in** 且被证据设闸，而不是每次交互后触发」。**查档发现的病灶**：写入其实**已被门控**（`capture-policy` 默认 idea/fact/preference=ask，且"每轮最多一次"），**但 `vault-AGENTS.md` §2 的"每轮按需三写"是另一套、没有闸门** ⇒ 「每轮自动固化」是模型自愿多做的，正好落在最伤那一格。**做法（两处，缺一不可）**：① 注入文本（`math-memory.mjs` 捕获策略段）新增固化闸门——**没有用户同意不写抽象层**，默认**先问**且与既有捕获提问**合并成一次**（不增加弹窗），例外仅两条（用户当场明确要求／已给长期授权）；② [`dsh/templates/vault-AGENTS.md`](../dsh/templates/vault-AGENTS.md) §2 同一规则。**为什么两处**：vault 里的 `AGENTS.md` 是安装副本，老 vault 不重装吃不到。**断言 452 → 455**（3 条钉住两处一致），**变异验证 2 条**（删注入侧 ⇒ 2 红；只改模板侧 ⇒ 1 红）。**证据边界**：该实验在程序化 benchmark 上、**未**测人类笔记混合库 ⇒ 机制可迁移、幅度不可换算；这条闸门由提示词执行（**非**确定性强制）；**未做** A/B 实测（要花钱，需用户点头） | 完成 |
+| **⚠️ 用户纠正："干扰"的含义（2026-10-01）** | 我先按"排序错/挤掉别人"理解，**用户澄清**：是"当讨论相关问题时，**agent 的回复总是极大地受这篇笔记影响、每次都给出差不多的回答**"。⇒ 病因在**模型行为层（experience-following）**，不在检索层。新增只读探针 [`scripts/qa/note-interference-probe.mjs`](../scripts/qa/note-interference-probe.mjs)，它实测**支持**这个判断：目标笔记在 **5/5 相关查询** rank 1–2（最高 0.93）、**0/5 无关查询**侵入 top-8 ⇒ **排序是准的**。于是修法改到"给那篇笔记加临时标记"（见上一条的 `openMarkers` / `不宜当结论`）。**仍未解决的部分**：那篇笔记本质是**逐次追加型活文档**（947 行 / 61K 字符 / 11 处 AI 补全 / 14 处待核对；`§3.6/§3.7/§2.7/§1.6/§2.1.1` 全是过去讨论的存档，标题里就写着"增补/附/错在哪"），把"讨论存档"与"可引用的知识"分开才是根治——**我没有动用户的笔记**，等用户决定 | 待用户拍板（拆分） |
+| ✅ **用户负担探针（2026-10-01）** | 用户提出一条产品原则："**尽可能减少用户自行维护整理的麻烦工作，让用户专注思考**"。落成可判定判据：**凡是能从文件系统确定性推出的事实，系统不得要求用户报告或维护**；只有"只有用户知道的偏好/意图"才允许问。新增只读零 token 探针 [`scripts/qa/user-burden-probe.mjs`](../scripts/qa/user-burden-probe.mjs)（不写任何文件、无样本时如实说"没样本"）。**真实库实测（`D:\Obsidian笔记数据库`）**：`user-confirmed` **0/5**、`success_rate`/`gain`/`harmed` **0/5**、`needs_review` **0/5** ⇒ 三条用户配额**全部 DEAD**；`origin` 0/5（尚未部署本批）；卡内 AI 补全标记 0 处（笔记里有 3 处）。检索侧被动信号：`retrieval-stats.json` 累计 **calls=7 / empty=0**，**67 个不同卡路径**有过命中记录（≈ 每次召回 top-k 命中一批） | 完成（探针）；原则待入档 |
+| **⚠️ 会话日志样本的真实状态（2026-10-01 查实，**不要再被"0 次"误导**）** | ① **活着的** `~\.dsh\sessions`（45 个日志）里 `note_recall` 调用 **0 次**——但这**不能**当作"插件没用过"，因为 **`$DSH_HOME` 被整体清空过四次**（第一次 2026-09-25 就丢掉了全部会话日志，见 [`HANDOFF-删库与防灾.md`](../../HANDOFF-删库与防灾.md) §2）。② 备份里有可恢复的会话数据：`E:\backups\dsh-state\*`（15 分钟一档）与 `dsh-home\*` 共 **104 个备份点、去重后 116 个可解日志**，其上扫描结果 = **`note_recall` 1 次**（`query="高等数理统计1 笔记内容 讲了什么"`）。③ 但那些日志的标题显示绝大部分是**仓库维护/事故取证/功能测试**会话，不是用户的笔记会话 ⇒ **这批数据不足以度量"结局"**。**结论**：C9-A′ 的"暴露 → 被读 → 被引用"要等插件在真实笔记会话里跑起来、并部署本批（`origin`）之后才有样本；在那之前**不要**为 7 次调用建重型度量 | 记录事实 |
+| **⚠️ `user-confirmed` 自动推断**（原计划第 2 步）**前提不成立，已改口** | 原计划：卡的模式出现在用户**之后**写的笔记里 ⇒ 视为确认。**真实库实测否决了两条前提**：① **106 篇笔记里带 `updated` 字段的是 0 篇** ⇒ 没有"之后"可比；② 5 张卡的 `hook.pattern` 是**下划线分词式内部标识**（`exchangeable_sequence_de_finetti`、`resolution_floor_order`），在 106 篇笔记里**命中 0 次**；放宽到自然语言主题词才有命中（充分统计量 6 篇、单调 8 篇、耦合 3 篇）——而**主题共现恰恰是 Louck T1 点名的那种"内容派生可信度"**，不能用来提到最高等级。**可行的降级方向**：① 继续走"**从行为读**"（C9-A′，需要真实笔记会话样本）；② 加一条**已有的**被动确认路线：用户自己的笔记里**链接到某张卡**（wikilink，`[[卡名]]`）＝主动引用过 ⇒ 视为确认——今天真实库 **0 次**（没人链过卡），零摩擦但是冷启动；③ 若接受"模型为用户记一条锚"（写进 episode/notes-index，模型维护、带日期），时间前提才成立，但要用户拍板 | 待用户拍板 |
+| **C9 需要重新设计（用户反馈 + 实测，2026-10-01）** | 用户原话：「✅/❌ 我一直没用过，作用不明晰、判断起来太麻烦」。**只读核实支持这句**：真实库 **65 个记忆层文件里 `success_rate`/`gain`/`harmed`/`needs_review`/`verified_by` 一次都没被写过**（命中的全是各层 `_README.md` 的说明文字）⇒ 字段全在默认值、`weak` 段恒空、晋升门 `success_rate ≥ 0.6` **永远不可能满足**。⇒ **C9 原方案（把 ✅/❌ 回填到暴露记录）建立在一个从未产生的信号上**，不能照做。**重设计方向 = C9-A′**（记四层：暴露 → 是否被读 → 是否被引用 → 用户有没有明说不满；先只报告），已登记 [`pending-decisions-2026-09-26.md`](pending-decisions-2026-09-26.md) §3.1 | 待用户拍板 |
+| **C10 仍未拍板** | **固化输入隔离 A/B**：写记录那一轮不把旧抽象索引注入上下文（Zhang Table 5：旧库可见 50.0 vs 隐藏 70.0）。未动代码；文献 §8 排在顺序 4 | 待用户拍板 |
+| ✅ **dsh 0.2.0-rc.2 适配：审计完成 + 三处收口（2026-10-01）** | **没有发现破坏性变更**（逐接口核对：`ctx.fs` 8 处用法 / `ctx.tools.register` / `system-prompt/assemble` / `settings.section` / `ctx.webServer` / `ctx.workspaceRegistry` / `!!js` 方言 / bundle 通道全部还在；profile 的 5 条 patch 行 id 全部仍命中，`--dump-config` exit 0 且**零 `not found` 警告**；依赖面**只增不减**）。三处收口：① **工具 schema 的动态校验此前是假绿**（两个套件硬编码的 `dsh-tools` 路径在 `npm i -g` 的机器上不存在 ⇒ 断言整块跳过、汇总仍报 `9/9`）→ 新增共享解析器 + `DSH_TOOLS_PATH`，修后 **22/22 + 11/11**，拿 0.2.0-rc.2 **自己的**校验器跑；② **posture 契约拆分**（安装器私有 vs 共享 `package.json`/`cordis.yml`/`cordis.patch.yml`）⇒ 门禁 53 由 **23/24 → 24/24**，且**不用重装**；③ **迁移已死的 `agent-presets` 行**（0.2.0 全库零命中，patch 匹配不到只 warn 并跳过 ⇒ 默认 preset 静默丢失）。**变异验证 4 条**，均实测报红 + 恢复字节级一致。详见 [`dsh-0.2.0-adaptation.md`](dsh-0.2.0-adaptation.md)；陷阱 **108–112** | 完成 |
+| **home 层 patch 与插件同 id 的检测** | 0.2.0 起 `$DSH_HOME/cordis.patch.yml` **压过** profile 自己的层（陷阱 109）。插件把 `permission`/`approval`/`sandbox-policy`/`fs-sandbox` 写在 profile 层，用户若在 home 层写同名 id 就会**静默覆盖**它们（沙箱/审批边界被无声改写），而没有任何东西会报错。本机 home 层只有一条 `- insert:` 的 guard 行，**当前无冲突**。**要做的事**：在插件启动（或安装）时检测"home 层是否有与插件 posture 同 id 的行"，有则打印一条**点名**的提示（不要自动改用户的 home 层）。**属产品决策**（要不要做、提示到什么程度） | 中 |
+| **`defaultPreset: math-memory-locked` 成了启动检查的唯一支点** | 0.2.0 的 `dsh-base/cordis.patch.yml:248` 把 approval 默认值写成 `danger-full-access ? 'never' : 'ask'`，与插件 profile 层的表达式**相反**。插件层赢，且"组合出的沙箱/审批默认值必须命中某个 preset"这条启动检查（`dsh-permission-presets/lib/index.js:178-181`）目前**只靠** `defaultPreset: math-memory-locked` 通过。**若哪天去掉它，profile 会起不来**。可选修法：给 preset 表补一行与插件表达式相反映射匹配的条目。**改安全相关配置需单独拍板**，本轮只记录 | 低（有触发条件） |
+| **工具套件的"宿主校验器"覆盖** | ✅ 已修（2026-10-01，见上表第一行）：此前两个套件的动态校验**整块跳过**而汇总报 `9/9`（陷阱 110）。现在按候选顺序解析 `dsh-tools`（含 **npm 全局安装内部**），找不到就大声 SKIP 并打印试过的路径。**仍未做**：套件**内部**的分块跳过**不反映**到 `run-gates.mjs` 的三态汇总上（汇总只区分整套 SKIP）——若要根治，得让套件把 `__SKIP__` 提升为醒目信号或让汇总解析 `(N skipped)` | 低 |
+
 | ✅ **A′（离线通道包化）S1–S5 已落地（2026-09-26）** | 用户最初的问题"插件为什么不出现在 dsh 插件管理页"的**根治**：离线通道现在会先把本插件**物化成一个真包**，再 `dsh plugin add file:<本地目录>`（**不联网**）⇒ 那条通道装出来的插件**也出现在管理页**、可启用/禁用/移除。**S1** 物化模块（清单从宿主入口 import 闭包 ∪ 契约体文件 ∪ 声明的 extras **派生**）；**S2** 证物化包**能被真 dsh 冷启动**（10/10）；**S3** overlay 按"本包是否已登记"删掉包已提供的那两行（fail-safe；`client-panel` 行**必须**留下）+ host 守卫认得本地 bundle；**S4** 接线（判据是**文件系统**不是退出码、owner **最后**翻转、失败**回落平铺并明说**、`--flat` 强制旧形态）；**S5** 迁移三方向（升级 / 中断自愈 / 反向切换）实测。守卫：新门禁 `check: overlay drops bundle-owned rows`（22 条）+ `test-installer` 新增 29 条；变异验证共 **9 条**。⚠️ **S3 的一条前提被实测推翻**（见陷阱 102）。⚠️ **Obsidian 插件引导那半仍是纯平铺** —— 见下一条 | 完成（S1–S5） |
 | ✅ **A′ 的 Obsidian 半个（机会式包化）已落地（2026-09-26）** | 侧栏那条安装路径现在**也会先把本插件物化成一个真包**再 `dsh plugin add file:<本地目录>`（不联网），因此**侧栏装出来的插件同样出现在 dsh 的「插件」页**。与 CLI 同一序：物化 → add → **按文件系统核验**（不看退出码）→ **最后**翻转 `owner: npm` + `bundleSource: local`；失败 ⇒ 打印**具体原因**、**回滚登记**、回落平铺。客户端半个（`install-into-profile.mjs`）仍单独装 —— 它不在 bundle 的 patch 里。门禁 `check: plugin rebuilds a wiped $DSH_HOME` **22 → 40 条**，含一条**端到端**（真 `dsh plugin add`：断言 `bundles` 含本包、16 个文件落盘、overlay 剥行但保留 client-panel 行）。变异验证 2 条：计划退回"只含 import 闭包" ⇒ **7 红**；核验退回 `exit code == 0` ⇒ **4 红**。**实现要点**：模板不能 `import`，所以构建期从**与 CLI 同一个** `localBundleSourceFiles()` 派生"按包内路径编键"的两半计划注入；**不要**把 16 个文件全塞进 payload（第一版这么做，`main.js` 780 KB → 1.28 MB），只补现有键装不下的 9 个（24 KB）⇒ 814 KB。⚠️ **两个实测抓到的坑**：① 物化清单**必须**是完整计划，**不能**只用 import 闭包 —— 否则 7 个没人 import 的文件（首当其冲 `dsh/cordis.patch.yml`）被静默丢掉，`dsh plugin add` 报 `failed to read overlay … ENOENT` 并整体回滚；② 核验失败但登记成功时**必须回滚登记**，否则 profile 半迁移（manifest 说 direct、bundles 里有我们、overlay 已剥）。设置里 `bundleInstall: false` 可退回纯平铺，等价于 CLI 的 `--flat` | 完成 |
 | **文献研读驱动的改进（第一批：治理闭环）** | ✅ 已交付（2026-09-17）：字段所有权表（`design.md` §5.1）+ `hookPrior` 脏值免疫；`status` 即权限（`note_strategy` 分流 candidates）；疑似重复**按相似度排序** + 结构枢纽保护；`depends_on` 有向依据链 + 体检「下游待复查」级联；`hook.gain` 净增益（只由显式 ✅/❌ 推出，负值压到未评级卡之下）。断言 240 → 266，每项做过变异验证。**增量回执符号（`+ ~ ! ⚠`）有意延后**——理由见 `literature/notes/improvement-details-2026-09-17.md` 第 5 项 | 完成（1 项延后） |
@@ -595,6 +715,8 @@ dsh plugin --profile web add dsh-math-memory   # 把 preset 加进主 web profil
 | **发布 0.7.5（推 tag）** | ✅ 已发布（2026-09-11 推 tag `0.7.5`）。**发布 0.7.6（2026-09-14）也已发布**：`git push origin main` + `git push origin 0.7.6` 后，CI 双平台绿 → Release `0.7.6`（4 个资产）→ `dsh-math-memory@0.7.6` 上 npm（latest，带 provenance）。⚠️ 本次又踩到"**publish 步成功但 registry 还没可见**"：`Confirm the registry state` 在 60 s 内看到 missing → 开 issue #3 并判失败；实测约 **60–80 秒**后 registry 才出现 0.7.6，随后 **Re-run failed jobs** 即转绿并自动关掉 issue #3。⇒ **看到 npm 那条红，先查 registry 实际状态、等一两分钟再 re-run，不要改代码**（已记入 `docs/release.md` §2 与坑 73）。| 完成 |
 | **发布 0.7.7（推 tag）** | ✅ 已发布（2026-09-15 推 tag `0.7.7`，commit `dcd3656`）：CI 双平台绿 → Release `0.7.7`（4 个资产）→ `dsh-math-memory@0.7.7` 上 npm（latest，带 provenance）。⚠️ **坑 73 的延迟这次更长**：`Confirm the registry state` 查早 ⇒ 开 issue #4 判红；registry 直到 **约 4–5 分钟**后才出现 0.7.7（比 0.7.6 的 60–80 秒久得多，所以"等一两分钟就 re-run"不足够——**别急着 re-run，先轮询 registry**，它自己会绿）。issue #4 已手工关闭并在正文写明"实际已发布" | 完成 |
 | **发布 0.7.8（推 tag）** | ✅ 已发布（2026-09-18 推 tag `0.7.8`，commit `d813a67`）：CI 绿 → Release `0.7.8`（4 个资产，正文取自 CHANGELOG）→ `dsh-math-memory@0.7.8` 上 npm（**`latest` 实测已指向 0.7.8**，带 SLSA provenance，`gitHead = d813a67`）。⚠️ **坑 73 第三次复现（延迟 92 秒）**：`Publish` 步 success、`Confirm the registry state` 查到 missing ⇒ 判红并开 issue。**本次用只读方式独立核实了"其实已发布"**（`https://registry.npmjs.org/dsh-math-memory/latest` 返回 0.7.8，含 `_id`/`version`/provenance）——这是比 npm 退出码更可信的判据。**两处遗留经只读核实已解决（2026-09-26）**：① `GET /repos/…/issues?state=open` 返回 **`[]`**（无未关 issue）；② Release `0.7.8` 正文**没有重复段落**了 —— 逐段标题计数 `### Added`/`### Changed`/`### Fixed`/`### Docs`/`### Internal` **各出现 1 次**、`## [0.7.8]` 1 次、正文 4497 字符。⇒ 两处遗留都已不在 | 完成 |
+| **发布 0.8.1（推 tag）** | ⏳ 进行中（2026-10-05）：本批含 **0.8.0 之后未提交的全部改动**——C7 来源（`origin`）+ C8 互证判据收紧、N-a/N-a′ 的 AI 补全与"不宜当结论"临时标记、固化改成显式动作、用户负担／笔记干扰两个只读探针，以及 dsh 0.2.0-rc.2 适配的三处收口与文献库。**版本号选 patch（`0.8.1`）由用户 2026-10-05 拍板**——`0.8.0` 已是 npm latest，**不能往下改**（陷阱 107）。门禁 **54/54**、零 token 回归 **455** | 进行中 |
+| ✅ **本机部署（2026-10-05）** | `install --direct --force --vault D:\Obsidian笔记数据库` 成功：`bundles` 里 `dsh-math-memory` 仍以**本地包**注册（owner=npm、bundleSource=local）⇒ **插件管理页可见性保住**；**vault 的 19 个模板文件全部 `[skip] exists`（用户内容零覆盖）**；Obsidian 侧 `main.js` 821→**864 KB** 已覆盖并核验含新标记。⚠️ **教训**：先跑 `install`（native）会**失败**——它要让 npm 取包，而本地改动尚未发布（`dsh plugin add … ENOENT .dsh-math-memory`）；失败**未损坏** profile（状态仍 bundle 注册完好）。**离线开发用 `--direct`**。⚠️ 顺带修掉一个会骗人的缺陷：`--dry-run` 对 `overwrite=false` 的目标一律打印 "would copy"，真跑却是 `[skip] exists` ⇒ **dry-run 在最可能丢数据的文件上说了反话**（陷阱 115） | 完成 |
 | **发布 0.8.0（推 tag）** | ✅ 已发布（2026-09-27 推 tag `0.8.0`，commit `ab0531e`）：CI 双平台绿（run 92）→ Release `0.8.0`（4 个资产，`main.js` 817042 B，正文取自 CHANGELOG 的 0.8.0 段 = 5982 字符）→ `dsh-math-memory@0.8.0` 上 npm。**只读独立核实**（§2 的要求）：`https://registry.npmjs.org/dsh-math-memory/0.8.0` 与 `/latest` **都已指向 0.8.0**，`gitHead = ab0531e`、60 文件、`unpackedSize 788541`、shasum `3e7b88a58b94a7a647c624e3a39f59314c42ec9e`（与 workflow 日志里那行**逐字一致**）、带 SLSA provenance。⚠️ **坑 73 第四次复现**：`Publish` 步 success、日志里已有 `+ dsh-math-memory@0.8.0`，而 `Confirm the registry state` 查到 missing ⇒ 判红并开 **issue #6**——**假失败**（registry 只是 "being processed"）。**未据此改任何代码或版本号**（§2 明文）。⚠️ 另：本次推送期间 GitHub 出现间歇性 `SSL_ERROR_SYSCALL`，`main` 重试一次才上去、tag 反而先成功 ⇒ 一度"远端有 tag 而 main 未到"，随即补推对齐（`0 0`）。<br>**⚠️ 当日的一次改号弯路（记为教训）**：用户一度认为本批以修补为主、要求改成 `0.7.9`。改号准备（版本五处 + `versions.json` 删 `0.8.0` 行 + CHANGELOG 标题 + 四处横幅 + README 配对重录）已完成并推上 main（`9072d61`），GitHub 侧也清干净了（Release `0.8.0` 删除、tag `0.8.0` 删本地+远端）。**但 npm 直接拒绝发布**：`Cannot implicitly apply the "latest" tag because previously published version 0.8.0 is higher than the new version 0.7.9. You must specify a tag using --tag.` ⇒ **改号作废，全部回退**（`git revert 9072d61`），并重推 tag `0.8.0`（仍指 `ab0531e`）恢复 Release。**结论：版本一经发布就不能往回改**，除非显式 `--tag`（那会永久留下一个更高的孤儿版本）或先 unpublish（需人工登录+2FA）。详见陷阱 107。 | 完成 |
 | **persona / AGENTS.md 语义解耦** | persona 仍自称「Obsidian …」，改「工作区」措辞（语义改动，需拍板） | 中 |
 | **侧栏性能：宿主侧已量（原"空白"已补）** | ✅ 2026-09-11 用 `scripts/qa/sidebar-attach-probe.mjs`（附着到真实 Obsidian：`--remote-debugging-port`，**只读**观察用户手动点击）测出结论：**同一 90 秒内宿主 0 帧 >33ms、最差 18 ms、LoAF 0、`RecalcStyle` 0.067 s；iframe 63 帧 >33ms、最差 2183 ms、`RecalcStyle` 22.76 s（410 次）**。⇒ 卡顿全在 dsh 侧，主成本是**布局/重算**（13 102 元素文档上 55 ms/次），不是脚本空转；原因 3/4 属廉价保险。**剩余唯一 A/B**：关掉「侧栏加载皮肤动态装饰」复测，以分离皮肤脚本与上游布局的贡献（见 `sidebar-performance.md` §0.2/§9） | 中（A/B 待做） |

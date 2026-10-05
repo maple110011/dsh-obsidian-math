@@ -607,6 +607,40 @@ check('policy: the section names which layers each gate owns',
   policySection.includes('fact→records') && policySection.includes('structure→topics/'));
 check('policy: file present → no missing-file hint', !policySection.includes('策略文件缺失'));
 
+// ── 13b. 固化闸门（2026-10-01，用户拍板；证据 Zhang et al. arXiv:2605.12978 Table 5）──
+// 让模型**每轮**把对话固化成抽象条目会让记忆越写越差（"就地改写旧条目"单项最伤、
+// "写新内容时旧抽象可见"是同一批最大一跳），所以固化必须是**被请求的**动作。
+// 这条规则必须同时活在**两处**：注入文本（管老 vault，协议副本不会更新）与
+// `dsh/templates/vault-AGENTS.md`（管新安装的库）。钉住两处，是防"改一处忘另一处"——
+// 而这个仓库恰好有 15 处正则被复制、最后靠守卫才拦住的先例（坑 65）。
+check('consolidation gate: the injected capture-policy section states it explicitly',
+  policySection.includes('固化是显式动作') && policySection.includes('不是每轮例行动作')
+  && policySection.includes('没有用户同意') && policySection.includes('「没写」不是失败'),
+  policySection.split('\n').filter((line) => line.includes('固化')).join(' || '));
+{
+  // Path anchored on THIS FILE's location (`scripts/`), not on `process.cwd()`: a suite
+  // that only reads the right file when run from the repo root is a suite that silently
+  // checks nothing when run from anywhere else (the "empty/missing fixture ⇒ assertion
+  // passes" family this repo keeps hitting).
+  const templateText = readFileSync(join(resolve(import.meta.dirname, '..'), 'dsh', 'templates', 'vault-AGENTS.md'), 'utf8');
+  check('consolidation gate: the vault protocol template states the SAME rule (two homes, both pinned)',
+    templateText.includes('固化是显式动作，不是每轮收尾的例行动作')
+    && templateText.includes('没有用户同意')
+    // The template keeps the ASCII quotes around 没写 (the injected copy uses 「」 to avoid
+    // nested double quotes inside a JS string); both spellings are asserted so a future
+    // reword of either home has to update both.
+    && (templateText.includes('"没写"不是失败') || templateText.includes('「没写」不是失败')),
+    templateText.split('\n').filter((line) => line.includes('固化是显式动作')).join(' || ').slice(0, 120));
+  // 两处必须说的是同一件事：注入文本里点名了这条闸门的**默认档位**（先问）与两个例外。
+  check('consolidation gate: both homes name the same default (ask) and the same two exceptions',
+    policySection.includes('先问') && policySection.includes('当场明确要求记录')
+    && templateText.includes('默认执行方式是"先问"') && templateText.includes('当场明确'),
+    JSON.stringify({
+      injectedHasDefault: policySection.includes('先问'),
+      templateHasDefault: templateText.includes('默认执行方式是"先问"')
+    }));
+}
+
 // ── 14. hook usage history (panel trend, handoff item 3) ───────────────────
 const hookCards = [
   { rel: '.deepseek/memory/records/rec-a.md', hook: { uses: '1' }, uses: 4, successRate: 0.8 },
@@ -3092,6 +3126,176 @@ check('archive: a real memory card is still archived',
   rmSync(corrRoot, { recursive: true, force: true });
 }
 
+// ── corroboration INDEPENDENCE (C8/N4, 2026-10-01) ──────────────────────────
+// A document that names the same pattern but shares an upstream with the card is the
+// same source restated, not a second witness (Louck L-c "manufactured corroboration";
+// Dash Salience "repeated ⇒ read as important"). It must be REPORTED and must NOT raise
+// the level. The repo had already refused "another card agreeing" for exactly this
+// reason; this closes the remaining path (a note derived from the same episode).
+{
+  const sharedRoot = mkdtempSync(join(tmpdir(), 'dsh-corr-shared-'));
+  mkdirSync(join(sharedRoot, '.deepseek', 'memory', 'records'), { recursive: true });
+  mkdirSync(join(sharedRoot, '笔记'), { recursive: true });
+  mkdirSync(join(sharedRoot, '.deepseek', 'memory', 'episodes'), { recursive: true });
+  // The card stands on one episode.
+  const sameSourcePath = join(sharedRoot, '.deepseek', 'memory', 'records', 'same-source.md');
+  writeFileSync(sameSourcePath, card([
+    '---', 'title: 同源复述', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'source: "[[2026-01-01-ep]]"', 'related: "[[笔记/同源笔记]]"',
+    'hook:', '  operator: probability', '  pattern: shared_upstream_pattern',
+    '  verified: single-source', '---', '', '# 内容'
+  ]));
+  // The corroborating NOTE stands on the SAME episode.
+  writeFileSync(join(sharedRoot, '笔记', '同源笔记.md'),
+    '---\nsource: "[[2026-01-01-ep]]"\n---\n\n这里的 shared_upstream_pattern 模式可以这样用。\n');
+  // Control: a note on a DIFFERENT episode must still corroborate the same card.
+  const independentPath = join(sharedRoot, '.deepseek', 'memory', 'records', 'independent.md');
+  writeFileSync(independentPath, card([
+    '---', 'title: 独立来源', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'source: "[[2026-01-01-ep]]"', 'related: "[[笔记/独立笔记]]"',
+    'hook:', '  operator: probability', '  pattern: independent_witness_pattern',
+    '  verified: single-source', '---', '', '# 内容'
+  ]));
+  writeFileSync(join(sharedRoot, '笔记', '独立笔记.md'),
+    '---\nsource: "[[2026-02-02-ep]]"\n---\n\n这里的 independent_witness_pattern 模式可以这样用。\n');
+
+  const sharedReport = buildAuditReport(sharedRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const sameSourceText = readFileSync(sameSourcePath, 'utf8');
+  check('C8: a document sharing an upstream does NOT raise the level (same source restated ≠ second witness)',
+    /verified:\s*single-source/.test(sameSourceText)
+    && !sharedReport.sections.corroborated.some((item) => item.rel.endsWith('same-source.md')),
+    sameSourceText.split('\n').slice(0, 12).join(' | '));
+  check('C8: the refused match is REPORTED as related repetition, with the shared source named',
+    sharedReport.sections.corroborationRepetitions.length === 1
+    && sharedReport.sections.corroborationRepetitions[0].rel.endsWith('same-source.md')
+    && sharedReport.sections.corroborationRepetitions[0].sharedWith.includes('2026-01-01-ep')
+    && sharedReport.counts.corroborationRepetitions === 1
+    && sharedReport.report.includes('相关重复'),
+    JSON.stringify(sharedReport.sections.corroborationRepetitions));
+  check('C8: the user is told why a match did not count (a hidden refusal is indistinguishable from a bug)',
+    sharedReport.human.includes('没有算作'),
+    sharedReport.human.slice(0, 400));
+  check('C8: a document on a DIFFERENT upstream still corroborates (the rule narrows independence, not promotion)',
+    /verified:\s*cross-referenced/.test(readFileSync(independentPath, 'utf8'))
+    && sharedReport.sections.corroborated.some((item) => item.rel.endsWith('independent.md')),
+    readFileSync(independentPath, 'utf8').split('\n').slice(0, 12).join(' | '));
+  // Idempotency for the refused card: every daily pass re-derives the same match, so the
+  // repetition list must not turn into a second "new finding every day" surface.
+  const sharedAgain = buildAuditReport(sharedRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('C8: the refusal is stable across passes (the card was never rewritten)',
+    readFileSync(sameSourcePath, 'utf8') === sameSourceText
+    && sharedAgain.sections.corroborationRepetitions.length === 1,
+    JSON.stringify(sharedAgain.sections.corroborationRepetitions));
+  rmSync(sharedRoot, { recursive: true, force: true });
+}
+
+// ── card ORIGIN (C7/N1, 2026-10-01) ─────────────────────────────────────────
+// WHO wrote a card, bound by the host, kept separate from HOW WELL it is verified. The
+// host writes it (the model must not), and it never overwrites a value the user typed.
+// "origin: user" is reported rather than believed: this vault is plain editable markdown
+// with no authenticated channel, so "the user said this" cannot be established — only the
+// user can confirm it (the same asymmetry `verified: user-confirmed` already has).
+{
+  const originRoot = mkdtempSync(join(tmpdir(), 'dsh-origin-'));
+  const originRecords = join(originRoot, '.deepseek', 'memory', 'records');
+  mkdirSync(originRecords, { recursive: true });
+  mkdirSync(join(originRoot, '.deepseek', 'memory', 'templates'), { recursive: true });
+  const freshPath = join(originRecords, 'fresh.md');
+  const claimedPath = join(originRecords, 'claimed.md');
+  const pretypedPath = join(originRoot, '.deepseek', 'memory', 'templates', 'pretyped.md');
+  writeFileSync(freshPath, card([
+    '---', 'title: 宿主标注的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'hook:', '  pattern: origin_probe_pattern', '  verified: single-source', '---', '', '# 内容'
+  ]));
+  writeFileSync(claimedPath, card([
+    '---', 'title: 声称是用户说的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'origin: user', 'hook:', '  pattern: origin_claim_pattern',
+    '  verified: single-source', '---', '', '# 内容'
+  ]));
+  writeFileSync(pretypedPath, card([
+    '---', 'title: 已手写 agent 的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'origin: agent', 'hook:', '  pattern: origin_pretyped_pattern',
+    '  verified: single-source', '---', '', '# 内容'
+  ]));
+
+  const originReport = buildAuditReport(originRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  const freshText = readFileSync(freshPath, 'utf8');
+  const claimedText = readFileSync(claimedPath, 'utf8');
+  const pretypedText = readFileSync(pretypedPath, 'utf8');
+  check('C7: the host labels a card the protocol reserves for the agent as origin: agent',
+    /^origin:\s*agent$/m.test(freshText) && originReport.sections.originUnknown.length === 0,
+    freshText.split('\n').slice(0, 12).join(' | '));
+  check('C7: the label is only written once (a second pass is a no-op, not a rewrite)',
+    (() => {
+      const ledgerBefore = readFileSync(join(originRoot, '.deepseek', 'cache', 'card-origin.jsonl'), 'utf8');
+      const secondOrigin = buildAuditReport(originRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+      // The ledger is a CREDENTIAL, so its stability is the property under test: rewriting
+      // it every pass would keep moving `updated` and destroy the one fact it exists to
+      // hold ("did this card change since the host first saw it?"). Asserting only the CARD
+      // was not rewritten let a "write every pass" mutation pass — the ledger churn was
+      // invisible until this line existed.
+      const ledgerAfter = readFileSync(join(originRoot, '.deepseek', 'cache', 'card-origin.jsonl'), 'utf8');
+      return readFileSync(freshPath, 'utf8') === freshText && secondOrigin.status === 'ok'
+        && secondOrigin.sections.originUnknown.length === 0 && ledgerAfter === ledgerBefore;
+    })(),
+    readFileSync(join(originRoot, '.deepseek', 'cache', 'card-origin.jsonl'), 'utf8'));
+  check('C7: the ledger records the host-first-sight fact, not a guess from the card text',
+    (() => {
+      const rows = readFileSync(join(originRoot, '.deepseek', 'cache', 'card-origin.jsonl'), 'utf8')
+        .split('\n').filter((line) => line.trim() !== '').map((line) => JSON.parse(line));
+      const row = rows.find((entry) => String(entry.rel).endsWith('fresh.md'));
+      // Only AUTHORIZED origins are recorded: the card claiming `user` and any card the
+      // host could not place get no row (a ledger row is the host vouching for a value).
+      return row !== undefined && row.origin === 'agent' && row.evidence === 'memory-layer-path'
+        && /^\d{4}-\d{2}-\d{2}$/.test(String(row.firstSeen))
+        && !Object.prototype.hasOwnProperty.call(row, 'text')
+        && rows.length === 2;
+    })(),
+    readFileSync(join(originRoot, '.deepseek', 'cache', 'card-origin.jsonl'), 'utf8'));
+  check('C7: a card claiming the user as its source is NOT overwritten, and is REPORTED',
+    /^origin:\s*user$/m.test(claimedText)
+    && originReport.counts.originUnauthorized === 1
+    && originReport.report.includes('来源声明越权')
+    && originReport.human.includes('无法证实'),
+    JSON.stringify({ structural: originReport.structural, human: originReport.human.slice(0, 300) }));
+  check('C7: a hand-typed origin the host can observe is left byte-identical (never rewritten)',
+    /^origin:\s*agent$/m.test(pretypedText)
+    && pretypedText.split('origin: agent').length - 1 === 1
+    && originReport.counts.originUnauthorized === 1,
+    pretypedText.split('\n').slice(0, 12).join(' | '));
+  check('C7: every card reference carries origin, so a reader can never mistake it for the user\'s words',
+    originReport.sections.unverified.every((entry) => typeof entry.origin === 'string')
+    && originReport.structural.originUnknown === 0,
+    JSON.stringify(originReport.sections.unverified));
+  // The switch has to be reachable from config, not only from a test (trap 80: a
+  // documented promise with no execution point). The fixture card lives OUTSIDE every
+  // layer the host can place, so this also pins the fail-closed direction: an unplaceable
+  // card is reported as 来源未知, never stamped as the user's.
+  const originOffRoot = mkdtempSync(join(tmpdir(), 'dsh-origin-off-'));
+  mkdirSync(join(originOffRoot, '随笔'), { recursive: true });
+  const offPath = join(originOffRoot, '随笔', 'off.md');
+  writeFileSync(offPath, card([
+    '---', 'title: 不在记忆层里的卡', 'type: fact', 'status: active', 'updated: 2026-01-01',
+    'hook:', '  pattern: origin_off_pattern', '  verified: single-source', '---', '', '# 内容'
+  ]));
+  const offReport = buildAuditReport(originOffRoot, { parseHookFrontmatter, tokenize, maintainHookStats: false, maintainOrigin: false });
+  check('C7: maintainOrigin:false writes nothing into the card and no ledger',
+    !/^origin:/m.test(readFileSync(offPath, 'utf8'))
+    && !existsSync(join(originOffRoot, '.deepseek', 'cache', 'card-origin.jsonl')),
+    readFileSync(offPath, 'utf8').split('\n').slice(0, 10).join(' | '));
+  // The path rule is what makes "未知" unreachable for audited cards, and that is the
+  // fail-closed direction stated as a property: every layer `AUDIT_CARD_DIRS` scans is
+  // reserved for the agent, so the host never has to guess between user and agent — it
+  // only ever declines to certify "the user said this". A mutation that dropped the path
+  // rule would turn this into a pile of 来源未知 instead of the agent label.
+  check('C7: a card inside a scanned memory layer is attributable by path (not 未知)',
+    offReport.counts.originUnknown === 0 && offReport.structural.originUnknown === 0
+    && offReport.human.length > 0,
+    JSON.stringify({ counts: offReport.counts, structural: offReport.structural }));
+  rmSync(originRoot, { recursive: true, force: true });
+  rmSync(originOffRoot, { recursive: true, force: true });
+}
+
 // ── methodology that hardened into the RECORD layer (2026-09-18) ─────────────
 // The protocol gives one kind of content two homes: general methodology goes to
 // `inbox/` (injected as 待打磨) or, as "提取到的证明模式", to `records/` as an artifact
@@ -3160,6 +3364,116 @@ check('archive: a real memory card is still archived',
     mreport.human.includes('一般性梳理') && mreport.counts.methodologyInRecords === flagged.length,
     JSON.stringify(mreport.counts.methodologyInRecords));
   rmSync(mroot, { recursive: true, force: true });
+}
+
+// ── mixed-authority notes: AI-written passages must be VISIBLE (N-a, 2026-10-01) ──
+// The user's worry: an AI completion inside one of THEIR notes is dirty memory too, and
+// the file-level `origin` (memory cards) cannot describe per-paragraph authorship. The
+// protocol already required the marker (`<!-- AI 补全 -->`); nothing consumed it on the
+// retrieval path, so agent-written prose came back looking exactly like the user's own.
+{
+  const aroot = mkdtempSync(join(tmpdir(), 'dsh-ai-completion-'));
+  mkdirSync(join(aroot, '笔记'), { recursive: true });
+  // Real shape measured in the user's vault: the marker on its own line as a blockquote,
+  // followed by the AI-written content.
+  writeFileSync(join(aroot, '笔记', '混写.md'), [
+    '# 数据压缩',
+    '',
+    '## 我的思路',
+    '压缩的本质是找充分统计量。',
+    '',
+    '> <!-- AI 补全 -->',
+    '',
+    '## 补充：Fisher 信息的推导',
+    '（这一段是 AI 补的证明细节。）'
+  ].join('\n'));
+  // The bare spelling (no comment) is the marker vocabulary the audit already knew.
+  writeFileSync(join(aroot, '笔记', '裸标记.md'), '# 草稿\n\n此处 AI 补全 了定义。\n');
+  // Negative control: a note the user wrote entirely on their own.
+  writeFileSync(join(aroot, '笔记', '全自写.md'), '# 自写\n\n这份笔记从头到尾都是我自己写的。\n');
+  // A note that admits its own conclusions are unsettled (the shape that made one real
+  // note dominate every related answer: no AI marker, but explicit 待核对 markers).
+  writeFileSync(join(aroot, '笔记', '待核对.md'), [
+    '# 未定稿',
+    '',
+    '这一段先记下来：结论甲。',
+    '',
+    '这里有一处待核对：甲和乙是不是等价。',
+    '',
+    '还有一处待补：乙的证明。'
+  ].join('\n'));
+
+  const ahyg = scanNoteHygiene(aroot);
+  check('N-a: a note marking an AI completion is reported with its count',
+    ahyg.aiMarked.some((n) => n.rel === '笔记/混写.md' && n.count === 1)
+    && ahyg.aiMarked.some((n) => n.rel === '笔记/裸标记.md' && n.count === 1),
+    JSON.stringify(ahyg.aiMarked));
+  check('N-a: the comment form counts ONCE (not once per spelling inside it)',
+    ahyg.aiMarkedTotal === 2,
+    String(ahyg.aiMarkedTotal));
+  check('N-a: a fully self-written note is not reported (the check does not cry wolf)',
+    !ahyg.aiMarked.some((n) => n.rel === '笔记/全自写.md'),
+    JSON.stringify(ahyg.aiMarked.map((n) => n.rel)));
+  // The two marker families are SEPARATE findings: an unfinished step is work to do, an
+  // AI-written passage is a passage that must not be quoted as the user's own words.
+  check('N-a: AI completions are not folded into the 未闭合处 count',
+    !ahyg.gaps.some((n) => n.rel === '笔记/混写.md'),
+    JSON.stringify(ahyg.gaps));
+
+  const adoc = buildRecallDoc('笔记/混写.md', readFileSync(join(aroot, '笔记', '混写.md'), 'utf8'), {});
+  const cleanDoc = buildRecallDoc('笔记/全自写.md', readFileSync(join(aroot, '笔记', '全自写.md'), 'utf8'), {});
+  check('N-a: the recall document carries the count, and zero for a clean note',
+    adoc.aiCompletions === 1 && cleanDoc.aiCompletions === 0,
+    JSON.stringify({ marked: adoc.aiCompletions, clean: cleanDoc.aiCompletions }));
+  // The label must reach the READER, not just the document object. It rides on the snippet
+  // because dsh validates match items with `additionalProperties: false` — adding a field
+  // there kills the whole tool call (the 2026-09-14 failure).
+  const arank = rankRecallDocuments([adoc, cleanDoc], '数据压缩 充分统计量 推导', {});
+  const marked = arank.matches.find((m) => m.path === '笔记/混写.md');
+  const clean = arank.matches.find((m) => m.path === '笔记/全自写.md');
+  check('N-a: the retrieval result labels the AI-written part on the snippet itself',
+    marked !== undefined && marked.snippet.includes('AI 补全') && marked.snippet.includes('不宜当结论'),
+    marked === undefined ? '(混写.md 未进结果)' : marked.snippet);
+  // The provisional marks are MERGED into one bracket: two prefixes would spend the
+  // snippet window twice for the same verdict, and the label must stay terse enough not to
+  // crowd out the text it is warning about (the first version cost ~19% of a window).
+  check('N-a: the provisional marks share ONE bracket, not one prefix each',
+    marked !== undefined
+    && marked.snippet.startsWith('［')
+    && (marked.snippet.match(/［/g) ?? []).length === 1
+    && !marked.snippet.includes('非用户原话'),
+    marked === undefined ? '(no match)' : marked.snippet.slice(0, 60));
+  check('N-a: an unmarked note carries no such label (the prefix is not boilerplate)',
+    clean !== undefined && !clean.snippet.includes('AI 补全') && !clean.snippet.includes('不宜当结论'),
+    clean === undefined ? '(全自写.md 未进结果)' : clean.snippet);
+  // The user's real complaint is "the answer keeps coming out the same" — an uncertain note
+  // must be labelled as such even when it carries NO AI marker, because the note's own
+  // 待核对 markers are exactly what turns it into a recited conclusion.
+  const openDoc = buildRecallDoc('笔记/待核对.md', readFileSync(join(aroot, '笔记', '待核对.md'), 'utf8'), {});
+  const openRank = rankRecallDocuments([openDoc], '甲 乙 等价 证明', {});
+  check('N-a: a note admitting its conclusions are unsettled is labelled 不宜当结论',
+    openDoc.openMarkers === 2
+    && openRank.matches[0] !== undefined
+    && openRank.matches[0].snippet.includes('待核对 ×2')
+    && openRank.matches[0].snippet.includes('不宜当结论'),
+    openRank.matches[0] === undefined ? '(待核对.md 未进结果)' : openRank.matches[0].snippet.slice(0, 60));
+  // ...and it must be in the match item's DECLARED schema keys only (a new key here was
+  // exactly what broke note_recall before).
+  check('N-a: no undeclared field is added to the match item',
+    marked !== undefined && Object.keys(marked).every((key) =>
+      ['path', 'kind', 'title', 'verified', 'hookOperator', 'uses', 'successRate', 'score', 'snippet', 'coverage'].includes(key)),
+    marked === undefined ? '(no match)' : JSON.stringify(Object.keys(marked)));
+
+  const areport = buildAuditReport(aroot, { parseHookFrontmatter, tokenize, maintainHookStats: false });
+  check('N-a: the finding reaches the model checklist WITH the quoting rule',
+    areport.counts.noteAiCompletions === 2
+    && areport.report.includes('AI 补全')
+    && areport.report.includes('不得当作用户原话'),
+    areport.report.split('\n').filter((l) => l.includes('AI 补全')).join(' || '));
+  check('N-a: the finding reaches the human summary too',
+    areport.human.includes('AI 补全') && areport.human.includes('不是你自己写的'),
+    areport.human.split('\n').filter((l) => l.includes('AI 补全')).join(' || '));
+  rmSync(aroot, { recursive: true, force: true });
 }
 
 // ── notation collection + gap markers (B3 观察版, 2026-09-18) ────────────────

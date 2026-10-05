@@ -65,6 +65,69 @@ const HARD_MAX_RESULTS = 200;
 const DEFAULT_MAX_NOTE_BYTES = 1024 * 1024;
 const DEFAULT_EXCLUDE_PATTERNS = [".obsidian", ".trash", ".git", "node_modules"];
 
+/**
+ * The marker the vault protocol already REQUIRES for AI-written passages
+ * (`dsh/templates/vault-AGENTS.md` §2.2: "补细节：补证明/例子/定义，标注
+ * `<!-- AI 补全 -->`"), and which the retrieval layer used to ignore completely.
+ *
+ * WHY retrieval has to know (N-a, 2026-10-01): a mixed note — the user's own prose with
+ * the agent's completed proof/definition in the middle — is exactly the case where
+ * "this file is the user's note" stops being true, and the file-level `origin` field of
+ * memory cards cannot express it (one field cannot describe段落 in a file the user also
+ * writes). Measured on the real vault before this change: one note carried
+ * `> <!-- AI 补全 -->` and the retrieval result showed no trace of it, so the agent's
+ * completion was returned on equal footing with the user's own words. The marker is
+ * mechanical and authored by whoever wrote the passage, so reading it needs no model and
+ * no heuristic — trying to DETECT unmarked completions would be a semantic judgement,
+ * which the plugin does not do (and which would cry wolf).
+ *
+ * ONE alternation for both spellings: the comment form first, so a literal
+ * `<!-- AI 补全 -->` counts once rather than twice, while a bare `AI 补全` (the marker
+ * vocabulary the audit already knew, `AUDIT_OPEN_MARKERS`) is still recognised.
+ */
+const AI_COMPLETION_MARKER = /<!--\s*AI\s*补全\s*-->|AI\s*补全/g;
+
+/** How many AI-completion markers a note's BODY carries (0 for non-notes). */
+export function aiCompletionCount(body) {
+  const text = String(body ?? "");
+  if (text === "") return 0;
+  return text.match(AI_COMPLETION_MARKER)?.length ?? 0;
+}
+
+/**
+ * How many open/uncertain markers a note's body carries (`待核对`/`待补`/`待证明`/`存疑`).
+ *
+ * The SAME vocabulary the audit already used for its "unfinished business" scan and for
+ * the index-contradiction check — read here so retrieval can surface it too. Counted on
+ * the BODY, where those markers live (the audit's own gap scan does the same).
+ *
+ * WHY retrieval needs it (2026-10-01, the user's real complaint): "每次讨论相关问题时助手的
+ * 回复都差不多" — the answer keeps getting pulled toward one note. Measured on the real
+ * vault: that note came back at rank 1-2 for **every** related query (score up to 0.93),
+ * and it declares at its own top that it is AI-drafted with two unverified conclusions.
+ * The model was reciting it as settled knowledge. The card layers already have this
+ * defence (`inbox/` injects as 待打磨, records as settled); a user's OWN note had neither,
+ * so the single most influential document in the vault carried no provisional marking.
+ */
+export function openMarkerCount(body) {
+  const text = String(body ?? "");
+  if (text === "") return 0;
+  return text.match(/待核对|待补|待证明|存疑/g)?.length ?? 0;
+}
+
+/**
+ * The provisional bracket a snippet carries, or `""` when the document claims nothing
+ * provisional. Merged into ONE bracket on purpose: both counts say the same thing to a
+ * reader ("do not take this as settled"), and two stacked prefixes cost the snippet window
+ * twice for one verdict.
+ */
+function provisionalLabel(doc) {
+  const marks = [];
+  if (doc?.aiCompletions > 0) marks.push(`AI 补全 ×${doc.aiCompletions}`);
+  if (doc?.openMarkers > 0) marks.push(`待核对 ×${doc.openMarkers}`);
+  return marks.length === 0 ? "" : `［${marks.join("·")}·不宜当结论］ `;
+}
+
 function positiveInteger(value, fallback, label) {
   const number = Number(value ?? fallback);
   if (!Number.isInteger(number) || number < 1) {
@@ -688,6 +751,15 @@ export function buildRecallDoc(rel, raw, options = {}) {
     topic: metaScalar(frontmatter, "topic") ?? "",
     updated: metaScalar(frontmatter, "updated") ?? "",
     hook,
+    // AI-written passages the NOTE ITSELF marked (N-a). Read from the body, not the
+    // frontmatter: the whole point is that authorship here is per-paragraph, and only the
+    // note can say which paragraphs those are. Zero for every non-note kind — memory cards
+    // carry `origin` instead (C7), and a card is agent-written by construction.
+    aiCompletions: kind === "note" ? aiCompletionCount(body) : 0,
+    // Open/uncertain markers the note carries (`待核对`/`待补`/…). Read for the same reason
+    // as `aiCompletions` and reported through the same channel: a note that admits "this
+    // part is not settled" must not arrive as a settled conclusion.
+    openMarkers: kind === "note" ? openMarkerCount(body) : 0,
     strategy: kind === "strategy" ? strategySurface(frontmatter) : "",
     status: metaScalar(frontmatter, "status") ?? "",
     duplicateOf: metaScalar(frontmatter, "duplicate_of") ?? "",
@@ -778,7 +850,22 @@ export function rankRecallDocuments(docs, query, options = {}) {
     // `additionalProperties: false` on match items too: adding an `archived` field
     // would fail dsh's strict validation and kill the whole call (the 2026-09-14
     // failure). A prefix is visible to the reader AND schema-safe.
-    snippet: (entry.doc.archived === true ? "［已归档·未被删，可在面板恢复］ " : "") + snippetForPassage(passages[entry.i], queryTokens),
+    //
+    // The AI-completion label uses the same channel and for the same reason (N-a): an
+    // `aiCompletions` field on the match would be rejected by dsh's validator and take the
+    // whole note_recall call down — the exact failure that already happened once here.
+    // Prefixed onto the SNIPPET rather than the metadata line because the snippet is the
+    // text the reader actually looks at, and the marker's meaning is "part of THIS text is
+    // not the user's".
+    //
+    // The two provisional counts are merged into ONE bracket (2026-10-01) rather than
+    // stacking two prefixes: they carry the same verdict ("do not take this as settled"),
+    // and the agent-experience rule is to say a fact once. The 58-character long form ate
+    // ~19% of a 300-character snippet window, so the wording is deliberately terse and the
+    // prompt-text conventions stay on the tool description / vault protocol, not here.
+    snippet: (entry.doc.archived === true ? "［已归档·未被删，可在面板恢复］ " : "")
+      + provisionalLabel(entry.doc)
+      + snippetForPassage(passages[entry.i], queryTokens),
     // Enumeration reports 0, not the formula's "no tokens ⇒ 1": a tag listing has
     // no query, so a coverage of 1 would claim perfect lexical coverage of nothing
     // (and the renderer prints a dash for it either way).
@@ -1432,7 +1519,7 @@ export async function apply(ctx, config) {
   // ── note_recall (memory v3 S1: unified entry) ─────────────────────────────
   ctx.tools.register(defineTool({
     name: "note_recall",
-    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry and the ONLY content-discovery tool — grep is not a discovery tool (use grep only to verify an exact string or line number inside a file whose path is already known), and there is no separate note_search. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high; a long or bilingual query depresses coverage across the WHOLE list, so when everything looks weak read the top hit in full before concluding the vault is empty). Snippets are short WINDOWS around the query terms, not the full card. Then READ the top 2-3 matches in full and RE-EVALUATE whether each actually fits the CURRENT query before using them — a relevant, verified, high-score hit is a candidate, not a mandate (a previously-successful technique can be a fixation trap on a slightly-different instance). An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards. Enumerate by tag when you need "which notes carry this tag" rather than "what is relevant": pass tag and OMIT query.`,
+    description: `Unified relevance-ranked search across the WHOLE vault: user notes AND the memory layers (records/templates cards with hook weighting, memos, topic files, theorem index, episode index). BM25 ranking + hook-field signals + success-rate prior. This is the PRIMARY retrieval entry and the ONLY content-discovery tool — grep is not a discovery tool (use grep only to verify an exact string or line number inside a file whose path is already known), and there is no separate note_search. Returns a compact top-k with kind, title, one-line snippet, verification level, uses/success_rate, score and coverage (fraction of query tokens matched — coverage below 0.35 marks a weak, likely lexical-coincidence hit even when the score looks high; a long or bilingual query depresses coverage across the WHOLE list, so when everything looks weak read the top hit in full before concluding the vault is empty). Snippets are short WINDOWS around the query terms, not the full card. Then READ the top 2-3 matches in full and RE-EVALUATE whether each actually fits the CURRENT query before using them — a relevant, verified, high-score hit is a candidate, not a mandate (a previously-successful technique can be a fixation trap on a slightly-different instance). An empty result is a signal: reformulate the query (different challenge wording or technique keywords) or change approach — never force-fit unrelated cards. A snippet prefixed ［…·不宜当结论］ means the note itself marks part of its content as AI-written or not yet settled: those parts are not settled knowledge, so re-derive the answer instead of restating the note, and do not report them as the user's own words. Enumerate by tag when you need "which notes carry this tag" rather than "what is relevant": pass tag and OMIT query.`,
     parameters: {
       query: { type: "string", description: "Distilled search query: the reasoning challenge plus candidate technique keywords, e.g. '证明独立随机变量和 a.s. 收敛 子序列 Borel-Cantelli'. OMIT it to enumerate by tag instead (then `tag` is required)." },
       operator: { type: "string", description: `Optional stage-1 hard filter, one of ${[...HOOK_OPERATORS].join("/")}. Only hook cards with a matching operator are scored; when none matches, all docs are scored and mode reports the fallback.` },

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-18T15:45:30.393Z",
+  "generatedAt": "2026-10-01T05:22:21.791Z",
   "source": "D:\\临时\\agent记忆",
   "out": "literature",
   "bibPath": "D:\\临时\\agent记忆\\导出的条目.bib",
@@ -213,10 +213,39 @@
       "mineruDir": "Yang et al. - 2023 - LeanDojo Theorem Proving with Retrieval-Augmented Language Models.pdf-197d7056-69e0-4e02-b7f4-c7fc7b032afc",
       "status": "unread",
       "card": "kept"
+    },
+    {
+      "citekey": "zhangUsefulMemoriesBecome2026",
+      "pdf": "zhang et al. - 2026 - useful memories become faulty when continuously updated by llms.pdf",
+      "mineruDir": "Zhang et al. - 2026 - Useful Memories Become Faulty When Continuously Updated by LLMs.pdf-4884f90d-7275-434e-a8b8-8e3bc10cb40d",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "xiongHowMemoryManagement2026",
+      "pdf": "xiong et al. - 2026 - how memory management impacts llm agents an empirical study of experience-following behavior.pdf",
+      "mineruDir": "Xiong et al. - 2026 - How Memory Management Impacts LLM Agents An Empirical Study of Experience-Following Behavior.pdf-9cf032bd-87a5-41bf-a9b0-fa4c8263c229",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "dashUntrustedInputTrusted2026",
+      "pdf": "dash et al. - 2026 - from untrusted input to trusted memory a systematic study of memory poisoning attacks in llm agents.pdf",
+      "mineruDir": "Dash et al. - 2026 - From Untrusted Input to Trusted Memory A Systematic Study of Memory Poisoning Attacks in LLM Agents.pdf-4ac532fc-372b-407d-a7e7-1fbb9edb5fc2",
+      "status": "unread",
+      "card": "created"
+    },
+    {
+      "citekey": "louckSecuringLLMAgentLongTerm2026",
+      "pdf": "louck et al. - 2026 - securing llm-agent long-term memory against poisoning non-malleable, origin-bound authority with machine-checked guarantees.pdf",
+      "mineruDir": "Louck et al. - 2026 - Securing LLM-Agent Long-Term Memory Against Poisoning Non-Malleable, Origin-Bound Authority with Machine-Checked Guarantees.pdf-1e8a39fc-8f0a-4b85-8550-724a502f7b96",
+      "status": "unread",
+      "card": "created"
     }
   ],
   "warnings": {
     "missingPdf": [],
-    "missingMd": []
+    "missingMd": [],
+    "duplicateEntries": []
   }
 }

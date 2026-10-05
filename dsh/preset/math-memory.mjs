@@ -193,6 +193,30 @@ const AUDIT_LEDGER_FILE = join(CACHE_DIR, "audit-ledger.jsonl");
 const AUDIT_LEDGER_SCHEMA_VERSION = 1;
 const AUDIT_LEDGER_MAX_WRITES = 200; // per audit run
 const AUDIT_LEDGER_MAX_LINES = 2000; // whole file; oldest lines are dropped first
+// ── card ORIGIN (C7/N1, 2026-10-01; docs/pending-decisions-2026-09-26.md §3.1) ──
+// WHO wrote this card, as opposed to HOW WELL verified it is (`hook.verified`). The
+// literature this comes from (Louck, arXiv:2606.34591, machine-checked T1/T3) shows that
+// a trust signal derived from CONTENT or from content-derivable lineage can be
+// whitewashed; what it requires instead is that the source is bound at WRITE time by a
+// party the content cannot impersonate. `hook.verified` is a label anyone can type, so
+// it was never that party. This ledger is: it is written only by the audit, records what
+// the HOST itself could see (`firstSeen`, and the card's `updated` at that moment), and
+// is never re-derived from the card's prose.
+//
+// The field itself lives in the card frontmatter (`origin`), because a user asked for it
+// there and because a card must carry its own provenance when it is copied out of the
+// vault — but the frontmatter is the MIRROR, not the authority. `origin` is deliberately
+// NOT part of `hook` (it describes the FILE, not the technique) and is deliberately NOT
+// in the vocabulary {user, agent, imported} for the audit's own writes: every card this
+// audit can see lives under `.deepseek/memory/**`, i.e. a layer the protocol reserves for
+// the agent, so `cardOriginFromPath` can only ever conclude `agent`. That is the point —
+// the audit never ACCUSES the user of writing its own cards, and it never certifies
+// "the user said this" either (`user` would be a claim no channel in this vault can
+// authenticate; see the `unauthorizedOrigin` check).
+const CARD_ORIGIN_FILE = join(CACHE_DIR, "card-origin.jsonl");
+const CARD_ORIGIN_SCHEMA_VERSION = 1;
+const CARD_ORIGIN_VALUES = new Set(["user", "agent", "imported"]);
+const CARD_ORIGIN_MAX_LINES = 5000; // whole file; oldest lines are dropped first
 // Minimum characters in an index line's one-sentence summary. Deliberately a FLOOR,
 // not a style rule: see `indexDescriptionIssue` (WikiSkill Appendix E.2).
 const AUDIT_INDEX_DESC_MIN = 8;
@@ -1207,6 +1231,129 @@ function readRetrievalStats(root) {
   }
 }
 
+// ── card origin ledger (C7/N1) ──────────────────────────────────────────────
+
+/**
+ * What the host can SEE about who wrote a card, from the card's path alone.
+ *
+ * Every directory `buildAuditReport` scans is a layer the write protocol reserves for
+ * the agent (the user's own notes are deliberately NOT audited here — see the note-scope
+ * audit), so the observation is "the model wrote this".
+ *
+ * @returns `{ origin, evidence }`; `origin === null` means "the host has no observation",
+ *   which is reported as 来源未知 and never guessed at. Deliberately no `imported`
+ *   branch: nothing in this vault distinguishes a clipped article from the user's own
+ *   prose, and inventing that distinction would be exactly the "trust derived from
+ *   content" move this field exists to avoid.
+ */
+function cardOriginFromPath(rel) {
+  const normalized = String(rel ?? "").replace(/\\/g, "/");
+  if (AUDIT_CARD_DIRS.some((dir) => normalized.startsWith(dir.replace(/\\/g, "/") + "/"))) {
+    return { origin: "agent", evidence: "memory-layer-path" };
+  }
+  return { origin: null, evidence: "" };
+}
+
+/**
+ * Read the origin ledger: path -> `{ firstSeen, origin, evidence, updated }`.
+ *
+ * The ledger is a cache of host OBSERVATIONS, not user data, so it lives under `cache/`
+ * like the audit ledger and the retrieval stats. One record per path (a card that moves
+ * gets a new record; the old one is simply never matched again). Malformed lines are
+ * skipped rather than failing the pass — a corrupt cache must not block the audit.
+ */
+function readOriginLedger(root) {
+  const known = new Map();
+  try {
+    const raw = readFileSync(join(root, CARD_ORIGIN_FILE), "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      if (line.trim() === "") continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry === null || typeof entry !== "object" || typeof entry.rel !== "string" || entry.rel === "") continue;
+      known.set(entry.rel, {
+        firstSeen: typeof entry.firstSeen === "string" ? entry.firstSeen : "",
+        origin: typeof entry.origin === "string" ? entry.origin : "",
+        evidence: typeof entry.evidence === "string" ? entry.evidence : "",
+        updated: typeof entry.updated === "string" ? entry.updated : ""
+      });
+    }
+  } catch {
+    // missing/corrupt ledger: the pass starts from "the host has seen nothing", which is
+    // the fail-closed direction (every declaration then reports as unsupported).
+  }
+  return known;
+}
+
+/**
+ * Merge host observations into the ledger. Returns the number of records written, or
+ * `null` when the write could not be confirmed by reading the file back — the audit
+ * reports the latter as `degraded` instead of assuming success.
+ *
+ * `known` preserves the file's existing order (oldest first), so the bounded growth
+ * drops the OLDEST observations first.
+ */
+function writeOriginLedger(root, known, records, maxLines = CARD_ORIGIN_MAX_LINES) {
+  if (records.length === 0) return 0;
+  const merged = new Map(known);
+  for (const record of records) {
+    const previous = merged.get(record.rel);
+    merged.set(record.rel, {
+      firstSeen: previous?.firstSeen !== undefined && previous.firstSeen !== "" ? previous.firstSeen : record.firstSeen,
+      origin: record.origin,
+      evidence: record.evidence,
+      updated: record.updated
+    });
+  }
+  const entries = [...merged.entries()];
+  if (entries.length > maxLines) {
+    // Drop the oldest by firstSeen (then by path, so the truncation is deterministic).
+    entries.sort((a, b) => (a[1].firstSeen === b[1].firstSeen
+      ? a[0].localeCompare(b[0])
+      : a[1].firstSeen.localeCompare(b[1].firstSeen)));
+    entries.splice(0, entries.length - maxLines);
+  }
+  try {
+    const path = join(root, CARD_ORIGIN_FILE);
+    mkdirSync(dirname(path), { recursive: true });
+    const text = entries
+      .map(([rel, entry]) => JSON.stringify({ v: CARD_ORIGIN_SCHEMA_VERSION, rel, firstSeen: entry.firstSeen, origin: entry.origin, evidence: entry.evidence, updated: entry.updated }))
+      .join("\n");
+    writeFileSync(path, text === "" ? "" : text + "\n", "utf8");
+    // Post-condition (not an assumption): read back every record we claim to have written.
+    const reread = readOriginLedger(root);
+    return records.every((record) => reread.get(record.rel)?.origin === record.origin) ? records.length : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rewrite a card's top-level `origin` line (create the line when absent).
+ *
+ * Only the one line is touched, and the splice goes through the shared frontmatter
+ * primitives (`frontmatterSpan` / `replaceFrontmatterBlock`), so a card the user edited
+ * elsewhere keeps every other byte. Returns the new file text, or null when there is no
+ * frontmatter to write into. Deliberately NOT `raw.replace(old, new)`: the replacement
+ * STRING would expand `$$`/`$&` inside agent-authored frontmatter and a math vault is
+ * exactly where `$$` appears (trap 65's family).
+ */
+function setCardOrigin(text, origin) {
+  const span = frontmatterSpan(text);
+  if (span === null) return null;
+  const body = span.text;
+  const pattern = /^[ \t]*origin:[ \t]*(.*)$/m;
+  const match = pattern.exec(body);
+  const withLine = match === null
+    ? `${body}${body === "" || body.endsWith("\n") ? "" : "\n"}origin: ${origin}\n`
+    : body.replace(pattern, `origin: ${origin}`);
+  return `${text.slice(0, span.start)}${withLine}${text.slice(span.end)}`;
+}
+
 /**
  * Rewrite a block-style hook's uses/last_used lines inside the frontmatter
  * text; returns the new frontmatter or null when there is no block-style hook
@@ -1797,6 +1944,47 @@ function listVaultNotes(root, maxFiles = 4000) {
 }
 
 /**
+ * `[[wikilink]]` targets in a card's provenance fields. Top-level module scope (it used
+ * to be a closure inside `buildAuditReport`) so the corroboration judgement below and the
+ * audit's structural checks share ONE extraction — the closure version was why
+ * `findCorroboration`'s link accessor silently dropped `depends_on` (the helper it was
+ * handed only looked at `source`/`related`).
+ *
+ * The regex is byte-identical to the one it replaced; `#`/`|` suffixes are stripped.
+ */
+function extractLinks(raw) {
+  const links = [];
+  const expression = /\[\[([^\[\]|#]+)(?:#[^\]\[]*)?(?:\|[^\]\[]*)?\]\]/g;
+  for (const field of [String(raw?.source ?? ""), String(raw?.related ?? ""), String(raw?.depends_on ?? raw?.dependsOn ?? "")]) {
+    let match;
+    expression.lastIndex = 0;
+    while ((match = expression.exec(field)) !== null) links.push(match[1].trim().replace(/\.md$/i, ""));
+  }
+  return links;
+}
+
+/**
+ * A candidate document's own declared provenance, read through the shared memo parser.
+ *
+ * This exists because of a bug the independence rule would otherwise have had: the
+ * evidence pool was built as `{ rel, text }`, so passing `other.source` into the link
+ * accessor always produced `""` — the shared-upstream judgement could only ever see the
+ * CARD's links and never the document's, i.e. it would have been structurally incapable of
+ * finding a shared source and would have passed its own test. (Same failure family the
+ * repo keeps hitting: a guard that cannot see its own input.)
+ *
+ * @returns `{ source, related, dependsOn }` — the field names are the link accessor's.
+ */
+function provenanceOfDocument(text) {
+  const meta = parseMemoFrontmatter(text);
+  return {
+    source: meta.source ?? "",
+    related: meta.related ?? "",
+    dependsOn: meta.depends_on ?? ""
+  };
+}
+
+/**
  * Find the card's corroborating counterpart, if it has one. DETERMINISTIC, and the
  * one legitimate path by which the plugin may raise `verified` to `cross-referenced`.
  *
@@ -1822,25 +2010,49 @@ function listVaultNotes(root, maxFiles = 4000) {
  *   an EXAMPLE hook (`pattern: subsequence_argument`) and would otherwise "corroborate"
  *   every card that links to them.
  *
- * @returns the vault-relative path of the corroborating NOTE, or null.
+ * INDEPENDENCE (2026-10-01, C8/N4; docs/pending-decisions-2026-09-26.md §3.1): a document
+ * that shares an UPSTREAM with the card is not a second witness, it is the same witness
+ * seen twice — restating one source in two files is exactly what Louck's L-c
+ * ("manufactured corroboration") and Dash's Salience fragility ("repeated ≥3 times ⇒ read
+ * as important") describe, and both are trivially manufacturable by the agent itself.
+ * So when a matching document ALSO shares a `source` / `depends_on` target with the card,
+ * it is reported as `related-repetition` and does NOT upgrade the level. Crucially the
+ * search CONTINUES: if one linked document is contaminated, a later independent one can
+ * still corroborate (first version stopped at the first name-match, so one shared source
+ * would have been enough to veto an otherwise valid upgrade).
+ *
+ * WHAT THIS DOES NOT PROVE: two documents with no shared link are assumed independent.
+ * The vault carries no authenticated channel, so independence is INFERRED from declared
+ * links, not established (Louck's assumption A1 does not hold here — see
+ * `literature/notes/memory-fidelity-papers-2026-10-01.md` §5.2).
+ *
+ * @returns `{ origin, evidence, sharedWith }` where `origin` is `"note"` (no shared
+ *   upstream), `"related-repetition"` (matched, but shares an upstream) or `null`.
  */
 function findCorroboration(card, candidates, links) {
   const signatures = [
     String(card.hook?.pattern ?? ""),
     ...(Array.isArray(card.hook?.techniques) ? card.hook.techniques : [])
   ].map((value) => String(value).trim().toLowerCase()).filter((value) => value.length >= 6);
-  if (signatures.length === 0) return null;
+  if (signatures.length === 0) return { origin: null, evidence: null, sharedWith: [] };
+  const cardUpstream = new Set(links(card));
   const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let sharedWith = [];
   for (const target of links(card)) {
     const key = String(target).replace(/\.md$/i, "");
     const other = candidates.get(key) ?? candidates.get(key.split("/").at(-1));
     if (other === undefined) continue;
     const haystack = other.text.toLowerCase();
-    if (signatures.some((signature) => new RegExp(`(^|[^\\p{L}\\p{N}_])${escape(signature)}([^\\p{L}\\p{N}_]|$)`, "u").test(haystack))) {
-      return other.rel;
-    }
+    if (!signatures.some((signature) => new RegExp(`(^|[^\\p{L}\\p{N}_])${escape(signature)}([^\\p{L}\\p{N}_]|$)`, "u").test(haystack))) continue;
+    // Independence is observed on the DOCUMENT's own declared links, not on the fact
+    // that the card linked to it — linking is how the pair was found in the first place.
+    const upstream = links({ source: other.source, related: other.related, depends_on: other.dependsOn });
+    const shared = upstream.filter((value) => cardUpstream.has(value));
+    if (shared.length === 0) return { origin: "note", evidence: other.rel, sharedWith: [] };
+    sharedWith = [...new Set([...sharedWith, ...shared])];
   }
-  return null;
+  if (sharedWith.length > 0) return { origin: "related-repetition", evidence: null, sharedWith };
+  return { origin: null, evidence: null, sharedWith: [] };
 }
 
 /**
@@ -2024,12 +2236,28 @@ export function scanNoteHygiene(root) {
     }
   }
   const gaps = [];
+  const aiMarked = [];
   for (const note of notes) {
+    // TWO marker families, reported separately (N-a, 2026-10-01):
+    //   * "unfinished business" the USER wrote down for themselves (待补/待核对/TODO…);
+    //   * "this part was written by the AI" — `<!-- AI 补全 -->`, the marker the vault
+    //     protocol already REQUIRES (`dsh/templates/vault-AGENTS.md` §2.2) and which this
+    //     scan used to MISS entirely: the regex here never listed it, so a note that
+    //     honestly marked its AI-written sections was absent from the gap report even
+    //     though `scanNoteClaims` (a different, narrower consumer of that vocabulary) knew
+    //     the marker. Reported separately because the consequence differs: an unfinished
+    //     step is work to do, whereas an AI-written passage is a passage that must not be
+    //     quoted back as the user's own words.
     const matches = note.text.match(/待补|待核对|待证明|TODO|待完成/g) ?? [];
-    if (matches.length === 0) continue;
-    gaps.push({ rel: note.rel, count: matches.length });
+    if (matches.length > 0) gaps.push({ rel: note.rel, count: matches.length });
+    // ONE regex for both spellings so a literal `<!-- AI 补全 -->` counts once: the
+    // alternation puts the comment first (longest form wins at any position), and
+    // occurrences outside any comment still match the bare phrase.
+    const ai = note.text.match(/<!--\s*AI\s*补全\s*-->|AI\s*补全/g) ?? [];
+    if (ai.length > 0) aiMarked.push({ rel: note.rel, count: ai.length });
   }
   gaps.sort((a, b) => b.count - a.count);
+  aiMarked.sort((a, b) => b.count - a.count);
   const notation = collectNotation(notes);
   const byName = new Map();
   for (const entry of notation) {
@@ -2044,6 +2272,8 @@ export function scanNoteHygiene(root) {
   return {
     gaps: gaps.slice(0, AUDIT_NOTE_MAX_ITEMS),
     gapTotal: gaps.reduce((sum, item) => sum + item.count, 0),
+    aiMarked: aiMarked.slice(0, AUDIT_NOTE_MAX_ITEMS),
+    aiMarkedTotal: aiMarked.reduce((sum, item) => sum + item.count, 0),
     notation,
     conflicts: conflicts.slice(0, AUDIT_NOTE_MAX_ITEMS)
   };
@@ -2335,6 +2565,130 @@ export function buildAuditReport(root, helpers) {
     }
   }
 
+  // ── card ORIGIN: who wrote it, bound by the HOST (C7/N1, 2026-10-01) ────────
+  // Runs as its own pass over the cards just parsed, so it is not entangled with any
+  // statistics write and so a `maintainOrigin: false` caller still gets the findings.
+  //
+  // `declared` is whatever the frontmatter says — untrusted input, because the model can
+  // type it and so can the user. `expected` is what the host can see for itself. The two
+  // are reported separately and the host only writes when the card carries no valid
+  // declaration: it never overwrites a value the user typed (the repo-wide "never
+  // silently rewrite what the user wrote" rule; same shape as trap 48 for `verified_by`).
+  // What it writes is bound to the one fact neither the model nor the file can
+  // manufacture — `firstSeen`, the audit's own date, recorded in an append-only ledger.
+  const originLedger = readOriginLedger(root);
+  const originBlocked = [];
+  const originRecords = [];
+  const recordOrigin = (card, origin, evidence) => {
+    const previous = originLedger.get(card.rel);
+    const settled = previous?.origin === origin && previous?.updated === card.updated;
+    // Re-recording must be a NO-OP when nothing changed. `firstSeen` is the host's own
+    // observation date and is preserved; `updated` only moves when the card itself moved.
+    // Writing `today` unconditionally made the ledger churn on every daily pass, which
+    // would make "did this change?" unanswerable from the file (the same reason the audit
+    // ledger keys identity WITHOUT the evidence numbers).
+    originRecords.push({
+      rel: card.rel,
+      firstSeen: settled ? previous.firstSeen : today,
+      origin,
+      evidence: settled ? previous.evidence : evidence,
+      updated: card.updated
+    });
+  };
+  /**
+   * A declaration that DISAGREES with what the host can observe is reported, never fixed
+   * (auto-correcting would overwrite whatever the user typed — trap 48's rule). Agreement
+   * is recorded as `declared`: the host can see that the value is on disk now, not who
+   * typed it.
+   */
+  const assertOnOriginMatches = (card, declared, expected) => {
+    if (expected.origin === null || declared === expected.origin) return true;
+    card.originAuthorized = false;
+    originBlocked.push(`${card.rel}（声明 origin: ${declared}，宿主观测为 ${expected.origin}）`);
+    return false;
+  };
+  const assignOrigin = (card, declaredRaw) => {
+    const declared = String(declaredRaw ?? "").trim();
+    const expected = cardOriginFromPath(card.rel);
+    card.originDeclared = declared;
+    // `user` is never a host-observed origin in this vault: nothing authenticates "the
+    // user wrote this" (the vault is plain editable markdown, and the only attested
+    // writer is the agent working through the session). A card claiming it is reported,
+    // never believed — the same asymmetry the `verified` ladder uses for `user-confirmed`.
+    if (declared !== "" && (!CARD_ORIGIN_VALUES.has(declared) || declared === "user")) {
+      card.origin = declared;
+      card.originAuthorized = false;
+      originBlocked.push(`${card.rel}（声明 origin: ${declared}；宿主观测不到这个来源）`);
+      return;
+    }
+    if (declared !== "") {
+      card.origin = declared;
+      card.originAuthorized = assertOnOriginMatches(card, declared, expected);
+      recordOrigin(card, declared, card.originAuthorized ? "declared" : "external-edit");
+      return;
+    }
+    if (expected.origin !== null) {
+      card.origin = expected.origin;
+      card.originAuthorized = true;
+      recordOrigin(card, expected.origin, expected.evidence);
+      const observation = originLedger.get(card.rel);
+      if (observation !== undefined && observation.origin !== "" && observation.origin !== expected.origin) {
+        // The host's own record contradicts the disk: the line was changed outside the
+        // audit. Same family as `unjustifiedUpgrade` — report it, never auto-fix it.
+        card.originAuthorized = false;
+        originBlocked.push(`${card.rel}（宿主记录 ${observation.origin}，磁盘是 ${expected.origin} → 行被外部改动过）`);
+      }
+      return;
+    }
+    // No valid declaration and no host observation. Say "未知" instead of guessing: an
+    // old card the host has never seen is not evidence that the user wrote it.
+    card.origin = "unknown";
+    card.originAuthorized = true;
+  };
+  for (const card of cards) {
+    let observed = "";
+    try {
+      // Through the shared primitives, never a second frontmatter regex (trap 65).
+      observed = parseMemoFrontmatter(readFileSync(card.filePath, "utf8")).origin ?? "";
+    } catch {
+      observed = "";
+    }
+    assignOrigin(card, observed);
+  }
+  const originWritable = helpers.maintainOrigin !== false;
+  let originLedgerWritten = 0;
+  let originLedgerFailed = false;
+  if (originWritable && originRecords.length > 0) {
+    const result = writeOriginLedger(root, originLedger, originRecords);
+    if (result === null) originLedgerFailed = true;
+    else originLedgerWritten = result;
+  }
+  // The field only exists on disk when the host wrote it or the user declared it. Writing
+  // is its own postcondition: a card that claims an origin is a CLAIM, and a claim whose
+  // ledger row could not be confirmed is a `degraded` run, not a silent success.
+  const originWriteFailures = [];
+  if (originWritable) {
+    for (const card of cards) {
+      // Write when the host's conclusion is not already stated on the card: `agent` (the
+      // common case) and `unknown` (nothing wrote it and the path is no observation
+      // either). An unauthorized declaration is deliberately NOT touched — rewriting it
+      // would overwrite what the user typed, which is worse than reporting it.
+      if (!card.originAuthorized || card.originDeclared === card.origin) continue;
+      try {
+        const text = readFileSync(card.filePath, "utf8");
+        const next = setCardOrigin(text, card.origin);
+        if (next === null) continue;
+        if (next !== text) writeFileSync(card.filePath, next, "utf8");
+        // Read back the byte-level claim instead of assuming the write landed.
+        if ((parseMemoFrontmatter(readFileSync(card.filePath, "utf8")).origin ?? "") !== card.origin) {
+          originWriteFailures.push(card.rel);
+        }
+      } catch {
+        originWriteFailures.push(card.rel);
+      }
+    }
+  }
+
   // Deterministic hook-stats sync (opt-out via auditMaintainHookStats: false).
   // FIX(B1): after merging the note_recall hit counts into hook.uses, the
   // stats entries are zeroed — otherwise every daily audit re-adds the same
@@ -2444,17 +2798,7 @@ export function buildAuditReport(root, helpers) {
   // The three-write protocol is model-executed; these deterministic checks give
   // the daily audit a structural backstop: records without source, provenance
   // links pointing at nothing, and cards missing from the records index.
-  const structural = { missingSource: [], brokenLinks: [], notInIndex: [], unjustifiedUpgrade: [], usesMismatch: [], tooLong: [], tooLongRels: new Map(), tooManyMoves: [], tooManyMovesRels: new Map() };
-  const extractLinks = (raw) => {
-    const links = [];
-    const expression = /\[\[([^\[\]|#]+)(?:#[^\]\[]*)?(?:\|[^\]\[]*)?\]\]/g;
-    for (const field of [String(raw?.source ?? ""), String(raw?.related ?? "")]) {
-      let match;
-      expression.lastIndex = 0;
-      while ((match = expression.exec(field)) !== null) links.push(match[1].trim().replace(/\.md$/i, ""));
-    }
-    return links;
-  };
+  const structural = { missingSource: [], brokenLinks: [], notInIndex: [], unjustifiedUpgrade: [], usesMismatch: [], tooLong: [], tooLongRels: new Map(), tooManyMoves: [], tooManyMovesRels: new Map(), unauthorizedOrigin: originBlocked };
   const linkExists = (target) => {
     const candidates = [
       `${target}.md`,
@@ -2811,18 +3155,27 @@ export function buildAuditReport(root, helpers) {
       } catch {
         continue; // unreadable candidate: simply not evidence
       }
-      const entry = { rel: key + ".md", text };
+      const entry = { rel: key + ".md", text, ...provenanceOfDocument(text) };
       corroborationDocs.set(key, entry);
       if (!corroborationDocs.has(stem)) corroborationDocs.set(stem, entry);
     }
   }
   const corroborated = [];
   const corroborationFailures = [];
+  const corroborationRepetitions = [];
   for (const card of cards) {
     if (card.verified !== "single-source") continue;
     if (card.status !== "active") continue;
-    const via = findCorroboration(card, corroborationDocs, (c) => extractLinks({ source: c.source, related: c.related, depends_on: c.dependsOn }));
-    if (via === null) continue;
+    const judgement = findCorroboration(card, corroborationDocs, (c) => extractLinks(c));
+    // Matched, but the matching document shares an upstream with the card ⇒ the same
+    // source seen twice. REPORTED (C8, 2026-10-01) and deliberately not counted: this is
+    // the "manufactured corroboration" shape, and the card stays `single-source`.
+    if (judgement.origin === "related-repetition") {
+      corroborationRepetitions.push({ rel: card.rel, title: card.title, sharedWith: judgement.sharedWith });
+      continue;
+    }
+    if (judgement.origin !== "note") continue;
+    const via = judgement.evidence;
     const ok = syncHookStatsToCard(card.filePath, null, null, 0, { verified: "cross-referenced", verifiedBy: "corroboration" });
     if (!ok) {
       corroborationFailures.push(card.rel);
@@ -2957,7 +3310,11 @@ export function buildAuditReport(root, helpers) {
     successRate: card.successRate,
     // Carried so a reader can tell WHICH grade the report is talking about — the
     // corroboration list is meaningless without it.
-    verified: card.verified ?? null
+    verified: card.verified ?? null,
+    // WHO wrote it, kept separate from the verification grade on purpose (C7): "the agent
+    // wrote this" and "this was verified" are two different facts, and collapsing them is
+    // what let an agent gloss read as a settled fact.
+    origin: card.origin ?? "unknown"
   });
   const liveArchiveCandidates = archiveCandidates.filter(({ card }) => live(card));
   const livePendingReview = pendingReview.filter(live);
@@ -3035,8 +3392,24 @@ export function buildAuditReport(root, helpers) {
     // card: a stored pointer would need re-verification on every rename, and the
     // witness `verified_by: corroboration` is what the unjustifiedUpgrade check reads).
     corroborated: corroborated.slice(0, 5).map((item) => ({ rel: item.rel, title: item.title, via: item.via })),
+    // Matched a document that shares an upstream with the card ⇒ related repetition, not
+    // independent corroboration, so the level is NOT raised (C8/N4, 2026-10-01). Reported
+    // so a real repetition is visible instead of silently doing nothing.
+    corroborationRepetitions: corroborationRepetitions.slice(0, 5)
+      .map((item) => ({ rel: item.rel, title: item.title, sharedWith: item.sharedWith })),
+    // Cards whose `origin` the host could not pin down (nothing wrote the field and the
+    // path is no observation either). Reported, never silently downgraded — an old card
+    // keeps whatever it has and is shown as 来源未知 rather than assumed the user's.
+    originUnknown: cards.filter((card) => live(card) && card.origin === "unknown").map(cardRef),
     archived: archived.map((item) => ({ rel: item.rel, stem: item.stem }))
   };
+  // An origin declaration the host cannot back with its own observation (C7). Kept as
+  // plain strings like `unjustifiedUpgrade`, because the checklist quotes them verbatim
+  // and the panel shows the same list. Assigned AFTER `sections` exists on purpose: the
+  // first version assigned it before the origin pass had filled `originBlocked`, so both
+  // the section and the count silently read an empty array (a guard that cannot see its
+  // own input — the failure mode this repo keeps hitting).
+  sections.originUnauthorized = structural.unauthorizedOrigin.slice(0, 20);
   const thresholds = {
     unusedDays: AUDIT_UNUSED_DAYS,
     unverifiedDays: AUDIT_UNVERIFIED_DAYS,
@@ -3098,6 +3471,11 @@ export function buildAuditReport(root, helpers) {
   sections.noteIndexUnresolved = noteClaims.unresolved;
   sections.noteIndexTotal = noteClaims.total;
   sections.noteGaps = noteHygiene.gaps;
+  // Notes that marked their own AI-written passages (N-a). Deliberately its own section,
+  // not folded into `noteGaps`: "unfinished business" and "not written by you" are
+  // different findings with different actions, and merging them would let the second
+  // disappear inside the first (the count that matters here is not a count of TODOs).
+  sections.noteAiCompletions = noteHygiene.aiMarked;
   sections.notationConflicts = noteHygiene.conflicts;
   sections.notationCollected = noteHygiene.notation.length;
   // The corroboration pass already published `sections.corroborated`; mirror the
@@ -3134,8 +3512,15 @@ export function buildAuditReport(root, helpers) {
     noteClaims: sections.noteClaims.length,
     noteIndexUnresolved: sections.noteIndexUnresolved.length,
     corroborated: sections.corroborated.length,
+    // Related repetition: a name-match that shares an upstream, so it did NOT raise the
+    // level (C8). Counted separately from `corroborated` — the two are opposite outcomes
+    // and a reader who saw them merged would think the upgrade happened.
+    corroborationRepetitions: sections.corroborationRepetitions.length,
+    originUnknown: sections.originUnknown.length,
+    originUnauthorized: structural.unauthorizedOrigin.length,
     methodologyInRecords: sections.methodologyInRecords.length,
     noteGaps: sections.noteGaps.length,
+    noteAiCompletions: sections.noteAiCompletions.length,
     notationConflicts: sections.notationConflicts.length,
     notationCollected: sections.notationCollected
   };
@@ -3173,6 +3558,15 @@ export function buildAuditReport(root, helpers) {
   if (corroborationFailures.length > 0) {
     warnings.push(`${corroborationFailures.length} 张卡找到互证依据但等级写入未确认：${corroborationFailures.slice(0, 3).join("、")}`);
   }
+  // Card-origin writes are claims too (C7): the frontmatter says `origin: agent` and the
+  // ledger says WHEN the host saw it. Either half failing makes the claim unverifiable, so
+  // the run is reported as degraded rather than looking clean.
+  if (originLedgerFailed) {
+    warnings.push(`卡来源台账（${CARD_ORIGIN_FILE}）写入未确认：本轮"宿主何时见到这张卡"没有落盘，来源字段的凭据不完整`);
+  }
+  if (originWriteFailures.length > 0) {
+    warnings.push(`${originWriteFailures.length} 张卡的 origin 字段回写未确认：${originWriteFailures.slice(0, 3).join("、")}`);
+  }
   // A generated notation block that could not be confirmed is the same kind of claim as
   // an archive that "succeeded": the audit says it recorded the notation, and the claim
   // has to be falsifiable.
@@ -3187,6 +3581,10 @@ export function buildAuditReport(root, helpers) {
   const structuralDetail = {
     unjustifiedUpgrade: structural.unjustifiedUpgrade.slice(0, 20),
     usesMismatch: structural.usesMismatch.slice(0, 20),
+    // Origin declarations the host cannot back with its own observation. Same "report,
+    // never auto-fix" family as `unjustifiedUpgrade`: auto-correcting would overwrite
+    // whatever the user typed.
+    unauthorizedOrigin: structural.unauthorizedOrigin.slice(0, 20),
     hubs: hubCards.slice(0, 20).map((card) => ({
       ...cardRef(card),
       backlinks: backlinkCount.get(String(card.rel ?? "").split("/").at(-1).replace(/\.md$/, "")) ?? 0
@@ -3242,6 +3640,21 @@ export function buildAuditReport(root, helpers) {
     }
     if (structural.unjustifiedUpgrade.length > 0) {
       checklistLines.push(`- 越权升级（verified 高于 single-source 但不是用户确认写入的）: ${structural.unjustifiedUpgrade.slice(0, 3).join("、")}`);
+    }
+    // Card provenance (C7). Sits with the evidence findings rather than with the
+    // polish lists: "who said this" decides whether a card may be quoted as the user's
+    // own words at all, which is the same class of mistake as believing an unverified
+    // grade. The user-facing explanation of WHY lives in the human summary below.
+    if (sections.originUnauthorized.length > 0) {
+      const rows = sections.originUnauthorized.slice(0, 3).join("、");
+      checklistLines.push(`- 来源声明越权（宿主观测不到该来源：本地 vault 没有认证通道，` +
+        `origin: user 无法被证实，等级不得高于观测值）: ${rows}`);
+    }
+    if (sections.originUnknown.length > 0) {
+      const rows = sections.originUnknown.slice(0, 3)
+        .map((card) => `[[${card.rel.replace(/\.md$/, "")}|${card.title}]]`).join("、");
+      checklistLines.push(`- 来源未知（${sections.originUnknown.length} 张；旧卡在宿主首次观测前就存在）: ${rows}` +
+        `——引用时按"来源不明"处理，不得当作已核实事实，也不得声称是用户原话。`);
     }
     if (structural.missingSource.length + structural.brokenLinks.length + structural.notInIndex.length > 0) {
       const structuralParts = [];
@@ -3359,6 +3772,15 @@ export function buildAuditReport(root, helpers) {
     const rows = sections.noteGaps.slice(0, 3).map((item) => `[[${item.rel.replace(/\.md$/, "")}]](${item.count} 处)`);
     checklistLines.push(`- 笔记里自报的未闭合处（待补/待核对）：${rows.join("、")}${sections.noteGaps.length > 3 ? ` … 共 ${sections.noteGaps.length} 篇` : ""}——相关讨论时读原文，能补的补上；补不了就把"未闭合"写在结论旁边，不要让它悄悄变成已证。`);
   }
+  // Notes that marked AI-written passages (N-a, C7 的笔记侧对应物). The rule is stated with
+  // the finding because this is the one place a model can be told it in-band: a passage under
+  // this marker is NOT the user's own statement, so it may be quoted as "the note says" but
+  // never as "you wrote/you prefer". Without it the marked and unmarked halves of a mixed
+  // note are indistinguishable in the retrieval result (they were until 2026-10-01).
+  if (sections.noteAiCompletions.length > 0) {
+    const rows = sections.noteAiCompletions.slice(0, 3).map((item) => `[[${item.rel.replace(/\.md$/, "")}]](${item.count} 处)`);
+    checklistLines.push(`- 笔记里标记了 AI 补全段落（${rows.join("、")}${sections.noteAiCompletions.length > 3 ? ` … 共 ${sections.noteAiCompletions.length} 篇` : ""}）：标记覆盖的段落**不是用户本人写的**，引用时只能说"笔记里记着"，**不得当作用户原话或已核实结论**；也不要提议把整篇笔记当作可信来源。`);
+  }
   if (sections.notationConflicts.length > 0) {
     const rows = sections.notationConflicts.slice(0, 3).map((item) => `「${item.name}」：${item.symbols.join(" / ")}`);
     checklistLines.push(`- 记号同名多套（自动收集自你笔记里的定义句）: ${rows.join("；")}${sections.notationConflicts.length > 3 ? ` … 共 ${sections.notationConflicts.length} 组` : ""}——**只报告不判定**：这可能是混用，也可能是有意按语境区分。在相关讨论时问一次用户，得到答复后写进 profile/notation 的已采纳表；不要自己改用户的记号。`);
@@ -3370,6 +3792,16 @@ export function buildAuditReport(root, helpers) {
   if (sections.corroborated.length > 0) {
     const rows = sections.corroborated.slice(0, 5).map((item) => `[[${item.rel.replace(/\.md$/, "")}|${item.title}]]（依据：[[${item.via.replace(/\.md$/, "")}]]）`);
     checklistLines.push(`- 本次由插件升为「与他处互证」（cross-referenced；判定依据是另一份文档里出现了同一 pattern/技巧，证据随行，仍未获用户确认）: ${rows.join("；")}`);
+  }
+  // The OTHER outcome of the same comparison (C8, 2026-10-01): a name-match whose document
+  // shares an upstream with the card is one source restated twice, so it does NOT count as
+  // a second witness. Stated explicitly because "nothing happened" and "we deliberately
+  // refused to count it" must not look the same to a reader.
+  if (sections.corroborationRepetitions.length > 0) {
+    const rows = sections.corroborationRepetitions.slice(0, 5).map((item) =>
+      `[[${item.rel.replace(/\.md$/, "")}|${item.title}]]（同源：${item.sharedWith.slice(0, 2).join("、")}）`);
+    checklistLines.push(`- 相关重复、不计票（匹配到的文档与本卡共享上游，属同一来源的复述，不构成独立共证，` +
+      `因此**不**升级）：${rows.join("；")}——要有第二票，需要一份不共享上游的来源。`);
   }
 
   /**
@@ -3469,6 +3901,10 @@ export function buildAuditReport(root, helpers) {
     const names = sections.noteGaps.slice(0, 3).map((item) => `「${item.rel.split("/").pop().replace(/\.md$/, "")}」(${item.count} 处)`).join("、");
     humanLines.push(`🚧 你笔记里有 ${sections.noteGaps.length} 篇标着"待补/待核对"（共 ${noteHygiene.gapTotal} 处）：${names}${sections.noteGaps.length > 3 ? " …" : ""}——这些是你自己记下的未闭合处，助手在相关讨论时会先看它们。`);
   }
+  if (sections.noteAiCompletions.length > 0) {
+    const names = sections.noteAiCompletions.slice(0, 3).map((item) => `「${item.rel.split("/").pop().replace(/\.md$/, "")}」(${item.count} 处)`).join("、");
+    humanLines.push(`🤖 有 ${sections.noteAiCompletions.length} 篇笔记标出了 AI 补全的段落（共 ${noteHygiene.aiMarkedTotal} 处）：${names}${sections.noteAiCompletions.length > 3 ? " …" : ""}——这些段落**不是你自己写的**，助手会按"笔记里的说法"引用，不会说成"你说过"；你复核过之后可以把标记去掉（去掉就等于认可）。`);
+  }
   if (sections.notationConflicts.length > 0) {
     const names = sections.notationConflicts.slice(0, 3).map((item) => `「${item.name}」(${item.symbols.join(" / ")})`).join("、");
     humanLines.push(`🔤 自动收集到 ${sections.notationCollected} 条记号定义，其中 ${sections.notationConflicts.length} 组**同名多套记号**：${names}${sections.notationConflicts.length > 3 ? " …" : ""}——可能是有意按语境区分，也可能是混用，只有你知道；已写进 \`.deepseek/memory/notation.md\` 的自动块，你回一句就定案。`);
@@ -3479,6 +3915,24 @@ export function buildAuditReport(root, helpers) {
   if (sections.corroborated.length > 0) {
     const names = sections.corroborated.slice(0, 3).map((item) => `「${item.title}」（依据 ${item.via}）`).join("、");
     humanLines.push(`⚖️ 本次把 ${sections.corroborated.length} 张卡从"单次来源"升为"与他处互证"：${names}${sections.corroborated.length > 3 ? " …" : ""}——依据是另一份文档里出现了同一个模式或技巧；这只是自动比对的结果，仍不等于你确认过，随时可以点 ❌ 推翻。`);
+  }
+  // Card provenance (C7). Two things the user cannot learn from anywhere else: a card
+  // claiming to be their own words (which this vault has no way to authenticate), and a
+  // card whose writer is simply unknown. Stated in plain language, with the consequence
+  // spelled out, because the consequence is the whole point of the field.
+  if (structural.unauthorizedOrigin.length > 0) {
+    const names = structural.unauthorizedOrigin.slice(0, 3).map((item) => `「${item.split("（")[0].split("/").pop().replace(/\.md$/, "")}」`).join("、");
+    humanLines.push(`🏷 有 ${structural.unauthorizedOrigin.length} 张卡把自己的来源写成了一个系统无法证实的值（例如"你说过"）：${names}${structural.unauthorizedOrigin.length > 3 ? " …" : ""}——本地笔记库是纯文本、没有认证通道，所以"这是用户原话"这种声明只能由你本人确认，助手不会把它当事实引用。`);
+  }
+  if (sections.originUnknown.length > 0) {
+    const names = sections.originUnknown.slice(0, 3).map((card) => `「${card.title}」`).join("、");
+    humanLines.push(`❔ 还有 ${sections.originUnknown.length} 张卡身份的来源没有记录（多数是插件开始登记来源之前就存在的卡）：${names}${sections.originUnknown.length > 3 ? " …" : ""}——助手引用它们时会按"来源不明"处理：可以说"笔记里记着"，不会说"你说过"。`);
+  }
+  // The other outcome of the same comparison (C8): not counting a match is a decision, and
+  // a decision the user cannot see is indistinguishable from a bug.
+  if (sections.corroborationRepetitions.length > 0) {
+    const names = sections.corroborationRepetitions.slice(0, 3).map((item) => `「${item.title}」`).join("、");
+    humanLines.push(`🔁 另有 ${sections.corroborationRepetitions.length} 张卡虽然"别处也提到了同一个模式"，但那两处共用同一个出处，属于同一来源的复述，所以没有算作"互证"：${names}${sections.corroborationRepetitions.length > 3 ? " …" : ""}——重复出现不等于独立佐证。`);
   }
 
   // `report` stays for backward compatibility with anything reading the old
@@ -3510,6 +3964,11 @@ export function buildAuditReport(root, helpers) {
       tooManyMoves: structural.tooManyMoves.length,
       unjustifiedUpgrade: structural.unjustifiedUpgrade.length,
       usesMismatch: structural.usesMismatch.length,
+      // Card provenance (C7): declarations the host cannot back, and cards whose writer it
+      // could not pin down at all. Both are counts of CARDS, so a panel can show them
+      // beside `unjustifiedUpgrade`.
+      unauthorizedOrigin: structural.unauthorizedOrigin.length,
+      originUnknown: sections.originUnknown.length,
       hubs: hubCards.length,
       downstream: sections.downstreamReview.length
     },
@@ -3948,6 +4407,12 @@ export function buildMemorySection({ vaultRoot, sessionsRoot, maxHistoryEntries,
     `- 💡 想法 idea: ${capturePolicy.idea} · 事实 fact（事实/事件/指令/工作产物）: ${capturePolicy.fact} · 偏好 preference（画像/记号）: ${capturePolicy.preference} · 结构 structure（主题/定理索引/问题模板/策略卡）: ${capturePolicy.structure}`,
     "- auto=按三写协议直接写入；ask=先经 ask_user 征得同意再写；off=不主动捕获（用户明确要求时除外）。",
     "- **每个档位管哪些层**（照此执行，不要再按「第几步」推断）：idea→inbox 想法；fact→records 的 fact/event/instruction/artifact；preference→profile.md 与 notation.md；structure→topics/、theorems/index.md、templates/、strategy/ 的索引与结构行。事件层（episodes）由确定性会话捕获写入，不受本表管辖（开关是 config.md 的 sessionCapture）。",
+    // 固化闸门（2026-10-01，用户拍板；证据 Zhang et al. arXiv:2605.12978 Table 5）。
+    // 放在 INJECTED 文本里而不是只写在 vault 的 AGENTS.md 里，是因为那份协议是**安装进
+    // 用户 vault 的副本**：老 vault 不重装就吃不到新规则，而这条规则管的是**每轮**行为。
+    // 同一句话也写在 `dsh/templates/vault-AGENTS.md`（给新安装的库），两处由
+    // `scripts/test-memory.mjs` 的断言钉住（改一处忘另一处会红）。
+    "- **⚠️ 固化是显式动作，不是每轮例行动作**：没有用户同意，**不要**把本轮内容固化成 records/topics/templates/strategy 的卡或行。默认执行方式＝**先问**（与上面的捕获提问**合并成一次**，不增加弹窗）；只有 ① 用户当场明确要求记录/整理，或 ② 捕获档位/profile 给过长期授权，才可直接写。**「没写」不是失败**——整场对话原文由确定性会话捕获进 episodes，跳过固化的代价只是「这次没有新增抽象」。文献实测：每轮固化会让记忆越写越差（就地改写旧条目最伤、写新内容时旧抽象可见是最大一跳），所以固化应当被**请求**，而不是例行触发。",
     captureText === "" ? "- （策略文件缺失，按默认档位 idea=ask / fact=ask / preference=ask / structure=auto 执行——写入记录内容前一律先征得同意；结构层只补索引。）" : "- 用户口头指令优先于策略文件。"
   );
 
@@ -4081,6 +4546,10 @@ function normalizeConfig(config) {
   // (docs/note-noise-and-memory-fidelity-2026-09-26.md P3; trap 80: a documented promise with no
   // execution point). Same shape as `auditMaintainHookStats` beside it: config → helpers.
   const auditMaintainLedger = config.auditMaintainLedger !== false;
+  // Card origin (C7/N1): writing `origin` into the card and recording the host's
+  // first-sight row in `cache/card-origin.jsonl` is one behaviour, so it has one switch.
+  // Same shape as `auditMaintainHookStats`/`auditMaintainLedger` above: config → helpers.
+  const auditMaintainOrigin = config.auditMaintainOrigin !== false;
   const autoArchive = config.autoArchive === true;
   // Dialogue capture is opt-in: OFF unless explicitly enabled. The default is
   // no longer true so the assistant never silently archives whole conversations.
@@ -4106,7 +4575,7 @@ function normalizeConfig(config) {
   const budgetTier = budgetExplicit ? String(config.budget) : "standard";
   const budgets = BUDGET_TIERS[budgetTier];
   if (!isAbsolute(sessionsRoot)) throw new TypeError("math-memory: sessionsRoot must be an absolute path");
-  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, auditMaintainLedger, autoArchive, sessionCapture, captureSubagents, auditIntervalMs, budgetTier, budgetExplicit, budgets };
+  return { vaultRoot, sessionsRoot, maxHistoryEntries, maxHistoryChars, cacheTtlMs, auditEnabled, dialogueIndexEnabled, remindersEnabled, auditMaintainHookStats, auditMaintainLedger, auditMaintainOrigin, autoArchive, sessionCapture, captureSubagents, auditIntervalMs, budgetTier, budgetExplicit, budgets };
 }
 
 function fingerprint(logs) {
@@ -4254,7 +4723,7 @@ class MemoryEngine {
     }
     let report;
     try {
-      report = buildAuditReport(vaultRoot, { ...this.#helpers, maintainHookStats: config.auditMaintainHookStats, maintainLedger: config.auditMaintainLedger, autoArchive });
+      report = buildAuditReport(vaultRoot, { ...this.#helpers, maintainHookStats: config.auditMaintainHookStats, maintainLedger: config.auditMaintainLedger, maintainOrigin: config.auditMaintainOrigin, autoArchive });
     } catch {
       return cached; // a failed audit must never break prompt assembly
     }

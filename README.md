@@ -52,6 +52,7 @@ Being explicit about the boundary matters more than listing features:
 
 ## Requirements
 - Obsidian desktop; Node.js ≥ 22.5; DeepSeek Harness (npm global `@deepseek-ai/dsh`, **requires ≥ 0.1.7-rc.2** — this release adapts to 0.1.7's preset-declaration mechanism, see [`docs/dsh-0.1.7-adaptation.md`](docs/dsh-0.1.7-adaptation.md); the session-format-V3 adaptation is in [`docs/dsh-0.1.5-adaptation.md`](docs/dsh-0.1.5-adaptation.md)); a configured DeepSeek model.
+  - **Verified against `0.2.0-rc.2`** as well (the current npm `latest`), and the floor is deliberately left at `0.1.7-rc.2` because that version still works: the audit found **no breaking change**, only contract fixes. Evidence and the full interface-by-interface check: [`docs/dsh-0.2.0-adaptation.md`](docs/dsh-0.2.0-adaptation.md). ⚠️ Do **not** tighten this range to `>=0.2.0` or `^0.2.0` — on a prerelease runtime like `0.2.0-rc.2` that does **not** match, and dsh then silently skips the plugin's bundle layer (exit code 0, one stderr line).
 - Default port **3180** (coexists with the regular `dsh web` on 3080; configurable in settings).
 
 ## Install
@@ -92,7 +93,7 @@ vault/
 ## Development & quality
 
 ```bash
-npm test          # syntax + 427 zero-token regression checks + 62 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
+npm test          # syntax + 455 zero-token regression checks + 62 route-level checks + 8 real-dsh handshake checks + 32 loopback-proxy checks + installer e2e (drift detection)
 npm run qa        # engine probe: 12 ground-truth recall assertions + reachability layering / pooling A/B on the real vault (zero tokens)
 npm run qa:e2e    # real-session end-to-end acceptance (spends real tokens; reports API-level usage)
 node scripts/build-obsidian.mjs   # rebuild main.js (required after shared-file changes)
@@ -103,7 +104,7 @@ node scripts/deploy-local.mjs     # one-shot local deployment
 - **Memory knowledge base**: [docs/memory/](docs/memory/) — design (implementation spec), retrieval-v3 (retrieval proposal + §7 GraphMemix intake decisions and A/B measurements), testing (QA methodology), assessment, references (paper notes), [sidebar-performance](docs/memory/sidebar-performance.md) (why the Obsidian panel was janky and what was measured), changelog, handoff.
 - **Host-version adaptation**: [docs/dsh-0.1.5-adaptation.md](docs/dsh-0.1.5-adaptation.md) — evidence, fix list, and the reasons for what was deliberately left alone under dsh 0.1.5-rc.1 / session format V3 / `dsh-web-all@0.3.20`.
 - **Acceptance record**: both probes call the SHIPPED ranking pipeline (`buildRecallDoc` / `rankRecallDocuments` / `rankStrategyCards`) instead of re-deriving it — seed probe 8/8 on the synthetic vault, engine probe **12/12** on the real vault (navigation indices are demoted, so the "library has no answer → weak signal" control holds). The engine probe additionally prints GraphMemix-style **reachability layering** (Direct / Recoverable / No access) and a signed net-recovery Δ for the bag-vs-multi-view A/B, plus target ranks — the measurement that kept multi-view max-pooling out of the default path (`docs/memory/retrieval-v3.md` §7.2). The real-session E2E suite covers 5 cases (including the no-answer honesty and reformulate-retry behaviors).
-- Version: **0.8.0** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
+- Version: **0.8.1** (prototype stage; the memory architecture has no long-term field testing yet and will keep evolving).
 
 ## Privacy & safety
 

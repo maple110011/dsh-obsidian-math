@@ -40,6 +40,32 @@ export const PROFILE_SCAFFOLD_FILES = [
 ];
 
 /**
+ * 这些 posture 文件**不是**安装器独占的：安装器只负责在文件缺席时把它铺下去，之后
+ * **永不重写**，而且**不许**把它的字节当成"我们说它是什么样它就必须是什么样"的凭据。
+ *
+ * 为什么需要这个区分（2026-09-27 真机取证，2026-10-01 落地）：
+ * 安装清单原本给**每一个** posture 文件记 sha256，并把它当硬校验（第三份完整性基线）。
+ * 其中 `cordis.patch.yml` 被同一个安装器在 650 行之外明确定义为"用户的层、永不重写"
+ * （`dsh/install.mjs` 的 `ensurePosture` 注释），而 dsh 自己的设置面板按设计就重写它 ——
+ * `@deepseek-ai/dsh-config-editor` 把整份文件重新序列化后追加自己那一行
+ * （实测：本机该文件从 3738 B 变成 4523 B，其中 11 B 的差来自 YAML 把两条长 `!!js`
+ * 标量在 80 列处折行，而这种折行**不可能是**人手编辑的形态）。
+ * ⇒ 摘要**注定**过期，而门禁把"按插件自己的指示编辑了配置"判成了故障。
+ * 这类文件上一个就会让门禁永久飘红，于是没人再分得清哪条红是真故障。
+ *
+ * 判据是**谁还会写这个文件**，不是"谁创建了它"——所以每条都带实测到的另一个写入方：
+ *   · `package.json`      dsh 的插件管理器（`dsh plugin add` / 插件页）往里写 bundles 与 dependencies；
+ *                         本插件自己也修它的 name/version ⇒ 两个作者。
+ *   · `cordis.yml`        dsh 每次组合 profile 都把它重写回 `[]`（实测 `--dump-config` 就会写，
+ *                         字节相同但 mtime 每次都变）⇒ 字节归 dsh 所有。
+ *   · `cordis.patch.yml`  用户按设计在这里放自己的 provider/默认模型；dsh-config-editor 也会写它。
+ * 其余 posture 文件（模块 `.mjs`、`notes-assistant.patch.yml`、`pnpm-workspace.yaml`）目前
+ * **只有我们写**，所以继续按硬基线校验 —— 那正是这条基线存在的意义（抓截断写入与旧插件覆盖）。
+ * 要往这里加名字，请先写明实测到的第二个写入方；没有第二个写入方的文件不许进来。
+ */
+export const POSTURE_SHARED_FILES = ['package.json', 'cordis.yml', 'cordis.patch.yml'];
+
+/**
  * 本插件往三个 patch 层里插入的**全部**行 id（实测取自三份文件，2026-09-26）：
  *   · 包内 patch（bundle 通道）: `math-memory-host` + `preset-notes-assistant`
  *   · profile 自己那层（离线通道）: `preset-notes-assistant`（自 B3 起声明的家）

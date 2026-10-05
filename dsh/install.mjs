@@ -72,7 +72,7 @@ import {
 } from "./preset/preset-deploy.mjs";
 // 2026-09-26 (B2): the profile contract is the ONE statement of what gets staged. `preset-deploy.mjs`
 // re-exports its `PRESET_BODY_FILES`; the scaffold half is read straight from here.
-import { PROFILE_SCAFFOLD_FILES } from "./preset/profile-contract.mjs";
+import { PROFILE_SCAFFOLD_FILES, POSTURE_SHARED_FILES } from "./preset/profile-contract.mjs";
 // A′ S4 (2026-09-26): the offline channel can now install a REAL bundle package instead of only
 // flattening files. `local-bundle.mjs` is the pure materializer (S1); the closure collector is the same
 // authority the client half uses, so the package's module list cannot drift from the repo layout.
@@ -241,12 +241,20 @@ function write(options, target, content, overwrite = true) {
 }
 
 function copyFile(options, source, target, overwrite = true) {
-  if (options.dryRun) {
-    log(options, `[dry-run] would copy ${source} -> ${target}`);
+  // The dry run must apply the SAME keep/overwrite rule as the real run, in the same
+  // order. It used to print "would copy" for every target unconditionally, so on a vault
+  // that already had `profile.md` / `notation.md` (user content, copied with
+  // overwrite=false) the preview promised an overwrite that the real run would skip —
+  // i.e. the one mode whose whole purpose is to let a user check for data loss LIED about
+  // the only files where data loss was possible. Measured 2026-10-01: dry run said
+  // `would copy … profile.md`, real run said `[skip] exists, preserving user edits`, file
+  // byte-identical afterwards.
+  if (!overwrite && existsSync(target)) {
+    log(options, `${options.dryRun ? "[dry-run] would skip" : "[skip]"} exists, preserving user edits: ${target}`);
     return false;
   }
-  if (!overwrite && existsSync(target)) {
-    log(options, `[skip] exists, preserving user edits: ${target}`);
+  if (options.dryRun) {
+    log(options, `[dry-run] would copy ${source} -> ${target}`);
     return false;
   }
   mkdirSync(dirname(target), { recursive: true });
@@ -415,19 +423,24 @@ export function ensurePresetDeclaration(profileRoot) {
   const target = join(profileRoot, "cordis.patch.yml");
   const scaffold = join(PROFILE_DIR, "cordis.patch.yml");
   if (!existsSync(target) || !existsSync(scaffold)) return false;
+  // 2026-10-01 (0.2.0 adaptation): a profile installed BEFORE A1b still carries the retired row id
+  // `agent-presets`. Neither 0.1.7 nor 0.2.0 has such a row, and a patch that matches no row is only
+  // WARNED about and skipped — so "default preset = notes-assistant" is silently gone and nothing fails.
+  // Repair it independently of the generated block (the two live in different places).
+  const migrated = migrateRetiredPresetRow(target);
   const source = readFileSync(scaffold, "utf8");
   const begin = DECLARATION_BEGIN;
   const end = DECLARATION_END;
   const start = source.indexOf(begin);
   const stop = source.indexOf(end);
-  if (start < 0 || stop <= start) return false;
+  if (start < 0 || stop <= start) return migrated;
   const block = source.slice(start, stop + end.length);
   const current = readFileSync(target, "utf8");
   const eol = lineEndingOf(current);
   const from = current.indexOf(begin);
   const to = current.indexOf(end);
   if (from >= 0 && to > from) {
-    if (current.slice(from, to + end.length).trim() === block.trim()) return false;
+    if (current.slice(from, to + end.length).trim() === block.trim()) return migrated;
     // The block comes from the SCAFFOLD; the target may be terminated differently. Re-terminate it,
     // or this splice writes a mixed-ending file (see `lineEndingOf`).
     writeFileSync(target, current.slice(0, from) + withLineEnding(block, eol) + current.slice(to + end.length), "utf8");
@@ -435,11 +448,69 @@ export function ensurePresetDeclaration(profileRoot) {
   }
   // No block at all. If the id is declared some other way by hand, leave that alone — the user may have
   // arranged it deliberately, and guessing would be worse than the gate reporting a stale declaration.
-  if (/- id:\s*["']?preset-notes-assistant["']?\s*$/m.test(current)) return false;
+  if (/- id:\s*["']?preset-notes-assistant["']?\s*$/m.test(current)) return migrated;
   // `replace(/\s*$/, eol)` collapses the trailing run to exactly one terminator; the extra `eol` opens the
   // blank line the block is separated by. For an LF file this is byte-for-byte the old expression.
   writeFileSync(target,
     current.replace(/\s*$/, "") + eol + eol + withLineEnding(block, eol) + eol, "utf8");
+  return true;
+}
+
+/**
+ * Rename the RETIRED preset-registry row id in a profile patch layer.
+ *
+ * WHY (2026-10-01): `agent-presets` was the 0.1.5-era loader row id. 0.1.7 renamed the shipped row to
+ * `agent-preset-registry` (and 0.2.0 has no `agent-presets` at all — verified: zero hits across every
+ * bundled package). A patch whose id matches no row is **only warned about and skipped**, so an install
+ * from before A1b keeps a dead entry and silently loses `default: notes-assistant` — the same class of
+ * silent failure A1b itself was about. The generated declaration block is repaired elsewhere; this row
+ * lives outside it, which is why the block repair never saw it.
+ *
+ * The migration is deliberately NARROW, because this edits a user-owned file:
+ *   · only a TOP-LEVEL sequence entry whose id is exactly `agent-presets` (never `agent-presets-*`);
+ *   · `includeUserRoot` is dropped — it is not a field of the current schema and would be discarded
+ *     anyway, but leaving it in invites the reader to believe it still does something;
+ *   · everything else in the entry (and the file's line endings) is preserved byte-for-byte;
+ *   · idempotent: after the rename the pattern no longer matches.
+ *
+ * @param {string} patchPath - the profile's `cordis.patch.yml`.
+ * @returns {boolean} true when the file changed.
+ */
+export function migrateRetiredPresetRow(patchPath) {
+  if (!existsSync(patchPath)) return false;
+  const text = readFileSync(patchPath, "utf8");
+  const lines = text.split(/(?<=\n)/); // keep terminators attached, so the untouched lines are byte-exact
+  // Match on the line BODY (terminator stripped). Anchoring `$` directly on a line that still carries its
+  // `\n` is a trap in JS: without the `m` flag `$` also matches just BEFORE a trailing newline, so the
+  // `(\r?\n)?` group can stay unset and `replace` silently swallows the terminator — measured here as
+  // "two lines vanished instead of one" while the assertion detail still said "renamed".
+  const body = (line) => line.replace(/\r?\n$/, "");
+  const terminatorOf = (line) => /\r?\n$/.exec(line)?.[0] ?? "";
+  const idBody = /^(\s*)-\s*id:\s*['"]?agent-presets['"]?[ \t]*$/;
+  const start = lines.findIndex((line) => idBody.test(body(line)));
+  if (start < 0) return false;
+  // The entry ends at the next sequence item at any indentation, or at the first line that is neither
+  // blank, a comment, nor indented (a top-level sibling of the whole list).
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^[ \t]*-[ \t]/.test(line)) { end = i; break; }
+    if (/^[^\s#]/.test(line)) { end = i; break; }
+  }
+  const entry = lines.slice(start, end);
+  const renamed = body(entry[0]).replace(idBody, "$1- id: agent-preset-registry") + terminatorOf(entry[0]);
+  const kept = [];
+  for (let i = 1; i < entry.length; i += 1) {
+    const lineBody = body(entry[i]);
+    const key = /^(\s*)includeUserRoot:\s*(\S*)[ \t]*$/.exec(lineBody);
+    if (key === null) { kept.push(entry[i]); continue; }
+    // A bare `includeUserRoot:` may open a nested block; drop that block too, or a dangling mapping
+    // would be left behind and the file would no longer parse.
+    if (key[2] === "") {
+      while (i + 1 < entry.length && (/^\s*#/.test(entry[i + 1]) || /^\s+\S/.test(entry[i + 1]))) i += 1;
+    }
+  }
+  writeFileSync(patchPath, [...lines.slice(0, start), renamed, ...kept, ...lines.slice(end)].join(""), "utf8");
   return true;
 }
 
@@ -525,7 +596,10 @@ export function stripPresetDeclaration(profileRoot) {
  *
  * The contract this restores is one WE ALREADY WROTE DOWN — in the comment the client-half installer
  * plants inside that very file (`dsh/client-panel/install-into-profile.mjs`): "这一层是 profile
- * 自己的 patch 层，没有任何人会重写它".
+ * 自己的 patch 层" and this installer will not rewrite it again. (That comment used to add "没有任何人
+ * 会重写它" — corrected 2026-10-01: dsh's OWN settings panel does rewrite it, via
+ * `@deepseek-ai/dsh-config-editor`, so the claim is false about everyone but us. It is precisely why
+ * `cordis.patch.yml` is now a SHARED posture file and no longer hash-frozen.)
  *
  * So: absent ⇒ copy the scaffold. Present ⇒ keep it, loudly, and let the caller's declaration repair
  * (`stripPresetDeclaration` / `ensurePresetDeclaration`) make the only edits this installer is
@@ -693,45 +767,77 @@ function fileDigest(path) {
 /**
  * Record one sha256 per posture file that exists — the manifest's integrity baseline.
  *
+ * ⚠️ EXCLUDES the shared posture files (`POSTURE_SHARED_FILES`). Those are seeded once and then written
+ * by someone else too (dsh's plugin manager, dsh's config editor, the user), so a digest of them would
+ * be a promise we cannot keep — see the contract's WHY block, and `verifyPostureDigests` for what the
+ * gate does instead. The file still stays in `manifest.posture` (the uninstall table); it just is not
+ * hash-frozen.
+ *
  * @param profileRoot - profile directory holding the flat files.
  * @param files - posture file names (relative to `profileRoot`).
- * @returns `{ [name]: sha256 }` for the files that are present.
+ * @returns `{ [name]: sha256 }` for the installer-owned files that are present.
  */
 export function postureDigests(profileRoot, files) {
   const out = {};
   for (const name of files) {
+    if (isPostureShared(name)) continue;
     const digest = fileDigest(join(profileRoot, name));
     if (digest !== undefined) out[name] = digest;
   }
   return out;
 }
 
+/** Whether a posture file is co-owned by someone other than this installer (see POSTURE_SHARED_FILES). */
+export function isPostureShared(name) {
+  return POSTURE_SHARED_FILES.includes(name);
+}
+
 /**
  * Compare a manifest's recorded digests with what is on disk right now.
  *
- * This is the part that can be a HARD check: a profile whose files no longer match the
- * manifest that claims to have written them has been hand-edited, half-written, or
- * clobbered by a stale plugin. (Whether the profile still matches the REPO is a different
- * question — lag is normal until the next install — so gates report that as a notice.)
+ * This is the part that can be a HARD check: a profile whose installer-owned files no longer match the
+ * manifest that claims to have written them has been hand-edited, half-written, or clobbered by a stale
+ * plugin. (Whether the profile still matches the REPO is a different question — lag is normal until the
+ * next install — so gates report that as a notice.)
+ *
+ * `shared` is the fourth bucket and it is NOT a failure: those files are written by dsh and by the user
+ * as well, so "the bytes moved" carries no information about our install. It is reported separately so a
+ * gate can print it as a note instead of either failing or silently dropping it. Manifests written before
+ * the split still record digests for them (this machine's does); those entries are reclassified into
+ * `shared` rather than reported as drift, so the fix does not require a reinstall to go green.
  *
  * @param profileRoot - profile directory.
  * @param manifest - parsed `.install-manifest.json` (may be an old one without digests).
- * @returns `{ checked, drifted, missing, unrecorded }`.
+ * @returns `{ checked, drifted, missing, shared, unrecorded }`.
  */
 export function verifyPostureDigests(profileRoot, manifest) {
   const recorded = manifest?.postureDigests;
+  // Posture entries that are shared but have NO recorded digest (the post-split shape) are still worth
+  // reporting: the caller can say "this one is yours, we do not track its bytes".
+  const shared = [];
+  for (const name of Array.isArray(manifest?.posture) ? manifest.posture : []) {
+    if (isPostureShared(name) && existsSync(join(profileRoot, name))) shared.push(name);
+  }
   if (recorded === null || typeof recorded !== "object") {
-    return { checked: 0, drifted: [], missing: [], unrecorded: true };
+    return { checked: 0, drifted: [], missing: [], shared, unrecorded: true };
   }
   const drifted = [];
   const missing = [];
   const names = Object.keys(recorded);
+  let checked = 0;
   for (const name of names) {
     const now = fileDigest(join(profileRoot, name));
+    // A pre-split manifest froze a shared file. Reclassify instead of failing: the current writer already
+    // refuses to record these, so the only way to see one here is a manifest from before the split.
+    if (isPostureShared(name)) {
+      if (now !== undefined && !shared.includes(name)) shared.push(name);
+      continue;
+    }
+    checked += 1;
     if (now === undefined) missing.push(name);
     else if (now !== recorded[name]) drifted.push(name);
   }
-  return { checked: names.length, drifted, missing, unrecorded: false };
+  return { checked, drifted, missing, shared, unrecorded: false };
 }
 
 // ── native install ───────────────────────────────────────────────────────────
@@ -1360,13 +1466,14 @@ function commandUninstall(options) {
   // 3. posture files we wrote (manifest-owned). `manifest` here is the PROFILE's
   //    manifest — the same file `readChannelOwner` just used as the anchor.
   //
-  //    ⚠️ DELETE ONLY WHAT STILL MATCHES OUR RECORD (2026-09-26). `posture` is not a list of
-  //    "ours, safe to delete": for a native install it is exactly `cordis.patch.yml`, which on a
-  //    `web` profile is the USER'S OWN dsh patch layer — their settings (providers, default model,
-  //    etc.) live there, and dsh's config editor writes it too. Deleting it wholesale on uninstall
-  //    silently destroys configuration we never wrote. `verifyPostureDigests` exists for precisely
-  //    this ("a profile whose files no longer match the manifest that claims to have written them
-  //    has been hand-edited"), so consult it: a drifted file is left in place with a reason.
+  //    ⚠️ DELETE ONLY WHAT IS OURS TO DELETE (2026-09-26, extended 2026-10-01). `posture` is not a
+  //    list of "ours, safe to delete":
+  //      · SHARED files (`POSTURE_SHARED_FILES`) are written by dsh and by the user as well — on a
+  //        `web` profile `cordis.patch.yml` holds the user's providers and default model, and
+  //        `package.json` holds the bundles THEY added. Deleting either on our uninstall silently
+  //        destroys configuration we never wrote, so they are kept unconditionally.
+  //      · For the installer-owned rest, a file that no longer matches our record was hand-edited or
+  //        clobbered, so it is left in place with a reason.
   const manifest = readMarker(join(profileRoot, CHANNEL_MANIFEST));
   if (manifest !== null && Array.isArray(manifest.posture)) {
     const digestCheck = verifyPostureDigests(profileRoot, manifest);
@@ -1374,6 +1481,10 @@ function commandUninstall(options) {
     for (const rel of manifest.posture) {
       const path = join(profileRoot, rel);
       if (!existsSync(path)) continue;
+      if (isPostureShared(rel)) {
+        log(options, `[keep] ${path} 是你自己的 dsh 层（dsh 与设置页也会写它）——不删。`);
+        continue;
+      }
       if (drifted.has(rel)) {
         log(options, `[keep] ${path} 已被手工或 dsh 自己改过（与安装时的记录不一致）——不删。确认不需要时请手动删除。`);
         continue;

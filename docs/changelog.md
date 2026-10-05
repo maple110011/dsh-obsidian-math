@@ -3,6 +3,287 @@
 > **范围**：**整个仓库**，不只是记忆子系统（本文原名「记忆系统变更日志」、位于 `docs/memory/`，2026-09-11 提升到 `docs/changelog.md`——因为它的内容早已超出记忆子系统，而目录位置在说"这是记忆那摊事"）。
 > **与根 `CHANGELOG.md` 的分工**：根文件是**发布摘要**（每个版本面向用户「改了什么」）；本文是**维护者细账**（为什么这么改、排查过程、实测数字、被否决的方案）。**最新在上。**
 
+## 2026-10-01 · 固化改成显式动作（用户拍板；文献处方）**已实现**
+
+**用户的话**：「只加个提示会不会太单薄了，文献又指出如何改善吗」。**问得对**——`［…·不宜当结论］` 那个前缀本质是 P2 那一档（"用记忆时降级引用"），而文献里真正的大头在**写路径**。
+
+**文献给的是什么（引原文，不是我的转述）**：Zhang et al.（arXiv:2605.12978）Table 5 的组件剥离，准确率逐档：**默认就地改写 43.2 → append-only 且旧库可见 50.0 → 加剪枝不去就地编辑 64.0 → append-only 且旧库隐藏 70.0 → 原始轨迹 76.6**。两条直接结论：① **"就地重写旧条目"是单项最伤**；② **"旧抽象在写/用时可见 vs 隐藏"是同一批里最大的一跳**。它的处方（§5）是「episodic 与 schema 两个角色不要塌进同一条重写回路；**abstraction 应 opt-in 且被证据设闸，而不是每次交互后触发**」。卡片里的映射（`literature/cards/zhangUsefulMemoriesBecome2026.md:35`）写得很直接：*"与 P2 互补：P2 管'用记忆时降级引用'，隔离管'写记忆时不受旧抽象影响'"*，并且*"对 P5「单源老化降权」的修正：Zhang 的处方是'原始证据优先'，**不是**'给旧抽象打低权重'"*。
+
+**查档发现的病灶比预想更具体**：写入**其实已经被门控**——`capture-policy.md` 默认 `idea=ask / fact=ask / preference=ask`（要同意），只有 `structure=auto`，而且捕获提问有「**每轮最多一次**」纪律。**但 `vault-AGENTS.md` §2 的"每轮收尾按需三写"是另一套、且没有闸门** ⇒ 「每轮自动固化」不是协议允许的，而是**模型自愿多做的**——恰好落在文献点名最伤的那一格上。
+
+**做法**（两处，缺一不可）：
+
+1. **注入文本**（`math-memory.mjs` 的捕获策略段）：新增一条明确规则——**没有用户同意，不要把本轮内容固化成 records/topics/templates/strategy 的卡或行**；默认执行方式＝**先问**（与既有捕获提问**合并成一次，因此不增加弹窗次数**）；例外只有两个：① 用户当场明确要求记录/整理，② 捕获档位/profile 给过长期授权。并写明 **「没写」不是失败**（整场对话原文由确定性会话捕获进 episodes，跳过固化不丢信息）。
+2. **vault 协议模板**（`dsh/templates/vault-AGENTS.md` §2）：同一规则，给新安装的库。
+
+**为什么必须两处**：vault 里那份 `AGENTS.md` 是**安装时的副本**——老 vault 不重装就吃不到新协议，而这条规则管的是**每轮**行为。所以注入侧是主路径，模板侧管新库。**两处由断言钉住**（`test-memory.mjs` 的 `consolidation gate:` 三条），改一处忘另一处会红。
+
+**验证**：断言 **452 → 455**（3 条）。**变异验证 2 条**：删掉注入侧那条 ⇒ **2 红**；只改模板侧 ⇒ **1 红**。恢复后 455/455。
+
+**证据边界（不声称的）**：① 该实验全部在**程序化 agent benchmark** 上（记忆是 LLM 自写的 lesson bank），**没有**测过"人类笔记 + AI 补全"的混合库 ⇒ 可迁移的是**机制**，**不能**换算成你这篇笔记能降多少；② 这条闸门只约束**模型写入行为**（由提示词执行，**不**由确定性层强制），所以它是"降低频率"，不是"禁止"；③ 我**没有**做 A/B 实测（要打真实 API、花钱，需用户点头）——这正是文献的 Table 5 形态，也是唯一能给出真实数字的路。
+
+## 2026-10-01 · 混写笔记：AI 补全段落可见（N-a，**已实现**）
+
+**用户的问题**（2026-10-01 原话）：「如果有一些笔记是 AI 和用户混写的呢，比如 AI 在某篇用户笔记中补全了一些内容，它其实也类似于脏记忆，这个该怎么解决」。
+
+**查档结论：协议早就要求标，真实库也确实在标，但系统三处没接上。**
+
+- 协议要求：`dsh/templates/vault-AGENTS.md` §3 第 2 条「补细节：补证明/例子/定义，标注 `<!-- AI 补全 -->`」——**这条从 0.x 就在**。
+- 真实库实测（只读扫描）：`统计学/方法论/数据压缩.md` 里确实有 `> <!-- AI 补全 -->`，另有笔记在正文里自报"其中两处……已单独标注为**待核对**"。⇒ **标记习惯是存在的，缺的是消费者。**
+- 三处断裂：
+  1. `scanNoteHygiene` 的 gap 正则只数 `待补|待核对|待证明|TODO|待完成`（`math-memory.mjs`）——**不含 AI 标记**，所以标了也不进报告；
+  2. `note_recall` 把 AI 补全段落与用户原文**同权返回**，结果行里没有任何提示；
+  3. 该标记只在 `scanNoteClaims`（"定理索引写已证、载体自己承认 AI 补全"）那一条**很窄**的路上被消费过。
+
+**为什么文件级的 `origin`（C7）救不了它**：C7 的字段描述**整张卡**是谁写的，而这里是**同一篇笔记里逐段混写**——一个 frontmatter 字段表达不了"第 3 段是 AI 补的、第 5 段是我写的"。按段归属**无法自动判定**（让模型判"哪段像 AI 写的"是语义判断，撞"插件不调模型"红线，而且会误报），所以**唯一出路是把已有标记接进系统**。
+
+**做法**（纯增量、不动排序）：
+
+- `scanNoteHygiene` 新增 `aiMarked` / `aiMarkedTotal`，与 `noteGaps` **分开报**：未闭合是"待做的活"，AI 补全是"不是你说的话"，动作不同，合在一起会让后者消失在"TODO 计数"里。
+- 标记识别用**一条**交替正则（注释式在前）⇒ 字面 `<!-- AI 补全 -->` **只计一次**；裸写 `AI 补全`（体检既有的标记词表）仍认得。
+- `buildRecallDoc` 给 note 记 `aiCompletions`；`note_recall` 把 `［含 N 处 AI 补全·非用户原话］` **前缀到 snippet**。
+  - **为什么前缀到 snippet 而不是加字段**：match 项在 output schema 里是 `additionalProperties: false`，加字段会被 dsh 严格校验拒绝并**打死整次工具调用**——2026-09-14 已经这样挂过一次（`hook`/`boundary` 那次）。这与既有"归档"标签用的是同一条通道、同一个理由。
+  - **为什么放 snippet 不放元数据行**：标记的含义是"**这段文字**里有不是用户写的部分"，读者看的就是 snippet。
+- 体检清单给一条**带引用规则**的发现（"标记覆盖的段落不是用户本人写的……不得当作用户原话或已核实结论"），人类摘要给一条讲清"你复核后可以删标记，删了就等于认可"。
+- `vault-AGENTS.md` §3 把标记从一行注释扩成读写纪律：**一段一个标记、放在段落之前**；读到标记覆盖的段落按"笔记里的说法"引用；用户删标记＝认可，**模型不得替用户删**。
+
+**刻意不做**：**不检测"未标记的补全"**。那是语义判断（红线）、且必然误报；漏标的责任放在协议上（"漏标就等于把 AI 写的话伪装成用户原话"）。
+
+**验证**：断言 **440 → 450**（10 条，含成对否定性断言：混写笔记有计数 / 全自写笔记**不报**；snippet 有前缀 / 干净笔记**没有**前缀；并断言 match 项**没有**多出未声明字段——正是 2026-09-14 的失败形态）。
+
+**遵守 `agent-experience` skill 的一处自我修正**：第一版把"这个前缀是什么意思"同时写进了 snippet 与工具描述（**同一个事实说两遍**），并把标记语法（**实现细节**）写进了模型可见的工具描述。已改成：结果里只出现前缀本身，工具描述只说行为一句，**规则与语法写在 vault 协议侧**。
+
+### 追加：临时标记 `［…·不宜当结论］`（2026-10-01，用户指出真实症状后）
+
+用户在 N-a 之后纠正了我对"干扰"的理解：**不是排序错，是"回复被那篇笔记同化、每次都差不多"**。这条纠正把病因从检索层搬到了**模型行为**层，而且它是对的——`note-interference-probe`（新增只读探针）实测：
+
+- 那篇 61,341 字符的笔记在 **5/5 相关查询**里 rank 1–2（最高 0.93）；
+- **0/5 无关查询**侵入 top-8（Borel-Cantelli / Wasserstein / 矩阵打洞 / 不动点 / 数学归纳法）。
+
+⇒ **排序是准的**。真正的机制是 **experience-following**：高分命中被当成结论复述。而仓库里早就有这条失效形态的名字（`note_recall` 描述里的 "fixation trap"）与针对**卡片层**的防御（`inbox/` 带「待打磨」、记录层当已沉淀）——**用户自己的笔记两边都不占**。
+
+**做法**：`buildRecallDoc` 给 note 另外记 `openMarkers`（`待核对/待补/待证明/存疑`），与 `aiCompletions` **合并成一个** snippet 前缀 `［AI 补全 ×11·待核对 ×14·不宜当结论］`；工具描述补一句行为（见到该前缀 ⇒ 重新推导而不是复述，且不得说成用户原话）。
+
+**为什么合并**：两个计数给同一句裁决，两个前缀会在 snippet 窗口里收两次费——第一版 58 字符的长前缀吃掉约 19% 窗口。
+
+**实测（真实库那篇笔记）**：`aiCompletions=11`、`openMarkers=14`，前缀出现在**每一次**取回它的结果里。**它正文第 6 行自己写着的"不是我的原稿、两处待核对"，过去永远不进检索语料**（passage 只取正文前 1500 字符），现在在检索那一刻就被看到。
+
+**不声称的**：这只降低"被复述为结论"的概率；模型行为不由确定性层保证。要根治仍需把"讨论存档"与"可引用的知识"分开——那篇的本质是**逐次追加型活文档**（`§3.6/§3.7/§2.7/§1.6/§2.1.1` 全是过去讨论的存档，标题里就写着"增补/附/错在哪"）。**我没有动用户的笔记**。
+
+## 2026-10-01 · 脏记忆：来源（`origin`）+ 互证判据收紧（C7/C8，**已实现**）
+
+**这一批来自第七批文献**（跨论文评估 [`../literature/notes/memory-fidelity-papers-2026-10-01.md`](../literature/notes/memory-fidelity-papers-2026-10-01.md)，
+决策 [`pending-decisions-2026-09-26.md`](pending-decisions-2026-09-26.md) §3.1 的 **C7=A / C8=A**，用户 2026-10-01 拍板）。
+**范围是"只加字段 + 收紧一处判据"**：不排序、不权限、不改注入体积——文献 §8 的顺序 1+2。
+
+### 一、`origin`：谁写的，与"验过没有"分开记（C7/N1）
+
+**缺口**：`hook.verified` 回答的是「验过没有」，而「**这话是谁说的**」根本没被记录。Louck（arXiv:2606.34591）
+机检证明"以内容、或以内容可导出的血缘边为判决依据的信任信号可被洗白"（T1），要求"写入时绑来源"（T3）；
+我们的 `verified` 是**标签**——任何人（含模型）都能打，所以它从来不是 T1 要的那个"来源"。
+
+**做法**（与 `verified`/`verified_by`/`unjustifiedUpgrade` 同一形状：**承诺 + 唯一写入者 + 检测者**，即 `handoff.md:249` 记的范本）：
+
+- 卡片 frontmatter **顶格** `origin: agent|user|imported`；**缺席＝来源未知**（老卡不静默降级）。
+- **唯一写入者是每日体检**（`auditMaintainOrigin`，默认开）；模型不可写。
+- **凭据**：`.deepseek/cache/card-origin.jsonl`，只追加、只有体检写，每行 `{ v, rel, firstSeen, origin, evidence, updated }`。
+  `firstSeen` 是**宿主自己第一次见到这张卡的日期**——内容可以编，日期不行；这就是"绑定"的那一半。
+- **检测者**：`structural.unauthorizedOrigin`（照 `unjustifiedUpgrade`：**只报不改**）。`origin: user` **永远**进这一列——
+  本地 vault 是纯文本、无认证通道，Louck 的前提 A1 在这里只能退化为"通道推断"（该文献 §5.2 自己写明），
+  所以"这是用户原话"**无法被证实**，只能由用户本人确认。
+- **取值来源**：`AUDIT_CARD_DIRS` 扫的三层按协议保留给 agent ⇒ 路径判定只会得出 `agent`；`user`/`imported` **不会被路径判出**。
+  这是刻意的：本库没有任何通道能区分"剪藏的文章"与"用户自己的散文"，硬猜就是 T1 点名的"用内容派生可信度"。
+- **幂等**：值与原记录一致时不更新 `firstSeen`、不改 `updated`。第一版无条件写 `today`，于是**每天都会重写一遍**
+  `updated`——把"这张卡的内容变过没有"这个信息抹掉（凭据就废了）。这条由新测例推出（见下）。
+
+**为什么不做排序**：C7=A 明确"只显示不排序"。动排序要过 `engine-probe` 的门槛（`retrieval-v3.md:229`），
+而加字段是纯增量——先把"谁说的"记下来，才谈得上按它调权。
+
+**边界（不要过度声称）**：`origin` 只覆盖**体检扫得到的层**（即 AI 自己写的卡）。用户手写的笔记不在 `AUDIT_CARD_DIRS` 里，
+所以系统**不给用户的笔记盖来源章**——"你的笔记"这一侧仍然只靠层来区分。
+
+### 二、`cross-referenced` 判据收紧：共享上游不算第二票（C8/N4）
+
+**缺口**：`findCorroboration` 此前只问"别处有没有出现同一个 pattern"。Louck 的 L-c「制造共证」与 Dash 的
+Salience（**重复 ≥3 次被当成重要性**）说明"重复出现"是**可以被制造**的信号：把同一次对话的结论抄进两份文档，
+就能从零铸出 `cross-referenced`。既有文 §5 曾把它算作"系统自己能降噪"，**本条改口**。
+
+**做法**：匹配到的文档若与本卡**共用同一个 `source`/`depends_on` 出处** ⇒ **同一来源的复述**，**不升级**，
+进 `sections.corroborationRepetitions`（"相关重复、不计票"）+ 人类摘要一行。独立性用**候选文档自己声明的链接**观测
+（"卡链到了它"是这对匹配成立的原因，不能当独立性证据）；而**一份被污染的文档不否决后面那份独立文档**。
+
+**实现时被自己的测例抓到的两个真缺陷**（都属于"守卫看不见自己的输入"这一族）：
+
+1. **同源集合在 `depends_on` 上是瞎的**——`extractLinks` 是 `buildAuditReport` 里的闭包，而喂给 `findCorroboration`
+   的访问器只读 `source`/`related`。已提为**模块级**函数、两处共用同一提取，`depends_on` 一并纳入。
+2. **候选文档的出处根本没被读**——证据池条目是 `{ rel, text }`，所以 `other.source` 永远是 `""` ⇒ 新判据
+   **结构上不可能**发现同源，却能"通过自己的测试"。已补 `provenanceOfDocument`。
+   另有第三个：`structural` 对象在来源 pass **之后**才初始化，于是 `originBlocked` 收集的越权声明被丢进另一个数组，
+   `counts.originUnauthorized` 恒为 0——现在 `structural.unauthorizedOrigin` 直接引用那个数组。
+
+**不声称的**：两个**没有**共享链接的文档被当作独立，这是**推断不是证明**（vault 没有认证通道，A1 不成立）。
+
+### 三、验证与覆盖
+
+- `node scripts/test-memory.mjs` **440/440**（427 → 440：来源 8 条 + 互证 5 条）。
+- 断言选择：`C8` 组含**否定性断言**（同源不升级 + 独立来源仍升级，两条成对，防"把判据调死"）；
+  `C7` 组含**幂等断言**（第二遍不重写卡、不改台账）与 **`maintainOrigin:false` 不写**的配置可达性断言（陷阱 80 的同形）。
+- **变异验证**（人工确认，做完即恢复；`math-memory.mjs` 与变异前**逐字节相同**）：
+  1. **M-C8**：让 `findCorroboration` 在发现共享上游时**照样**返回独立来源（＝回到 2026-10-01 之前的行为）⇒ C8 组 **4 条红**
+     （同源卡被升成 `cross-referenced`）——这条判据确实在管那次升级。
+  2. **M-origin-idempotence**：把台账的 `settled` 判定改成恒 `false`（＝每轮都重记一遍）⇒ **2 条红**，
+     且输出直接给出证据：`firstSeen` 从 `2026-10-04` 变成 `2026-10-05`（**每跑一次体检，凭据的日期就往后挪一天**）。
+  - ⚠️ **这条变异第一次跑时是绿的**——当时的断言只检查"卡片没被重写"，而台账的抖动**看不见**（同一形态：断言没在测它声称的东西）。
+     补上"第二遍之后台账逐字节不变"这条断言，变异才转红。**这就是先让变异证明断言有效的价值**：绿的那一次暴露的是断言太弱，不是代码对。
+- 文档计数锚点（`check-doc-consistency`）与生成物（`check: main.js bundle freshness`）已随之更新。
+
+### 四、明确不做（本批）
+
+- **不动排序**：`origin` 不进 `hookPrior`（C7=A）。
+- **不改注入措辞**：注入层仍按原样；文献 §8 顺序 3/4（固化输入隔离 A/B、诊断基线）与顺序 5（"每轮固化"设闸 = P4/D1-A）
+  **仍未拍板**，`pending-decisions-2026-09-26.md` §3.1 保持"待用户决定"。
+
+## 2026-10-01 · dsh 0.2.0-rc.2 适配：审计无破坏 + 三处收口（**已实现**）
+
+**口径先说清**：上一轮（0.1.7）是"插件在宿主上是坏的"（新建会话直接失败）。**本轮没有找到任何破坏**——
+逐接口核对下来，插件调用的每个宿主面都还在、签名未变，profile 的 5 条 patch 行 id 全部仍命中
+（`dsh --profile notes-assistant --dump-config` = **exit 0、1377 行、零 `not found` 警告**），
+依赖面**只增不减**（0.1.7-rc.2 → 0.2.0-rc.2 只多了 `@deepseek-ai/dsh-experimental-schedule-bundle`，**没有任何包被移除**，
+而插件对 dsh 的 schedule 服务零依赖——它的"提醒"是注入文本 + memo frontmatter 的 `last_reminded` 自述式，
+`math-memory.mjs:3995-4000`/`:4076`）。变更面也窄：npm 上 `0.1.7-rc.2 → 0.2.0-rc.1 → 0.2.0-rc.2`，
+**中间没有 alpha/rc.3**，所以口径就是那两份 release notes；其中与本项目有交点的只有 3 条（兼容提示文案、
+配置保存更快、pi-ai 0.87.1 移旧模型 ID），逐条判"不改"。完整逐接口表见
+[`dsh-0.2.0-adaptation.md`](dsh-0.2.0-adaptation.md)。
+
+⇒ **所以本轮的价值不在"迁移"，而在"把以为验证过、其实跳过了的那条补成真验证"**，外加两处契约/静默失效收口。
+
+### 一、工具 schema 的动态校验此前是**假的绿**（陷阱 110）
+
+两个套件（`test-tool-schemas.mjs` ②、`test-tool-shape.mjs` ②b）里**唯一**调用 dsh 校验器的断言，
+都 gate 在同一个硬编码路径上：`<DSH_HOME>/profiles/node_modules/@deepseek-ai/dsh-tools/lib/index.js`。
+**本机实测三种形态**：`~/.dsh/profiles/node_modules/…` **False**、`…/profiles/notes-assistant/node_modules/…` **False**、
+`%APPDATA%\npm\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\dsh-tools\lib\index.js` **True**
+（`npm i -g` 装的 dsh 把内置包放在**全局安装内部**）。⇒ 断言**整块跳过**，而门禁汇总仍打 `9/9`。
+
+**为什么这条在本轮特别要命**：`output.schema` 还能过**宿主自带的**校验器，正是"宿主升级后工具契约仍然成立"的
+**唯一动态证据**。一个会静默跳过的检查**无法为 0.2.0-rc.2 作证**——它是 `AGENTS.md` §4 里那种
+"绿覆盖的断言比它看起来少"的形态，与坑 98 同族。
+
+**做法**：新增**一个共享解析器** `scripts/lib/dsh-tools-validator.mjs`（两个套件都用它，不写第二份清单）：
+候选顺序 = `DSH_TOOLS_PATH` → `$DSH_HOME/profiles/node_modules` → 三个 profile 各自的 `node_modules`
+→ **npm 全局安装内部** → `./node_modules`；找不到返回 `null`，调用方**大声 SKIP 并打印试过的路径**。
+新变量已登记进 `docs/env-vars.md`（那条守卫双向：代码读了没写下来也红——本次实测确实先红了一次）。
+
+**修后实测**：`test-tool-schemas` **22/22**、`test-tool-shape` **11/11**（修前各 `9/9` 且动态块整块跳过）；
+即 4 个工具的 `output.schema` / 9 条代表性 fixture 对 **0.2.0-rc.2 自带**的校验器**零违规**，
+反向证明（给 matches 加未声明字段必须被判违规）也是拿那个校验器跑的。
+
+### 二、posture 契约拆分：安装器私有 vs 共享（陷阱 108）
+
+**缺陷**：安装清单给**每一个** posture 文件记 sha256 并当硬校验（"第三份完整性基线"）。
+其中 `cordis.patch.yml` 被同一个安装器在 650 行之外定义为"用户的层、永不重写"（`ensurePosture` 注释），
+而 **dsh 自己的设置面板按设计就重写它**：`@deepseek-ai/dsh-config-editor` 把整份文件重新序列化后追加自己那一行
+（`documentPath === profileContext.patchPath`，`:23-26`；`document.add(...)`，`:105-109`；`writeFileAtomic`，`:123`）。
+**逐字节复现**（用 dsh 自己的 `yaml` 包）：安装器写的 `3738 B` → 重序列化 `3749 B`（只有 2 行长 `!!js`
+标量被折成 4 行，YAML 默认 80 列）+ 追加 `774 B` 的 3 行 —— **不是人手编辑能产生的形态**。
+本机记录 `733715c9…`、现存 `69ea710a…`，13 个文件里**只此一个**不符。
+
+⇒ **门禁把"按插件自己的指示去 `cordis.patch.yml` 改配置"判成了故障，而且永久**：
+插件自己在 `notes-assistant.patch.yml:1-4` 就写着 *"user edits belong in `cordis.patch.yml`"*。
+**它不是 0.2.0 引入的**：该文件 mtime `2026-09-28 15:26`（早于 rc.2 发布），0.1.7 上同样会红；
+且 `dsh --dump-config` 在 0.2.0-rc.2 上实测**只重写 `cordis.yml`**（字节相同、mtime 每次变）、
+**完全不碰 `cordis.patch.yml`**。
+
+**判据**（写进契约）：**谁还会写这个文件**，而不是"谁创建了它"。
+`dsh/preset/profile-contract.mjs` 的新 `POSTURE_SHARED_FILES` 逐条带实测到的第二写入方：
+
+| 文件 | 第二写入方 | 处置 |
+|---|---|---|
+| `package.json` | dsh 的插件管理器（`dsh plugin add` 写 bundles/dependencies） | 共享：不冻结、不删 |
+| `cordis.yml` | dsh **每次**组合 profile 都重写成 `[]`（`--dump-config` 就会写） | 共享：不冻结、不删 |
+| `cordis.patch.yml` | 用户（按设计）+ dsh-config-editor | 共享：不冻结、不删 |
+| 模块 `.mjs` / `notes-assistant.patch.yml` / `pnpm-workspace.yaml` | 目前只有我们 | **继续硬基线** |
+
+**做法**：`postureDigests()` 跳过共享文件；`verifyPostureDigests()` 新增 `shared` 桶（**不是** drifted）；
+**卸载时共享文件无条件保留**（旧的"仅在漂移时保留"会在**未改动**时把它们删掉——那正是 2026-09-26
+那次丢配置的同一类）；旧清单里记了共享文件摘要的条目**重新归类**而非报 drift ⇒ **不用重装即转绿**。
+Obsidian 那半个（模板 `postureDigestsOf`）不能 import，过滤来自构建期注入的契约。
+
+**门禁**：`check-profile-contract.mjs` 新增 `PINNED-7`（此前**两个写入方没有任何守卫比对**）——
+它把模板那个函数**从 `main.js` 里取出来真求值**，拿同一份临时 profile 与 CLI 实现逐文件比对摘要，
+不比对源码文本（那只能钉住写法）。`test-installer` 相应重写：硬基线只数安装器私有文件、
+自变异受害者由 `cordis.patch.yml` 换成 `hook-frontmatter.mjs`（否则那条断言在拆分后**变成不可能失败**，
+正是坑 68/81 的形状），并新增"共享文件在**未改动**时也必须活过卸载"的夹具。
+**变异验证 3 条**（均实测报红 + 恢复后字节级一致）：CLI 侧漏过滤 ⇒ `PINNED-7b/7c` 红
+（`bootstrap=10 cli=13`）；模板侧漏过滤（重建 `main.js` 后）⇒ 同样红（`bootstrap=13 cli=10`）；
+卸载丢掉共享跳过 ⇒ "kept 0/3" 红。**结果**：`test: agent preset mounts` 由 **23/24 → 24/24**，
+且**没有碰用户真实的 profile**（`$DSH_HOME/profiles/notes-assistant` 一字节未改）。
+
+### 三、已死的 `agent-presets` 行不再静默丢失默认 preset（陷阱 108 同族，但独立）
+
+0.2.0 里 `- id: agent-presets` **全库零命中**（逐包 grep），`includeUserRoot` 同样。
+而 patch 行的 id 匹配不到任何行时 dsh **只 warn 并跳过** ⇒ 老版本插件装过的 profile 会静默失去
+"默认 preset = notes-assistant"。`ensurePresetDeclaration()` 只认自己那段 `BEGIN/END` 块，**不会**迁移它。
+
+**做法**：新增 `migrateRetiredPresetRow()` 并在 `ensurePresetDeclaration()` 里调用。判据刻意收窄（它改的是用户文件）：
+只认**顶层**序列项、id **恰好** `agent-presets`（`agent-presets-*` 不碰）；丢掉 `includeUserRoot`；
+其余内容与**行尾**逐字节保留；**幂等**。
+**门禁**：`test-installer` 新增 9 条，含**调用点**两条（覆盖"有/没有生成块"两个分支）——
+只测 helper 的话，未来重构把调用删掉仍会全绿。**变异验证**：把调用换成 `const migrated = false;` ⇒ 两条调用点断言红。
+
+**踩到的自己的坑（记为陷阱 111）**：第一版用 `/…(\r?\n)?$/` 去匹配**仍带 `\n` 的行**。
+JS 里 `$` 在**没有 `m` 标志**时也会匹配"尾随换行之前"的位置 ⇒ `(\r?\n)?` 组可以不被消费，
+`replace` 于是**悄悄吞掉行尾**。实测症状：断言 detail 打印 `renamed`（函数确实改了文件），
+但行数从 14 变 12（**该少 1 行却少了 2 行**）。修法：**在剥掉终止符的行体上匹配**。
+
+### 四、宿主新增风险（记录，不改）
+
+1. **`$DSH_HOME/cordis.patch.yml`（home 层）在 0.2.0 里压过 profile 自己的层**（陷阱 109）。
+   本机 home 层只有一条 `- insert:` 的 `pretooluse-guard` 行，**当前无冲突**；但若用户在 home 层写与插件同 id 的
+   `permission`/`approval`/`sandbox-policy`/`fs-sandbox` 行，那些行会被**静默覆盖**。属产品决策，已记 §7。
+2. **配置编辑器现在会拒绝**保存被 home patch 覆盖的行（`dsh-config-editor/lib/index.js:122`）——
+   它**堵住了**上一轮列的 C1（把 Obsidian 开关搬到插件 `Config`），C1 本就未拍板，现在多一条反对理由。
+3. **`dsh-base` 的 approval 默认值反了**（`:248` 是 `danger-full-access ? 'never' : 'ask'`，插件的 profile 层给的是相反映射）。
+   插件层赢，且启动检查（`dsh-permission-presets/lib/index.js:178-181`）目前由 `defaultPreset: math-memory-locked` 保证通过；
+   **改安全配置不属于"顺手做"**，只记录：若哪天去掉 `defaultPreset`，这条会红。
+4. **版本范围不许"顺手整理"**（陷阱 112）：`>=0.2.0` / `^0.2.0` 在 **prerelease** 运行时上**不匹配**，
+   dsh 会把 bundle 层**静默跳过**（**exit 0**，只有一行 stderr）。隔离 `DSH_HOME` 实测：
+   `>=0.2.0` ✗、`^0.2.0` ✗、`>=0.2.0-rc.2` ✓、`>=0.1.7-rc.2` ✓；**不声明 `peerDependencies` 整个 key ⇒ 完全不检查**。
+   另记：兼容门禁的失败信号是 **stderr + 组合结果被掏空**，**不是**非零退出（只有 `--dump-config-schema` 会 exit 1），
+   且真实启动时还有**第二道更严的按行门禁**（`dsh: disabling profile plugin row …`）——`--dump-config` 看不到它。
+
+### 五、版本声明与"明确不改"
+
+**用户拍板**：版本下限**保持 `>=0.1.7-rc.2`**（`dsh.engines.dsh` 与 `peerDependencies` 两处一致，
+由 `check-version-consistency.mjs` 钉住），在两个 README 的宿主要求行后**写明"0.2.0-rc.2 已实测"**。
+理由：0.2.0-rc.2 上没发现破坏 ⇒ 收紧下限会把还能用的 0.1.7-rc.2 用户挡在门外。
+README 的宿主要求**锚在 `package.json` 的 peer 范围上**（`check-doc-consistency.mjs:148-169`，派生而非字面量），
+所以改范围必须同时改 README；`check-readme-pair.mjs --write` 已重录。
+
+**明确不改**（防止过度适配）：`ctx.fs.readText` **没有被 `readBytes` 取代**——两者在
+`dsh-fs/lib/types/index.d.ts:162` 与 `:183` 区段**并列声明**（上一轮列为【待取证】，本轮确证）；
+`session.log` 仍是真实运行时字段（`dsh-session/lib/index.js:1249`），`.messages` 不存在（原有的良性 fallback）；
+`snapshotEvents`/`eventAt`/`ownEvents` 仍未使用；`!!js` patch 方言未变（且 0.2.0 **没有** `remove:` 操作，插件不用它）；
+会话仍是 V4（本机 26/26 `session.v4.jsonl.zstd`）。
+
+### 六、同批：lemmalog 评估 —— **不引入**
+
+`JordyZomer/lemmalog` 是真实的（Rust、MIT、326 stars、双时态 Datalog、半朴素增量、`why()` 证明树、MCP 服务），
+但它是 **fit failure 而非质量问题**：四个彼此独立的阻断项（要新增一层记忆 / 打破"vault = 唯一持久化、纯 Markdown" /
+三条安装通道没有一条能交付 `cargo build` 产物 / 主用法是 MCP 而 preset 刻意不挂那个面），
+每条在本仓库都有**书面决定**。它许诺的两个好处也已被覆盖或**有意拒绝**
+（传递式级联 `design.md:130` 拒绝；来源链已设计为纯 JS 的 V0–V9 计划；图检索实测 **flat > graph**）。
+详见 [`lemmalog-assessment-2026-10-01.md`](lemmalog-assessment-2026-10-01.md)。**决策已登记进 `handoff.md` §5。**
+
+### 七、本轮**不属于**本轮的一条红（分类而非"修"）
+
+`check: doc constants` 曾报 `docs/literature.md claims 30 papers, but literature/.raw holds 34 directories`。
+取证：`literature/.raw` 下多了 4 个目录（mtime `2026-10-01 13:22`），卡片/研读笔记/`index.md`/`.index.json`/`library.bib`
+都已生成 ⇒ **是另一次文献导入的产物**，与本插件、与 0.2.0 无关；而该文件的计数是一串相互关联的数字（30/27/26），
+只改一个会更糊涂。**按 `AGENTS.md` §4 的纪律不去改断言掩盖**。⇒ 随后该次导入的负责人**自己**把
+`docs/literature.md` 更新成 34/31，门禁自行转绿。**这正是"先分类再动手"该有的结果。**
+
+
 ## 2026-09-27 · `--force` 不再覆写 profile 的 `package.json`：**已实现**（同类最后一处）
 
 **这是陷阱 103 那一类的第二处，也是最后一处**：`<profile>/package.json` 是 profile 的清单，

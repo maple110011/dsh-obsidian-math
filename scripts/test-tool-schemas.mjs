@@ -21,6 +21,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { findDshToolsValidator, dshToolsSearchHint } from './lib/dsh-tools-validator.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const source = readFileSync(join(root, 'dsh', 'preset', 'note-tools.mjs'), 'utf8');
@@ -137,8 +138,11 @@ for (const name of TOOLS) {
 }
 
 // ── ② 动态：用 dsh 自己的校验器验证代表性值 ────────────────────────────────
-const dshHome = process.env.DSH_HOME || join(process.env.USERPROFILE ?? '', '.dsh');
-const validatorPath = join(dshHome, 'profiles', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js');
+// ⚠️ 2026-10-01: this used to hardcode `<DSH_HOME>/profiles/node_modules/…`, which does not exist for an
+// `npm i -g` dsh — so the whole block skipped while the gate still reported 9/9. Resolution (and the
+// measured evidence) lives in `scripts/lib/dsh-tools-validator.mjs`. If it returns null, we SKIP **loudly**
+// and name the paths tried: a check that cannot run must not look like a check that passed.
+const validatorPath = findDshToolsValidator();
 const fixtures = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'tool-outputs.json'), 'utf8'));
 
 /** output.schema 的数据字面量（源码里是纯数据）。 */
@@ -151,9 +155,10 @@ function schemaSpec(name) {
   return new Function(`return (${schema.body})`)();
 }
 
-if (!existsSync(validatorPath)) {
-  skip('用 dsh 的 validateJsonSchemaValue 校验代表性值', `没有本地 dsh-tools（${validatorPath}）`);
+if (validatorPath === null) {
+  skip('用 dsh 的 validateJsonSchemaValue 校验代表性值', `找不到 dsh-tools —— ${dshToolsSearchHint()}`);
 } else {
+  console.log(`dsh-tools validator: ${validatorPath}`);
   const { validateJsonSchemaValue, valueSchemaSpecToJsonSchema } = await import(pathToFileURL(validatorPath).href);
   for (const name of TOOLS) {
     const json = valueSchemaSpecToJsonSchema(schemaSpec(name));
@@ -168,8 +173,8 @@ if (!existsSync(validatorPath)) {
 
 // ── ③ 变异验证（默认关闭，`--mutate` 打开）──────────────────────────────────
 if (process.argv.includes('--mutate')) {
-  if (!existsSync(validatorPath)) {
-    skip('变异验证', '需要本地 dsh-tools');
+  if (validatorPath === null) {
+    skip('变异验证', `需要本地 dsh-tools —— ${dshToolsSearchHint()}`);
   } else {
     const { validateJsonSchemaValue, valueSchemaSpecToJsonSchema } = await import(pathToFileURL(validatorPath).href);
     const json = valueSchemaSpecToJsonSchema(schemaSpec('note_recall'));

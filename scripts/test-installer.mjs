@@ -5,10 +5,10 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 // Aliased: this file already has a local `writeManifest` helper (a fixture that writes an owner marker).
-import { verifyPostureDigests, ensurePresetDeclaration, stripPresetDeclaration, ensurePosture, ensureProfileManifest, assertHarnessHome, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
+import { verifyPostureDigests, ensurePresetDeclaration, migrateRetiredPresetRow, stripPresetDeclaration, ensurePosture, ensureProfileManifest, assertHarnessHome, writeManifest as writeInstallManifest } from '../dsh/install.mjs';
 // The contract is the source for "what a profile needs" — assertions below derive from it instead of
 // hardcoding counts that rot the moment a file is added (2026-09-26).
-import { PROFILE_SCAFFOLD_FILES, PRESET_BODY_FILES } from '../dsh/preset/profile-contract.mjs';
+import { PROFILE_SCAFFOLD_FILES, PRESET_BODY_FILES, POSTURE_SHARED_FILES } from '../dsh/preset/profile-contract.mjs';
 // The declaration markers come from the generator that emits them. The fixture below used to hardcode
 // a TRUNCATED END copy, which silently made `staleBlock` one ` <<<` shorter than the real block — so
 // once `install.mjs` stopped truncating, this fixture reported a false failure ("returned false").
@@ -458,11 +458,21 @@ check('the retired .agent-presets directory is NOT created by --direct', !exists
 // verifier — reused by the real-deployed-profile gate — actually notices a change.
 {
   const manifest = JSON.parse(readFileSync(join(profileRoot, '.install-manifest.json'), 'utf8'));
-  const present = manifest.posture.filter((n) => existsSync(join(profileRoot, n)));
+  // ⚠️ Only the INSTALLER-OWNED posture files can be hash-frozen (2026-10-01 contract split). The shared
+  // ones are also written by dsh and by the user, so freezing them promised something we cannot keep —
+  // see `POSTURE_SHARED_FILES` in the contract for the per-file evidence.
+  const owned = manifest.posture.filter((n) => !POSTURE_SHARED_FILES.includes(n));
+  const present = owned.filter((n) => existsSync(join(profileRoot, n)));
   const recorded = Object.keys(manifest.postureDigests ?? {});
-  check('manifest records a digest for every posture file present on disk',
+  check('manifest records a digest for every INSTALLER-OWNED posture file present on disk',
     recorded.length === present.length && present.every((n) => typeof manifest.postureDigests[n] === 'string'),
     `${recorded.length}/${present.length}`);
+  check('no shared posture file is hash-frozen (dsh and the user write those)',
+    POSTURE_SHARED_FILES.every((n) => manifest.postureDigests?.[n] === undefined),
+    POSTURE_SHARED_FILES.filter((n) => manifest.postureDigests?.[n] !== undefined).join(', ') || 'none frozen');
+  check('the shared posture files are still listed in the uninstall table',
+    POSTURE_SHARED_FILES.filter((n) => existsSync(join(profileRoot, n))).every((n) => manifest.posture.includes(n)),
+    `posture=${manifest.posture.length}`);
 
   const clean = verifyPostureDigests(profileRoot, manifest);
   check('the digests verify against a freshly installed profile',
@@ -471,14 +481,30 @@ check('the retired .agent-presets directory is NOT created by --direct', !exists
 
   // self-mutation: the verifier must notice a byte changed behind the manifest's back,
   // and must go quiet again once the file is restored.
-  const victim = join(profileRoot, 'cordis.patch.yml');
+  //
+  // The victim MUST be an installer-owned file. It used to be `cordis.patch.yml`; after the contract split
+  // that file is deliberately unfrozen, so leaving it here would have made this assertion untestable in
+  // the way that matters — and a mutation test that cannot fail is decoration (AGENTS.md §6, trap 68/81).
+  const victimName = 'hook-frontmatter.mjs';
+  check('fixture: the self-mutation victim is an installer-owned posture file',
+    owned.includes(victimName));
+  const victim = join(profileRoot, victimName);
   const original = readFileSync(victim, 'utf8');
-  writeFileSync(victim, original + '\n# tampered\n', 'utf8');
+  writeFileSync(victim, original + '\n// tampered\n', 'utf8');
   const dirty = verifyPostureDigests(profileRoot, manifest);
   writeFileSync(victim, original, 'utf8');
   check('a tampered posture file is reported as drifted (and restoring it clears the report)',
-    dirty.drifted.includes('cordis.patch.yml') && verifyPostureDigests(profileRoot, manifest).drifted.length === 0,
+    dirty.drifted.includes(victimName) && verifyPostureDigests(profileRoot, manifest).drifted.length === 0,
     JSON.stringify(dirty.drifted));
+
+  // The other half of the contract: a SHARED file must be reported in its own bucket, never as drift.
+  // Without this, "we stopped freezing it" and "we stopped noticing anything" look identical.
+  const sharedPresent = POSTURE_SHARED_FILES.filter((n) => existsSync(join(profileRoot, n)));
+  check('a shared posture file is reported as shared, not as drifted',
+    sharedPresent.length > 0
+      && sharedPresent.every((n) => clean.shared.includes(n))
+      && sharedPresent.every((n) => !clean.drifted.includes(n)),
+    `shared=${JSON.stringify(clean.shared)}`);
 
   check('a manifest from before this change is reported as unrecorded, NOT as clean',
     verifyPostureDigests(profileRoot, { owner: 'direct', posture: ['cordis.patch.yml'] }).unrecorded === true);
@@ -763,15 +789,17 @@ check('dry-run keeps the retired directory it found', existsSync(legacyMarkerPat
   const editedHome = mkdtempSync(join(tmpdir(), 'dsh-home-edited-'));
   const editedProfile = join(editedHome, 'profiles', 'notes-assistant');
   mkdirSync(editedProfile, { recursive: true });
-  const posture = 'cordis.patch.yml';
-  const originalPosture = '- insert:\n    - id: ours\n      name: ./ours.mjs\n';
+  // The victim must be an INSTALLER-OWNED file: a shared one is no longer hash-frozen, so drift on it is
+  // no longer the thing this fixture exists to prove (see the contract split, 2026-10-01).
+  const posture = 'hook-frontmatter.mjs';
+  const originalPosture = '// ours\nexport const x = 1;\n';
   writeFileSync(join(editedProfile, posture), originalPosture, 'utf8');
   // Record the digest of what we "wrote", exactly as an install would.
   writeInstallManifest({ dryRun: false, quiet: true }, editedProfile, 'npm', [posture], []);
   check('fixture: the install manifest records a digest for the posture file',
     typeof JSON.parse(readFileSync(join(editedProfile, '.install-manifest.json'), 'utf8')).postureDigests?.[posture] === 'string');
   // Now the user edits it (this is the dsh-config-editor shape).
-  const userEdited = originalPosture + '\n# my own dsh settings\n- insert:\n    - id: user-llm\n      name: ./my-llm.mjs\n';
+  const userEdited = originalPosture + '\n// my own dsh settings\n';
   writeFileSync(join(editedProfile, posture), userEdited, 'utf8');
   const beforeUninstall = verifyPostureDigests(editedProfile, JSON.parse(readFileSync(join(editedProfile, '.install-manifest.json'), 'utf8')));
   check('fixture: the edit is detected as drift (so the assertion below can fail)',
@@ -780,9 +808,43 @@ check('dry-run keeps the retired directory it found', existsSync(legacyMarkerPat
   const editedRun = run(['uninstall', '--yes', '--force', '--dsh-home', editedHome]);
   const survived = existsSync(join(editedProfile, posture));
   check('uninstall KEEPS a hand-edited posture file instead of deleting the user\'s settings',
-    survived && readFileSync(join(editedProfile, posture), 'utf8').includes('user-llm'),
+    survived && readFileSync(join(editedProfile, posture), 'utf8').includes('my own dsh settings'),
     `exit=${editedRun.status} survived=${survived}`);
   rmSync(editedHome, { recursive: true, force: true });
+}
+
+// ── the SHARED posture files must survive uninstall even when UNTOUCHED ───────────────────────────
+//
+// WHY (2026-10-01, contract split): the previous guard was "keep it only if it drifted". That happens to
+// save a file the user edited — but `cordis.patch.yml` and `package.json` also hold configuration dsh
+// wrote for the user (their providers, their default model, the bundles they added), and in the untouched
+// case the old loop DELETED them. Uninstalling our plugin must never take away configuration that is not
+// ours, so shared files are now kept unconditionally. This fixture is the mutation: restore the old
+// "delete unless drifted" rule and these assertions go red.
+{
+  const sharedHome = mkdtempSync(join(tmpdir(), 'dsh-home-shared-'));
+  const sharedProfile = join(sharedHome, 'profiles', 'notes-assistant');
+  mkdirSync(sharedProfile, { recursive: true });
+  const sharedNames = POSTURE_SHARED_FILES.slice();
+  const ownedName = 'hook-frontmatter.mjs';
+  for (const [name, body] of [[ownedName, '// ours\n']]) writeFileSync(join(sharedProfile, name), body, 'utf8');
+  // A shared file with content that dsh (not we) put there — the user's own settings.
+  writeFileSync(join(sharedProfile, 'cordis.patch.yml'), '- insert:\n    - id: user-llm\n      name: ./my-llm.mjs\n', 'utf8');
+  for (const name of sharedNames) if (!existsSync(join(sharedProfile, name))) writeFileSync(join(sharedProfile, name), '[]\n', 'utf8');
+  writeInstallManifest({ dryRun: false, quiet: true }, sharedProfile, 'npm', [...sharedNames, ownedName], []);
+  check('fixture: the shared posture files are listed but NOT hash-frozen',
+    sharedNames.every((n) => JSON.parse(readFileSync(join(sharedProfile, '.install-manifest.json'), 'utf8')).postureDigests?.[n] === undefined)
+      && typeof JSON.parse(readFileSync(join(sharedProfile, '.install-manifest.json'), 'utf8')).postureDigests?.[ownedName] === 'string');
+
+  const sharedRun = run(['uninstall', '--yes', '--force', '--dsh-home', sharedHome]);
+  const sharedKept = sharedNames.filter((n) => existsSync(join(sharedProfile, n)));
+  check('uninstall keeps ALL shared posture files, untouched ones included',
+    sharedKept.length === sharedNames.length, `kept ${sharedKept.length}/${sharedNames.length}`);
+  check('uninstall still removes the installer-owned posture file it wrote',
+    !existsSync(join(sharedProfile, ownedName)));
+  check('the kept shared file still holds the user\'s own rows',
+    readFileSync(join(sharedProfile, 'cordis.patch.yml'), 'utf8').includes('user-llm'));
+  rmSync(sharedHome, { recursive: true, force: true });
 }
 
 // 6. full uninstall
@@ -798,7 +860,14 @@ check('full uninstall exit 0', r.status === 0);
 check('retired .agent-presets directory removed (migration cleanup)', !existsSync(legacyDir));
 check('deployed preset body removed from the profile dir', !existsSync(join(profileRoot, 'math-memory.mjs'))
   && !existsSync(join(profileRoot, 'note-tools.mjs')));
-check('posture removed', !existsSync(join(profileRoot, 'cordis.patch.yml')));
+check('installer-owned posture removed', !existsSync(join(profileRoot, 'hook-frontmatter.mjs'))
+  && !existsSync(join(profileRoot, 'engine-shared.mjs')));
+// Contract split (2026-10-01): the SHARED posture files survive even `--purge`, because `package.json`
+// lists the bundles the user added, `cordis.yml` is dsh's own root, and `cordis.patch.yml` is where the
+// user's providers and default model live. `--purge` is "remove our plugin", not "remove their setup".
+check('shared posture files survive --purge (they may hold the user\'s own dsh config)',
+  POSTURE_SHARED_FILES.filter((n) => existsSync(join(profileRoot, n))).length > 0,
+  `kept ${POSTURE_SHARED_FILES.filter((n) => existsSync(join(profileRoot, n))).join(', ') || 'none'}`);
 check('manifest removed', !existsSync(join(profileRoot, '.install-manifest.json')));
 check('vault AGENTS.md removed', !existsSync(join(vault, 'AGENTS.md')));
 check('vault cache removed', !existsSync(join(vault, '.deepseek', 'cache')));
@@ -875,6 +944,70 @@ rmSync(vault, { recursive: true, force: true });
     after.includes('id: user-thing'));
   check('declaration: a second run is a no-op (idempotent)', ensurePresetDeclaration(refreshProfile) === false);
   rmSync(refreshHome, { recursive: true, force: true });
+}
+
+// ── the RETIRED `agent-presets` row must be migrated, not left dead ──────────────────────────────
+//
+// 2026-10-01 (0.2.0 adaptation). A profile installed before A1b carries `- id: agent-presets`, which no
+// version of dsh has had since 0.1.7 (0.2.0: zero hits across every bundled package). A patch entry whose
+// id matches no row is only WARNED about and skipped, so the profile silently loses
+// `default: notes-assistant` — the same silent-failure class A1b itself fixed in the SHIPPED source,
+// but never migrated in profiles that were already on disk. Assertions, in order:
+//   ① the dead row is renamed to the current id;  ② the obsolete `includeUserRoot` key is dropped;
+//   ③ everything else in the file survives byte-for-byte;  ④ a second run is a no-op (idempotent);
+//   ⑤ a `<id>-suffix` row is NOT touched (the pattern must be anchored, not a substring match).
+{
+  const migHome = mkdtempSync(join(tmpdir(), 'dsh-decl-migrate-'));
+  mkdirSync(migHome, { recursive: true });
+  const target = join(migHome, 'cordis.patch.yml');
+  const preExisting =
+    "# the user's own row\n- insert:\n    - id: user-thing\n      name: ./user.mjs\n\n"
+    + '- id: agent-presets\n  config:\n    includeUserRoot: true\n    default: notes-assistant\n\n'
+    + '- id: agent-presets-lookalike\n  config:\n    default: keep-me\n';
+  writeFileSync(target, preExisting, 'utf8');
+  const migrated = migrateRetiredPresetRow(target);
+  const after = readFileSync(target, 'utf8');
+  check('migrate: the retired `agent-presets` row is renamed to the current id',
+    migrated === true && /^-\s*id:\s*agent-preset-registry\s*$/m.test(after) && !/^-\s*id:\s*agent-presets\s*$/m.test(after),
+    migrated ? 'renamed' : 'returned false');
+  check('migrate: the obsolete `includeUserRoot` key is dropped (it is not in the current schema)',
+    !after.includes('includeUserRoot') && after.includes('default: notes-assistant'));
+  check('migrate: the rest of the file survives byte-for-byte, including a lookalike id',
+    after.includes("id: user-thing") && after.includes('id: agent-presets-lookalike')
+      && after.includes('default: keep-me') && after.split('\n').length === preExisting.split('\n').length - 1,
+    `${preExisting.split('\n').length} -> ${after.split('\n').length} lines`);
+  check('migrate: a second run is a no-op (idempotent)', migrateRetiredPresetRow(target) === false);
+  check('migrate: a file with no retired row is left alone',
+    migrateRetiredPresetRow(join(migHome, 'cordis.yml')) === false);
+  check('migrate: an ABSENT file returns false instead of throwing',
+    migrateRetiredPresetRow(join(migHome, 'nope.yml')) === false);
+  rmSync(migHome, { recursive: true, force: true });
+}
+
+// The CALL SITE, not just the helper: `ensurePresetDeclaration` is what every install path runs, so a
+// future refactor that drops the migration would leave the function green and the profiles broken. Two
+// shapes, because they exercise different branches of `ensurePresetDeclaration`: with and without the
+// generated declaration block already present.
+{
+  const callHome = mkdtempSync(join(tmpdir(), 'dsh-decl-callsite-'));
+  mkdirSync(callHome, { recursive: true });
+  const scaffold = readFileSync(join(repo, 'dsh', 'profile', 'cordis.patch.yml'), 'utf8');
+  const block = scaffold.slice(scaffold.indexOf(DECLARATION_BEGIN), scaffold.indexOf(DECLARATION_END) + DECLARATION_END.length);
+  const retired = '- id: agent-presets\n  config:\n    includeUserRoot: true\n    default: notes-assistant\n';
+  for (const [label, contents] of [
+    ['without the generated block', `${retired}\n`],
+    ['with the generated block', `${retired}\n${block}\n`]
+  ]) {
+    const profile = join(callHome, label.replace(/\s+/g, '-'));
+    mkdirSync(profile, { recursive: true });
+    writeFileSync(join(profile, 'cordis.patch.yml'), contents, 'utf8');
+    ensurePresetDeclaration(profile);
+    const out = readFileSync(join(profile, 'cordis.patch.yml'), 'utf8');
+    check(`callsite: ensurePresetDeclaration migrates the retired row (${label})`,
+      out.includes('id: agent-preset-registry') && !/^-\s*id:\s*agent-presets\s*$/m.test(out) && !out.includes('includeUserRoot'),
+      out.split('\n').filter((l) => l.includes('agent-preset')).join(' | '));
+  }
+  rmSync(callHome, { recursive: true, force: true });
 }
 
 // Two channels, two shapes for the SAME generated block — the 2026-09-26 install audit measured what

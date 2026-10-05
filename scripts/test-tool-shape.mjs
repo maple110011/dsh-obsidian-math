@@ -11,6 +11,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { findDshToolsValidator, dshToolsSearchHint } from './lib/dsh-tools-validator.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tools = await import(pathToFileURL(join(root, 'dsh', 'preset', 'note-tools.mjs')).href);
@@ -149,9 +150,11 @@ check('note_recall（收窄后）：matches/excluded 没有未声明字段', rec
 const rawShape = extraKeys(schemaSpec('note_recall'), { query: 'q', mode: ranked.mode, operator: null, matches: passThroughMatches, excluded: [] });
 check('反证：管线 matches 直通值（带 hook/boundary）会被判出多余字段', rawShape.some((key) => /matches\[\d+\]\.(hook|boundary)$/.test(key)), rawShape.join(', ') || '(none)');
 
-// ②b 同一条反证用 dsh 自己的校验器再跑一遍（有本地 dsh-tools 时）。
-const validatorPath = join(process.env.DSH_HOME || join(process.env.USERPROFILE ?? '', '.dsh'), 'profiles', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js');
-if (existsSync(validatorPath)) {
+// ②b 同一条反证用 dsh 自己的校验器再跑一遍（能找到 dsh-tools 时）。
+// ⚠️ 2026-10-01: the path used to be hardcoded to `<DSH_HOME>/profiles/node_modules/…`, which is absent
+// for an npm-global dsh — so this block silently skipped. Shared resolver: scripts/lib/dsh-tools-validator.mjs.
+const validatorPath = findDshToolsValidator();
+if (validatorPath !== null) {
   const { validateJsonSchemaValue, valueSchemaSpecToJsonSchema } = await import(pathToFileURL(validatorPath).href);
   const json = valueSchemaSpecToJsonSchema(schemaSpec('note_recall'));
   const widened = { query: 'q', mode: ranked.mode, operator: null, matches: passThroughMatches, excluded: [] };
@@ -160,7 +163,7 @@ if (existsSync(validatorPath)) {
   const clean = validateJsonSchemaValue(json, recallNarrowed, 'value');
   check('dsh 校验器：收窄后的值必须通过', clean.length === 0, clean.slice(0, 2).join(' / '));
 } else {
-  console.log('[skip] 用 dsh 的校验器复核 | 没有本地 dsh-tools');
+  console.log(`[skip] 用 dsh 的校验器复核 | 找不到 dsh-tools —— ${dshToolsSearchHint()}`);
 }
 
 // ③ 策略卡：excluded 收窄 + matches 带 title。

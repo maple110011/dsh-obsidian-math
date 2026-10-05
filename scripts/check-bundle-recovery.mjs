@@ -143,8 +143,14 @@ const HARNESS_PRELUDE = [
   '  return true;',
   '}',
   'function postureDigestsOf(profileRoot, files) {',
+  // Must mirror the template's `postureDigestsOf` exactly: shared posture files (dsh and the user write
+  // them too) are deliberately NOT hash-frozen, and the list comes from the contract, not a second
+  // hand-written copy. `scripts/check-profile-contract.mjs` PINNED-7 compares the two implementations
+  // behaviourally on the same fixture.
+  '  const shared = PROFILE_CONTRACT.postureSharedFiles ?? [];',
   '  const out = {};',
   '  for (const name of files) {',
+  '    if (shared.includes(name)) continue;',
   '    const p = join(profileRoot, name);',
   '    if (!existsSync(p)) continue;',
   "    out[name] = createHash('sha256').update(readFileSync(p)).digest('hex');",

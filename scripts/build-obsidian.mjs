@@ -8,7 +8,7 @@
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 // The ONE statement of what goes into a profile. Injected into the template below so the Obsidian
 // bootstrap stops hand-writing its own copy (2026-09-26, A′/B2).
-import { PRESET_BODY_FILES, PROFILE_SCAFFOLD_FILES, OVERLAY_ROWS, PANEL_ROUTES } from "../dsh/preset/profile-contract.mjs";
+import { PRESET_BODY_FILES, PROFILE_SCAFFOLD_FILES, OVERLAY_ROWS, PANEL_ROUTES, POSTURE_SHARED_FILES } from "../dsh/preset/profile-contract.mjs";
 // The ONE statement of what a materialized local bundle contains. The payload below is derived from it
 // so the plugin cannot materialize a package that differs from the one the CLI builds (A′ S4 Obsidian
 // half, 2026-09-26).
@@ -236,7 +236,11 @@ export function buildMain() {
       presetBodyFiles: PRESET_BODY_FILES,
       profileScaffoldFiles: PROFILE_SCAFFOLD_FILES,
       overlayRows: OVERLAY_ROWS,
-      panelRoutes: PANEL_ROUTES
+      panelRoutes: PANEL_ROUTES,
+      // Which posture files may NOT be hash-frozen (dsh and the user write them too). The Obsidian
+      // installer computes the same integrity baseline as `dsh/install.mjs`, so this filter has to come
+      // from the one contract rather than a second hand-written list in the template.
+      postureSharedFiles: POSTURE_SHARED_FILES
     })));
 }
 

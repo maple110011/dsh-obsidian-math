@@ -19,12 +19,14 @@
  *   ④ 只改模板里的文件清单 ⇒ PINNED-4 红。
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRESET_BODY_FILES } from '../dsh/preset/preset-deploy.mjs';
-import { PRESET_BODY_FILES as CONTRACT_BODY, PROFILE_SCAFFOLD_FILES, OVERLAY_ROWS, PANEL_ROUTES, OWN_ROW_ID_PATTERN } from '../dsh/preset/profile-contract.mjs';
-import { DIRECT_PROFILE_FILES } from '../dsh/install.mjs';
+import { PRESET_BODY_FILES as CONTRACT_BODY, PROFILE_SCAFFOLD_FILES, OVERLAY_ROWS, PANEL_ROUTES, OWN_ROW_ID_PATTERN, POSTURE_SHARED_FILES } from '../dsh/preset/profile-contract.mjs';
+import { DIRECT_PROFILE_FILES, postureDigests } from '../dsh/install.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(root, rel), 'utf8');
@@ -111,10 +113,55 @@ const injected = JSON.stringify({
   presetBodyFiles: CONTRACT_BODY,
   profileScaffoldFiles: PROFILE_SCAFFOLD_FILES,
   overlayRows: OVERLAY_ROWS,
-  panelRoutes: PANEL_ROUTES
+  panelRoutes: PANEL_ROUTES,
+  postureSharedFiles: POSTURE_SHARED_FILES
 });
 check('READ-2b 生成物 main.js 里注入的契约与当前契约逐字节一致（改了契约没重建 ⇒ 红）',
   read('main.js').includes(JSON.stringify(injected)), `expects ${JSON.stringify(injected).length} chars`);
+
+// ── PINNED-7: 两个 manifest 写入方必须排除**同一批** posture 文件 ───────────────────────────────
+//
+// WHY (2026-10-01, 真机红门禁的根因)：两个安装器各自算一遍"完整性基线"——CLI 走
+// `dsh/install.mjs → postureDigests()`，Obsidian 引导走模板里的 `postureDigestsOf()`（它不能 import
+// 任何模块）。两边都过滤 `POSTURE_SHARED_FILES`；**只要一方漏了**，同一台机器上两条通道装出来的
+// manifest 就会对同一份文件给出不同结论，而两边都"自认为对"。
+// 这里不比对源码文本（那只能钉住写法），而是**真的把模板里那个函数从 main.js 里取出来求值**，
+// 拿同一份临时 profile 与 CLI 的实现逐个文件比对摘要 —— 任何一方手写第二份清单都会红。
+{
+  check('PINNED-7 共享 posture 清单里的每个名字都在契约的文件清单里（否则排除判据无意义）',
+    POSTURE_SHARED_FILES.every((name) => [...CONTRACT_BODY, ...PROFILE_SCAFFOLD_FILES].includes(name)),
+    `${POSTURE_SHARED_FILES.length} 个共享文件`);
+
+  const fnSrc = /function postureDigestsOf\([\s\S]*?\n\}/.exec(read('main.js'))?.[0];
+  check('PINNED-7a main.js 里有模板那份 postureDigestsOf（取不到 = 改名了，该门禁会静默失效）',
+    typeof fnSrc === 'string' && fnSrc.length > 0);
+
+  if (typeof fnSrc === 'string') {
+    const allFiles = [...CONTRACT_BODY, ...PROFILE_SCAFFOLD_FILES];
+    const probe = mkdtempSync(join(tmpdir(), 'dsh-posture-parity-'));
+    try {
+      for (const name of allFiles) writeFileSync(join(probe, name), `# ${name}\n`, 'utf8');
+      const pluginDigests = new Function(
+        'PROFILE_CONTRACT', 'createHash', 'readFileSync', 'join',
+        `${fnSrc}\nreturn postureDigestsOf;`
+      )({ postureSharedFiles: POSTURE_SHARED_FILES }, createHash, readFileSync, join);
+      const a = pluginDigests(probe, allFiles);
+      const b = postureDigests(probe, allFiles);
+      // Compare the *decisions*, not just the keys: a writer that froze a shared file would show up as an
+      // extra key, and one that dropped an installer-owned file as a missing key.
+      const same = sameSet(Object.keys(a), Object.keys(b));
+      check('PINNED-7b 两个安装器对同一份 profile 算出同一组摘要键（含"哪些文件不冻结"）',
+        same, `bootstrap=${Object.keys(a).length} cli=${Object.keys(b).length}`);
+      check('PINNED-7c 两个安装器对同一份文件算出同一个摘要值',
+        same && Object.keys(b).every((n) => a[n] === b[n]));
+      check('PINNED-7d 共享 posture 文件确实**没有**被写成摘要（否则又回到永久飘红）',
+        POSTURE_SHARED_FILES.every((n) => b[n] === undefined && a[n] === undefined),
+        `cli=${JSON.stringify(Object.keys(b))}`);
+    } finally {
+      rmSync(probe, { recursive: true, force: true });
+    }
+  }
+}
 
 // ── PINNED-6: every contracted file must have a WRITE mechanism in BOTH writers ────────────────
 //

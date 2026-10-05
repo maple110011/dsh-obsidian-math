@@ -431,7 +431,8 @@ function spliceIntoPatchLayer(current, row) {
     const row = [
       "",
       `# ${PKG} —— 记忆面板的客户端半个（由安装器写入）。`,
-      "# 这一层是 profile 自己的 patch 层，没有任何人会重写它，所以这行会留住；",
+      "# 这一层是 profile 自己的 patch 层，本安装器不会再重写它（dsh 自己的设置面板会改写它——",
+      "# 2026-10-01 实测：dsh-config-editor 保存设置时会整份重新序列化并追加自己那一行），所以这行会留住；",
       "# 删掉本行即等于在面板里卸掉客户端半个。",
       "- insert:",
       `    - id: ${INSERT_ID}`,

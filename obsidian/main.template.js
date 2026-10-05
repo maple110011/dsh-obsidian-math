@@ -298,11 +298,20 @@ function ensureFile(target, content, overwrite = false) {
  * this one must run inside Obsidian with no npm/pnpm). The manifest is the anchor that
  * `dsh/host/channel-owner.mjs` reads, so the digests travel with the ownership record.
  *
- * @returns `{ [name]: sha256 }` for the files that are present.
+ * ⚠️ EXCLUDES `PROFILE_CONTRACT.postureSharedFiles`. Those files are also written by dsh (its plugin
+ * manager and its config editor) and by the user, so freezing their bytes promises something we cannot
+ * keep — the 2026-10-01 real-machine red gate, where the user's own dsh settings save made the recorded
+ * digest expire forever and the "integrity" check called it a fault. The list lives in
+ * `dsh/preset/profile-contract.mjs` (injected above); do NOT re-add a hand-written copy here — the
+ * filter MUST agree with the CLI installer's or the two writers' manifests disagree.
+ *
+ * @returns `{ [name]: sha256 }` for the installer-owned files that are present.
  */
 function postureDigestsOf(profileRoot, files) {
+  const shared = PROFILE_CONTRACT.postureSharedFiles ?? [];
   const out = {};
   for (const name of files) {
+    if (shared.includes(name)) continue;
     try {
       out[name] = createHash('sha256').update(readFileSync(join(profileRoot, name))).digest('hex');
     } catch {

@@ -52,6 +52,7 @@
 
 ## 要求
 - Obsidian 桌面版；Node.js ≥ 22.5；DeepSeek Harness（npm 全局 `@deepseek-ai/dsh`，**要求 ≥ 0.1.7-rc.2**——本版适配了 0.1.7 的 preset 声明机制，见 [`docs/dsh-0.1.7-adaptation.md`](docs/dsh-0.1.7-adaptation.md)；会话数据格式 V3 的适配见 [`docs/dsh-0.1.5-adaptation.md`](docs/dsh-0.1.5-adaptation.md)）；已配置的 DeepSeek 模型。
+  - **同时已在 `0.2.0-rc.2` 上实测**（当前 npm `latest`），而下限**有意**留在 `0.1.7-rc.2`：那个版本仍然可用，本轮审计**没有发现破坏性变更**、只做了契约修正。逐接口的核对与证据见 [`docs/dsh-0.2.0-adaptation.md`](docs/dsh-0.2.0-adaptation.md)。⚠️ **不要**把这个范围收紧成 `>=0.2.0` 或 `^0.2.0`——在 `0.2.0-rc.2` 这类 prerelease 运行时上它**不匹配**，dsh 会**静默跳过**插件的 bundle 层（退出码 0，只有一行 stderr）。
 - 默认端口 **3180**（与 dsh web 的 3080 并存不冲突，可在设置里改）。
 
 ## 安装
@@ -90,7 +91,7 @@ vault/
 ## 开发与质量
 
 ```bash
-npm test          # 语法 + 427 项零 token 回归 + 路由回归（62 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
+npm test          # 语法 + 455 项零 token 回归 + 路由回归（62 项路由断言） + 侧栏认证握手回归（8 项，对真实 dsh）+ 侧栏反代回归（32 项）+ 安装器 e2e（漂移检测）
 npm run qa        # 引擎探针：真实 vault 12 组召回断言 + 可达性分层/A-B 测量（零 token）
 npm run qa:e2e    # 真实会话端到端验收（烧真实 tokens，报告 API 级 usage）
 node scripts/build-obsidian.mjs   # 重建 main.js（改共享文件后必跑）
@@ -101,7 +102,7 @@ node scripts/deploy-local.mjs     # 本机一键部署
 - **记忆系统知识库**：[docs/memory/](docs/memory/)——design（实现规格）、retrieval-v3（检索提案 + §7 GraphMemix 吸纳决策与 A/B 实测）、testing（QA 方法论）、assessment、references（论文笔记）、[sidebar-performance](docs/memory/sidebar-performance.md)（侧栏卡顿的原因清单与处置）、changelog、handoff。
 - **宿主版本适配**：[docs/dsh-0.1.5-adaptation.md](docs/dsh-0.1.5-adaptation.md)——dsh 0.1.5-rc.1 / 会话格式 V3 / `dsh-web-all@0.3.20` 的影响取证、修复清单与「刻意不改」的理由。
 - **验收记录**：两个探针都改为调用**产品自己的排序管线**（`buildRecallDoc` / `rankRecallDocuments` / `rankStrategyCards`），不再各自复刻公式——仿真 vault 探针 8/8，真实 vault 探针 **12/12**（导航索引已降权，因此「库里没有答案 → 弱信号」这条控制项成立）。引擎探针另打印 GraphMemix 式**可达性分层**（Direct / Recoverable / No access）与单袋 vs 多视图的**有符号净恢复 Δ**、目标排名——正是这次测量把多视图 max-pool 挡在默认路径之外（`docs/memory/retrieval-v3.md` §7.2）。真实会话 E2E 共 5 个用例（含「无答案不编造」「改写重试」行为验证）。
-- 版本：**0.8.0**（试做型；记忆架构未经长期使用测试，会继续演进）。
+- 版本：**0.8.1**（试做型；记忆架构未经长期使用测试，会继续演进）。
 
 ## 隐私与安全
 

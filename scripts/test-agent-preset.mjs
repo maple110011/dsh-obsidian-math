@@ -182,9 +182,18 @@ if (existsSync(realManifestPath)) {
     if (integrity.unrecorded) {
       console.log('[note] 已部署 profile 的 manifest 没有 postureDigests（旧版本写的）：重新安装/引导一次即可获得完整性基线');
     } else {
+      // 2026-10-01（0.2.0 适配）: shared posture files are reported, not failed. `cordis.patch.yml` /
+      // `cordis.yml` / `package.json` are also written by dsh (its plugin manager and config editor) and
+      // by the user — freezing their bytes called a legitimate settings save a fault, permanently. The
+      // split lives in `dsh/preset/profile-contract.mjs`; see its WHY block.
+      if (integrity.shared.length > 0) {
+        console.log(`[note] 以下 posture 文件是 dsh/用户也会写的（不做哈希校验，只列出）：${integrity.shared.join(', ')}`);
+      }
+      // Vacuity guard: without it, "all installer-owned files agree" would also be printed when there are
+      // NO installer-owned files left to compare — the 0/0-assertions shape AGENTS.md §4 warns about.
       check('已部署 profile 的文件与 manifest 记录的摘要一致（第三份完整性基线）',
-        integrity.drifted.length === 0 && integrity.missing.length === 0,
-        JSON.stringify({ checked: integrity.checked, drifted: integrity.drifted, missing: integrity.missing }));
+        integrity.checked > 0 && integrity.drifted.length === 0 && integrity.missing.length === 0,
+        JSON.stringify({ checked: integrity.checked, drifted: integrity.drifted, missing: integrity.missing, shared: integrity.shared.length }));
     }
     const lagging = [];
     // Iterate the POSTURE list, not the digest keys: an older manifest has no digests at

@@ -39,6 +39,7 @@
 | `DSH_ALLOW_ANY_HOME` | `dsh/install.mjs`（等价于 `--any-home`） | 设成 `1` 时**关闭 harness-home 地标守卫**（S0，2026-09-26）。守卫会拒绝两种形态：① 解析出的 home **就是** OS 主目录；② 它**包含**一个 harness home（`<raw>/.dsh` 存在）——后者是 2026-09-26 那两次"home 少一段 `\.dsh`"事故的签名，写出者在用户主目录里留下 `profiles/`、`skins/`。**沙箱与探针**用临时目录时必须显式放行（否则真机上存在 `~/.dsh` 时会误伤）；生产安装不该设它 | 无（未设 = 守卫生效） |
 | `DSH_TEST_UNREGISTER_BUNDLE` | `dsh/install.mjs`（**仅测试缝**） | 设成 `1` 时让"本地包是否已登记"的**文件系统核验**强制回答"没登记"，好让门禁断言"S4 的回落确实发生、且 manifest **不会**谎报 npm 通道"（A′ S4，2026-09-26）。它存在的理由是方案要求的变异验证——"把判据退回 `exit code == 0`"——不用去伪造子进程就能跑：判据一旦退回，这条缝就抓不住，manifest 会在包根本没登记的 profile 上写成 `owner=npm`。生产路径永不设置它 | 无（未设 = 以文件系统为准） |
 | `APPDATA` | Obsidian 插件 + 两个脚本 | **平台变量**：定位全局 npm 安装目录（`%APPDATA%\npm\node_modules\@deepseek-ai\dsh`） | 无（Windows 上由系统提供） |
+| `DSH_TOOLS_PATH` | `scripts/lib/dsh-tools-validator.mjs`（被两个工具套件共用） | **硬指定 dsh-tools 的 `lib/index.js`**（设了就以它为准，**不会**回落到别的副本——因为设它的目的就是"拿这一版校验"，悄悄换成另一版正是本模块要消灭的静默替换）。这两个套件用 **dsh 自己的校验器**验证 `output.schema`，那是"宿主升级后工具契约还成立"的唯一动态证据（2026-10-01）。默认候选顺序：`$DSH_HOME/profiles/node_modules/…` → 各 profile 自己的 `node_modules` → **npm 全局安装内**（`%APPDATA%\npm\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\dsh-tools`）→ `./node_modules`。**为什么要按顺序试**：此前的硬编码路径只认第一种形态，而 `npm i -g` 装的 dsh 属于第三种 ⇒ 断言**整个跳过**、汇总却仍显示 `9/9`（假绿）。非标准布局或想故意指向另一个版本时才设它 | 无（未设 = 按候选顺序找；一个都找不到就**大声 SKIP** 并把试过的路径/错设的值打进 `__CHECKS__ … (N skipped)`） |
 | `USERPROFILE` | 侧栏性能探针 | **平台变量**：推导 `DSH_HOME` 默认值 | 无（Windows 上由系统提供） |
 
 ## 3. 死开关（不要实现它，也不要以为设了有用）

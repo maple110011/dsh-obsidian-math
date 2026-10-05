@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-18T15:45:30.391Z",
-  "count": 30,
+  "generatedAt": "2026-10-01T05:22:21.789Z",
+  "count": 34,
   "entries": [
     {
       "citekey": "gaoLeanSearchV2Global2026",
@@ -671,6 +671,87 @@
       "card": "cards/yangLeanDojoTheoremProving2023.md",
       "fullText": ".raw/yangLeanDojoTheoremProving2023/full.md",
       "pdf": ".raw/yangLeanDojoTheoremProving2023/source.pdf"
+    },
+    {
+      "citekey": "zhangUsefulMemoriesBecome2026",
+      "title": "Useful Memories Become Faulty When Continuously Updated by LLMs",
+      "shorttitle": "",
+      "authors": [
+        "Zhang, Dylan",
+        "Lin, Yanshan",
+        "Wu, Zhengkun",
+        "Sun, Yihang",
+        "Li, Bingxuan",
+        "Li, Dianqi",
+        "Peng, Hao"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2605.12978",
+      "url": "http://arxiv.org/abs/2605.12978",
+      "card": "cards/zhangUsefulMemoriesBecome2026.md",
+      "fullText": ".raw/zhangUsefulMemoriesBecome2026/full.md",
+      "pdf": ".raw/zhangUsefulMemoriesBecome2026/source.pdf"
+    },
+    {
+      "citekey": "xiongHowMemoryManagement2026",
+      "title": "How Memory Management Impacts LLM Agents: An Empirical Study of Experience-Following Behavior",
+      "shorttitle": "How Memory Management Impacts LLM Agents",
+      "authors": [
+        "Xiong, Zidi",
+        "Lin, Yuping",
+        "Xie, Wenya",
+        "He, Pengfei",
+        "Liu, Zirui",
+        "Tang, Jiliang",
+        "Lakkaraju, Himabindu",
+        "Xiang, Zhen"
+      ],
+      "year": "2026",
+      "keywords": "",
+      "status": "unread",
+      "doi": "10.18653/v1/2026.acl-long.27",
+      "url": "https://aclanthology.org/2026.acl-long.27/",
+      "card": "cards/xiongHowMemoryManagement2026.md",
+      "fullText": ".raw/xiongHowMemoryManagement2026/full.md",
+      "pdf": ".raw/xiongHowMemoryManagement2026/source.pdf"
+    },
+    {
+      "citekey": "dashUntrustedInputTrusted2026",
+      "title": "From Untrusted Input to Trusted Memory: A Systematic Study of Memory Poisoning Attacks in LLM Agents",
+      "shorttitle": "From Untrusted Input to Trusted Memory",
+      "authors": [
+        "Dash, Pritam",
+        "Ge, Tongyu",
+        "Jain, Aditi",
+        "Shah, Tanmay",
+        "Shang, Zhiwei"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Artificial Intelligence, Computer Science - Cryptography and Security",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2606.04329",
+      "url": "http://arxiv.org/abs/2606.04329",
+      "card": "cards/dashUntrustedInputTrusted2026.md",
+      "fullText": ".raw/dashUntrustedInputTrusted2026/full.md",
+      "pdf": ".raw/dashUntrustedInputTrusted2026/source.pdf"
+    },
+    {
+      "citekey": "louckSecuringLLMAgentLongTerm2026",
+      "title": "Securing LLM-Agent Long-Term Memory Against Poisoning: Non-Malleable, Origin-Bound Authority with Machine-Checked Guarantees",
+      "shorttitle": "Securing LLM-Agent Long-Term Memory Against Poisoning",
+      "authors": [
+        "Louck, Yedidel"
+      ],
+      "year": "2026",
+      "keywords": "Computer Science - Cryptography and Security",
+      "status": "unread",
+      "doi": "10.48550/arXiv.2606.24322",
+      "url": "http://arxiv.org/abs/2606.24322",
+      "card": "cards/louckSecuringLLMAgentLongTerm2026.md",
+      "fullText": ".raw/louckSecuringLLMAgentLongTerm2026/full.md",
+      "pdf": ".raw/louckSecuringLLMAgentLongTerm2026/source.pdf"
     }
   ]
 }
